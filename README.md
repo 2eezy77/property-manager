@@ -15,12 +15,34 @@ Env template: [`.env.example`](.env.example). First-run guide: [`SETUP.md`](SETU
 
 ---
 
+## Screenshots
+
+UI previews below use **synthetic demo data only** (fake names, addresses, and amounts). No real tenant, bank, or lease records are shown.
+
+| Login | Tenant portal |
+|:-----:|:-------------:|
+| ![Sign-in](docs/login.jpg) | ![Tenant My Home](docs/tenant-portal.jpg) |
+
+| Manager portal | Owner portal |
+|:--------------:|:------------:|
+| ![Manager dashboard](docs/manager-portal.jpg) | ![Owner oversight](docs/owner-portal.jpg) |
+
+- **Login** — one secure entry for all roles; role is revealed after sign-in.
+- **Tenant** — rent balance / Autopay, maintenance, lease, and bank link (Plaid → Stripe ACH).
+- **Manager** — portfolio stats, maintenance queue, and recent payments.
+- **Owner** — high-level rent roll, occupancy, and property oversight.
+
+Demo HTML used to regenerate these images (optional): [`docs/demo/`](docs/demo/).
+
+---
+
 ## What's in this repo
 
 | Path | What's there |
 |------|----------------|
 | `src/` | Express API — auth, payments, utilities, leases, site visits, webhooks, email, DB migrations |
 | `client/` | React + Vite UI for login + all three portals |
+| `docs/` | README screenshots (demo / scrubbed) |
 | `scripts/` | Ops helpers (Cash App import, smoke tests, bank reminders, QA) |
 | `schema.sql` | Base Postgres schema |
 | `src/db/migrations/` | Incremental SQL migrations |

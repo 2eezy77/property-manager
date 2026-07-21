@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Owner portal demo</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; background: #f8fafc; }
+    .card { background: #fff; border-radius: 1rem; border: 1px solid #e2e8f0; }
+    .pill { border-radius: 9999px; padding: .15rem .65rem; font-size: 12px; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="bg-amber-100 text-amber-900 text-center text-xs font-semibold py-1.5">DEMO DATA — synthetic portfolio figures only</div>
+  <div class="flex min-h-screen">
+    <aside class="w-56 bg-slate-900 text-slate-200 p-5 flex flex-col gap-1">
+      <div class="mb-6"><div class="text-white font-semibold">Montero Rentals</div><div class="text-xs text-slate-400 mt-1">Owner portal</div></div>
+      <div class="rounded-lg bg-slate-800 px-3 py-2 text-sm text-white">Oversight</div>
+      <div class="px-3 py-2 text-sm text-slate-400">Finance</div>
+      <div class="px-3 py-2 text-sm text-slate-400">Organizations</div>
+      <div class="px-3 py-2 text-sm text-slate-400">Users</div>
+      <div class="px-3 py-2 text-sm text-slate-400">Audit log</div>
+      <div class="mt-auto text-xs text-slate-500">Owner (demo)</div>
+    </aside>
+    <main class="flex-1 p-8">
+      <h1 class="text-2xl font-bold text-slate-900">Portfolio oversight</h1>
+      <p class="text-slate-500 text-sm mt-1">High-level finance and ops · sample data for documentation</p>
+      <div class="grid grid-cols-4 gap-4 mt-6">
+        <div class="card p-4"><p class="text-xs text-slate-400 font-semibold uppercase">Gross rent MTD</p><p class="text-3xl font-bold mt-1">$8,900</p></div>
+        <div class="card p-4"><p class="text-xs text-slate-400 font-semibold uppercase">Occupancy</p><p class="text-3xl font-bold mt-1">100%</p></div>
+        <div class="card p-4"><p class="text-xs text-slate-400 font-semibold uppercase">Delinquent</p><p class="text-3xl font-bold mt-1">$0</p></div>
+        <div class="card p-4"><p class="text-xs text-slate-400 font-semibold uppercase">Open maint.</p><p class="text-3xl font-bold mt-1">2</p></div>
+      </div>
+      <div class="card p-5 mt-4">
+        <p class="font-semibold text-slate-900 mb-3">Properties (demo)</p>
+        <table class="w-full text-sm">
+          <thead class="text-left text-slate-400 text-xs uppercase">
+            <tr><th class="pb-2">Property</th><th>Units</th><th>Status</th><th class="text-right">Rent roll</th></tr>
+          </thead>
+          <tbody class="text-slate-800">
+            <tr class="border-t border-slate-100"><td class="py-2">100 Demo Street</td><td>2</td><td><span class="pill bg-emerald-50 text-emerald-700">Occupied</span></td><td class="text-right font-semibold">$2,900</td></tr>
+            <tr class="border-t border-slate-100"><td class="py-2">200 Sample Ave</td><td>2</td><td><span class="pill bg-emerald-50 text-emerald-700">Occupied</span></td><td class="text-right font-semibold">$2,550</td></tr>
+            <tr class="border-t border-slate-100"><td class="py-2">300 Example Blvd</td><td>1</td><td><span class="pill bg-emerald-50 text-emerald-700">Occupied</span></td><td class="text-right font-semibold">$1,450</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+</body>
+</html>
