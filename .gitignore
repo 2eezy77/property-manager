@@ -19,10 +19,10 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 
-# IDE
+# IDE / editor
 .vscode/settings.json
 .idea/
-.cursor/mcp.json
+.cursor/
 
 # Stripe CLI (if keys accidentally cached)
 .stripe/

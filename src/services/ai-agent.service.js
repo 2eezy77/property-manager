@@ -1,7 +1,7 @@
 /**
  * ai-agent.service.js
  *
- * AI Communication Agent — powered by Claude (Anthropic API).
+ * AI Communication Agent — tenant message triage and draft replies (Anthropic API).
  *
  * Responsibilities:
  *   1. CLASSIFY  — read a new tenant message and determine:
