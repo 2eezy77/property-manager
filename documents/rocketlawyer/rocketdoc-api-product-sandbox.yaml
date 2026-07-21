@@ -1,0 +1,1374 @@
+openapi: 3.0.3
+info:
+  title: RocketDocument v2 API
+  version: "2.2"
+
+servers:
+  - url: https://api-sandbox.rocketlawyer.com/rocketdoc/v2
+    description: sandbox
+  - url: https://api.rocketlawyer.com/rocketdoc/v2
+    description: production
+
+paths:
+  /interviews:
+    post:
+      tags:
+        - Interviews
+      operationId: create-interview
+      summary: Create an Interview
+      description: |
+        This endpoint allows you to create a new interview session.
+
+        - Provide a reference to a Binder (`binderId`) or an owner email (`partyEmailAddress`).
+        - If a `binderId` is provided, the new interview will be created within the context of this Binder.
+        - If `binderId` isn't provided, a new binder will be created.
+        - User-entered information will be stored by Rocket Lawyer.
+
+        **Service Token**:
+        - A service token is provided in the response header, scoped to the `partyId`.
+
+      requestBody:
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/InterviewCreateRequest"
+        required: true
+      responses:
+        '201':
+          description: |
+            Successfully returns a newly created interview.
+          headers:
+            rl-rdoc-servicetoken:
+              schema:
+                type: string
+              description: |
+                The `Service Token`.
+                <small>Not present when creating an Interview with a pre-existing Binder</small>
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/interview"
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+      deprecated: false
+    get:
+      tags:
+        - Interviews
+      operationId: list-interviews
+      summary: List All Interviews
+      description: |
+        TThis endpoint retrieves a list of interviews in the requesting partner tenancy. You can optionally filter the results by `partnerEndUserId` to narrow the list to a specific end user. The response includes the interview names, IDs, templates used, current statuses, and storage types.
+      parameters:
+        - name: partnerEndUserId
+          in: query
+          description: |
+            The unique identifier of the partner's end user used to filter the list of interviews. If provided, only interviews associated with this end user will be returned.
+          schema:
+            $ref: "#/components/schemas/partnerEndUserId"
+          required: false
+      responses:
+        "200":
+          description: |
+            Successfully returns the status of all interviews belonging to the partner.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/interviewsGetResponse"
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+      deprecated: false
+      
+  /interviews/{interviewId}:
+    get:
+      tags:
+        - Interviews
+      summary: Retrieve Interview by ID
+      description: |
+        Retrieves the details of an existing interview identified by the `interviewId`. This endpoint lets you fetch all the information related to a specific interview, including its status and associated data. This endpoint also enables you to resume a previously started interview.
+      operationId: retrieve-interview
+      parameters:
+        - $ref: "#/components/parameters/interviewIdPath"
+          description: The unique identifier of the interview to retrieve.
+      responses:
+        '200':
+          description: |
+            Successfully returns the details of the specified interview.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/interview'
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+      deprecated: false
+    put:
+      tags:
+        - Interviews
+      summary: Update an Interview
+      description: |
+        This endpoint updates an existing Interview with data in the Tagged Answer Model (TAM) format. It's important to note that data previously entered for this interview will be lost.
+      operationId: update-interview
+      parameters:
+        - $ref: "#/components/parameters/interviewIdPath"
+          description: The unique identifier of the interview to update.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/interviewUpdateRequest"
+      responses:
+        '200':
+          description: |
+            Successfully updates the specified interview.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/interview'
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+      deprecated: false
+    delete:
+      tags:
+        - Interviews
+      summary: Delete an Interview
+      description: |
+        Deletes an existing interview resource identified by the `interviewId`. This operation permanently removes the interview and its associated data from the Rocket Lawyer system.
+      operationId: delete-interview
+      parameters:
+        - $ref: "#/components/parameters/interviewIdPath"
+          description: The unique identifier of the interview to be deleted.
+      responses:
+        '204':
+          description: The interview resource was successfully deleted.
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+      deprecated: false
+
+  /interviews/{interviewId}/completions:
+    post:
+      tags:
+        - Interviews
+      summary: Complete an Interview
+      description: |
+        Completes the specified interview for which answers have been supplied. This operation finalizes the interview, ensuring that all provided answers are processed and saved and final document stored at the binder.
+      operationId: complete-interview
+      parameters:
+        - $ref: "#/components/parameters/interviewIdPath"
+          description: The unique identifier of the interview to be completed.
+      responses:
+        '201':
+          description: The interview was successfully completed and the answers have been processed and saved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InterviewCompleteResponse'
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+      deprecated: false
+
+  /interviews/{interviewId}/pages/{pageId}:
+    get:
+      tags:
+        - Interviews
+      summary: Retrieve a Page
+      description: |
+        Retrieves a specific page of the interview identified by `interviewId` and `pageId`.
+        
+        For this call, the default format for `currentPageData` is set to `display`, and the default preview format is `text/html`.
+
+        If you are on the first page of the interview, the previous page and the current page of the response object will be the same. Similarly, if you are on the last page of the interview, the current page and the next page will be the same.
+      parameters:
+        - $ref: "#/components/parameters/interviewIdPath"
+        - $ref: "#/components/parameters/pageRefPath"
+      responses:
+        "200":
+          description: Successfully retrieves the specified page of the interview.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/pageResponse"
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+        
+    patch:
+      tags:
+        - Interviews
+      summary: Update an Interview Page's Answers
+      operationId: update-page
+      description: |
+        Submit the answers to the questions for a specific page of the interview, identified by `interviewId` and `pageId`.
+
+        This operation can also be used to retrieve the next or previous page preview, and/or get the updated preview of the current page. This is controlled by the `format` key in each page's respective data inside the request's body.
+
+        If you are on the first page of the interview, the previous page and the current page of the response object will be the same. Similarly, if you are on the last page of the interview, the current page and the next page will be the same.
+      parameters:
+        - $ref: "#/components/parameters/interviewIdPath"
+        - $ref: "#/components/parameters/pageIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/pagePatchRequest"
+      responses:
+        "200":
+          description: Successfully submits the data for the specified page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/pageResponse"
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+
+  /interviews/{interviewId}/tagged-answers:
+    get:
+      tags:
+        - Interviews
+      summary: Retrieve Interview Data
+      description: |
+        Retrieves data from a interview in Tagged Answer Model (TAM) format.
+
+        This endpoint allows you to fetch structured data for the interview, which includes the tagged answers aligned with the TAM structure.
+      operationId: retrieve-tagged-answers
+      parameters:
+        - $ref: "#/components/parameters/interviewIdPath"
+      responses:
+        '200':
+          description: |
+            Returns all the answers for interview in tagged answer model (TAM) format.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/tam'
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+      deprecated: false
+    
+
+
+  /documents/{documentId}:
+    get:
+      tags:
+        - Documents
+      description: |
+        A document is the result of a completed interview. This endpoint allows you to retrieve a document from a interview in the format specified by the `Accept` header. This endpoint allows you to fetch the document in either HTML or PDF format, as specified in the request.
+      operationId: retrieve-document
+      summary: Retrieve Document
+      parameters:
+        - $ref: "#/components/parameters/documentIdPath"
+        - name: Accept
+          in: header
+          description: |
+            Specifies the desired format of the document. Supported formats answers:
+            - `text/html`
+          required: false
+          schema:
+            enum:
+              - text/html
+            default: text/html
+            type: string
+      responses:
+        '200':
+          description: Returns the document in HTML format.
+        '400':
+          description: Bad Request
+        '401' :
+          description: Unauthorized
+      deprecated: false
+
+  /templates:
+    get:
+      tags:
+        - Templates
+      summary: Get Templates List
+      description: |
+        A template is a predefined document structure that serves as a blueprint for creating various legal documents. This endpoint allows you to retrieve the full list of available templates.
+      operationId: get-templates-list
+      parameters:
+        - $ref: "#/components/parameters/templateQueryIndex"
+        - $ref: "#/components/parameters/lookupValueQuery"
+        - $ref: "#/components/parameters/cursorQuery"
+        - $ref: "#/components/parameters/pageSizeQuery"
+        - $ref: "#/components/parameters/reverseQuery"
+      responses:
+        '200':
+          description: Successfully returns a list of templates.
+          headers:
+            cursor:
+              schema:
+                type: string
+              description: The cursor used to fetch the next page of results in a paginated response. Include this cursor value in the next request to retrieve the subsequent set of templates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/templatesGetResponse'
+              examples:
+                GetAllVirtualTemplates:
+                  summary: Get a list of virtual templates.
+                  value:
+                    - templateName: "Power of Attorney"
+                      shortDescription: "..."
+                      longDescription: "..."
+                      thumbnailRef: ""
+                      previewRef: ""
+                      templateId: "BC006A4D-B5C0-402F-81BD-954D686924A5"
+                      medianMinutesToComplete: "20"
+                      type: "virtual"
+                    - templateName: "Advance Directive"
+                      shortDescription: "..."
+                      longDescription: "..."
+                      thumbnailRef: ""
+                      previewRef: ""
+                      templateId: "093AC3FF-26B7-4417-8C99-09EFDE8184CD"
+                      medianMinutesToComplete: "20"
+                      type: "virtual"
+                GetAllUngroupedAndVirtualTemplates:
+                  summary: Get a list of ungrouped and virtual templates.
+                  value:
+                    - templateName: "Power of Attorney"
+                      shortDescription: "..."
+                      longDescription: "..."
+                      thumbnailRef: ""
+                      previewRef: ""
+                      templateId: "BC006A4D-B5C0-402F-81BD-954D686924A5"
+                      medianMinutesToComplete: "20"
+                      type: "virtual"
+                    - templateName: "Advance Directive"
+                      shortDescription: "..."
+                      longDescription: "..."
+                      thumbnailRef: ""
+                      previewRef: ""
+                      templateId: "093AC3FF-26B7-4417-8C99-09EFDE8184CD"
+                      medianMinutesToComplete: "20"
+                      type: "virtual"
+                    - templateName: "Accounting Contract"
+                      shortDescription: "Hire an accountant professional"
+                      longDescription: "An Accounting Contract enables ..."
+                      thumbnailRef: "..."
+                      previewRef: "..."
+                      templateId: "25285311-89bd-4cea-8800-7b9ce0192428"
+                      medianMinutesToComplete: "20"
+                      type: "standard"
+                    - templateName: "Affidavit"
+                      shortDescription: "Make a sworn statement to use in any state"
+                      longDescription: "An Affidavit is simply a written, notarized sworn ..."
+                      thumbnailRef: "..."
+                      previewRef: "..."
+                      templateId: "66ea0ae0-32d9-43d7-8e51-b6d2280fafa1"
+                      medianMinutesToComplete: "20"
+                      type: "standard"
+                GetVirtualGroupedTemplates:
+                  summary: Get a list of grouped templates.
+                  value:
+                    - templateName: "California Power of Attorney"
+                      shortDescription: "..."
+                      longDescription: "..."
+                      thumbnailRef: "..."
+                      previewRef: "..."
+                      templateId: "b82a1961-87a0-4cf8-9db9-7d26f09fc590"
+                      medianMinutesToComplete: "20"
+                      type: "standard"
+                      memberAlias: "California"
+                      memberOf:
+                        - "BC006A4D-B5C0-402F-81BD-954D686924A5"
+                    - templateName: "Colorado Power of Attorney"
+                      shortDescription: "..."
+                      longDescription: "..."
+                      thumbnailRef: "..."
+                      previewRef: "..."
+                      templateId: "cc325f21-3aa2-4f35-8688-287afba21772"
+                      medianMinutesToComplete: "20"
+                      type: "standard"
+                      memberAlias: "Colorado"
+                      memberOf:
+                        - "BC006A4D-B5C0-402F-81BD-954D686924A5"
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+      deprecated: false
+
+  /templates/{templateId}:
+    get:
+      tags:
+        - Templates
+      summary: Retrieve a Template by ID
+      description: |
+        Retrieves a specific template identified by the `templateId`. The response includes detailed information such as the template's name, short and long descriptions, and URL references to its thumbnail and preview.
+      operationId: get-template
+      parameters:
+        - $ref: "#/components/parameters/templateIdPath"
+          description: The unique identifier of the template to be retrieved.
+      responses:
+        '200':
+          description: Successfully returns the requested template.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: Directives for caching Template objects.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/templateGetResponse'
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+      deprecated: false
+
+  /templates/{templateId}/preview:
+    get:
+      tags:
+        - Templates
+      summary: Retrieve a Template Preview
+      description: Retrieves a preview of the specified template identified by the `templateId`. The response provides a visual representation of the template in HTML format.
+      operationId: get-template-preview
+      parameters:
+        - $ref: "#/components/parameters/templateIdPath"
+          description: The unique identifier of the template to be retrieved.
+        - $ref: "#/components/parameters/brandIdQuery"
+        - name: Accept
+          in: header
+          required: false
+          description: Specifies the format of the preview response. Currently, only `text/html` is supported.
+          schema:
+            enum:
+              - text/html
+            default: text/html
+            type: string
+      responses:
+        '200':
+          description: Successfully returns the template preview in the specified format.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: Directives for caching Template previews.
+          content:
+            text/html:
+              schema:
+                type: string
+                example: |
+                  <html>
+                    <body>
+                      <b>Example</b>
+                    </body>
+                  </html>
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+      deprecated: false
+
+  /templates/{templateId}/thumbnail:
+    get:
+      tags:
+        - Templates
+      summary: Retrieve a Template Thumbnail
+      description: Retrieves the thumbnail image of the specified template identified by the `templateId`. The response provides a visual representation of the template in PNG format.
+      operationId: get-template-thumbnail
+      parameters:
+        - $ref: "#/components/parameters/templateIdPath"
+          description: The unique identifier of the template to be retrieved.
+        - $ref: "#/components/parameters/brandIdQuery"
+        - name: Accept
+          in: header
+          required: false
+          description: Specifies the format of the thumbnail response. Currently, only `image/png` is supported.
+          schema:
+            enum:
+              - image/png
+            default: image/png
+            type: string
+      responses:
+        '200':
+          description: Successfully returns the template thumbnail in the specified format.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: Directives for caching Template thumbnail images.
+          content:
+            image/png:
+              schema:
+                type: string
+                example: image
+                format: binary
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+      deprecated: false
+
+  /templates/{templateId}/tagged-answer-model:
+    get:
+      tags:
+        - Templates
+      summary: Retrieve Tagged Answer Model for a Template
+      description: Retrieves the Tagged Answer Model (TAM) for the specified template identified by the `templateId`. The TAM provides a structured format for injecting data into an interview or retrieving data from an interview.
+      operationId: get-template-tam
+      parameters:
+        - $ref: "#/components/parameters/templateIdPath"
+      responses:
+        '200':
+          description: Successfully returns the Tagged Answer Model (TAM) for the specified template.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/tam'
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+      deprecated: false
+
+components:
+  parameters:
+    documentIdPath:
+      name: documentId
+      in: path
+      description: The Document's unique identifier.
+      required: true
+      schema:
+        type: string
+      example: 443b3b1e-584d-480a-a43a-7713f1d62633
+
+    interviewIdPath:
+      name: interviewId
+      in: path
+      description: The unique identifier of an interview.
+      required: true
+      schema:
+        type: string
+      example: 76105b3e-ac8a-4202-8ed2-b991a02b8456
+
+    brandIdQuery:
+      name: brandId
+      in: query
+      description: The unique identifier of the brand.
+      required: false
+      schema:
+        type: string
+      example: cde1d5c7-ba7e-46bf-8ac3-78ea2ec3f5e4
+
+    pageRefPath:
+      name: pageId
+      in: path
+      description: |
+        Either a pageId or a pseudonym for a page. Enter one of the following options:
+        - `pageId`: The unique identifier of the requested page.
+        - `"first"`: Pseudonym for the first page of the Interview.
+        - `"last"`: Pseudonym for the last answered page by the end user of the Interview.
+      schema:
+        type: string
+      example: "Pkbbc224f2d2eb"
+      required: true
+
+    pageIdPath:
+      name: pageId
+      in: path
+      description: |
+        Either a pageId or a pseudonym for a page. Enter one of the following options:
+        - `pageId`: The unique identifier of the requested page.
+        - `"first"`: Pseudonym for the first page of the Interview.
+        - `"last"`: Pseudonym for the last answered page by the end user of the Interview.
+      schema:
+        type: string
+      example: "Pkaab440f2d2eb"
+      required: true
+
+    templateIdPath:
+      name: templateId
+      in: path
+      description: The unique identifier of a Template.
+      required: true
+      schema:
+        type: string
+      example: e3b7da14-a7ef-402d-a50d-50edd3015fa6
+
+    templateQueryIndex:
+      name: index
+      in: query
+      description: |
+        Specifies the name of the index to filter search results. Use this parameter to perform searches against a specific index. Possible indexed lookups:
+        - `virtual`: Lists all virtual templates exclusively. This is a list of all group parents.
+        - `virtualAndUngrouped`: Lists all virtual templates (group parents) and ungrouped standard templates. This search does not contain standard templates that are associated with a virtual template.
+        - `groupBy`: Use this index to show only templates grouped by the `templateId` in `lookupValue`. Note that if the templateId does not identify a virtual template, the resulting list will be empty.
+      schema:
+        type: string
+        enum:
+          - virtual
+          - virtualAndUngrouped
+          - groupBy
+      example: virtual
+      required: false
+
+    lookupValueQuery:
+      name: lookupValue
+      in: query
+      description: |
+        The value to search for within the specified index. This parameter works in conjunction with the `index` parameter to refine search results.
+        ⚠️ <small>Ignored if the `index` parameter is not present.</small> ⚠️
+      schema:
+        type: string
+      required: false
+
+    cursorQuery:
+      name: cursor
+      in: query
+      description: |
+        A pagination cursor used to retrieve the next set of results in a paginated response. Include the cursor value from the previous response to continue fetching results. This parameter is not required for the first search.
+        ⚠️ <small>Ignored if the `index` and `lookupValue` parameters are not present.</small> ⚠️
+      schema:
+        type: string
+      example: |
+        bfc84903-b4ea-46b0-b7cb-78157a979687
+      required: false
+
+    pageSizeQuery:
+      name: pageSize
+      in: query
+      description: |
+        Defines the number of results to return per page in a paginated response. Use this parameter to control the amount of data returned in each response.
+        The default value is `20`, with a maximum limit of `200`.
+        ⚠️ <small>Ignored if the `index` and `lookupValue` parameters are not present.</small> ⚠️
+      schema:
+        type: integer
+      example: 25
+      required: false
+
+    reverseQuery:
+      name: reverse
+      in: query
+      description: |
+        Determines the order of search results. When set to true, results are returned in reverse order. Use this parameter to reverse the sorting order of the search results. The default value is `false`.
+        ⚠️ <small>Ignored if the `index` and `lookupValue` parameters are not present.</small> ⚠️
+      schema:
+        type: boolean
+      example: true
+      required: false
+
+  schemas:
+
+    answersPayload:
+      description: |
+        A key-value object to include all provided answers. Each key refers to a answer unique identifier in the system (`Flfmulpp4orak5`), with its value being the actual answer provided by the end user.
+        <small>Example: `{ "Flfmulpp4orak5": "true", "Flfmufliy5gnuf": "John Doe" }`</small>
+      type: object
+      example:
+        "Flfmu8ta21l9eh": ""
+        "Flfmufliy5gnuf": ""
+        "Flfmulpp4orak5": "true"
+        "Flfmum2u1mcvif": "false"
+        "Flfmuuwxkfljt6": "true"
+        "Flfmuwllpj97qz": "false"
+        "Flfmuznrnxr8vn": ""
+        "Flfqvnvr121l11": ""
+        "Clfqvxpiwq5btl":
+          - "Flfqvvhivulxtb": "answer 1"
+            "Flfqvwpr3a35lw": "answer 2"
+          - "Flfqvvhivulxtb": "answer 3"
+            "Flfqvwpr3a35lw": "answer 4"
+        "Clfqxxxexkmjzr":
+          - "Flfqwerocs85au": ""
+        "Flfqyoh037bgfr": ""
+        "Flfqyp3z2r6prc": "false"
+
+    binder:
+      description: Return the `binderId` and `documentId`.
+      type: object
+      properties:
+        binderId:
+          $ref: '#/components/schemas/binderId'
+        documentId:
+          type: string
+          description: The Document's unique identifier.
+          example: 7d989647-ecf2-4673-9486-80c3b890ed3c
+      required:
+        - binderId
+        - documentId
+
+    document:
+      type: object
+      properties:
+        mimeType:
+          $ref: "#/components/schemas/documentMimeType"
+        data:
+          description: |
+            Base64 encoded document in format specified of the caller.
+          type: string
+          example: "PGh0bWw+CiAgPGJvZHk+CiAgICA8cD5Mb3JlbSBpcHN1bSBkb2xvciBzaXQgYW1ldCwgY29uc2VjdGV0dXIgYWRpcGlzY2luZyBlbGl0LjwvcD4KICA8L2JvZHk+CjwvaHRtbD4K"
+      required:
+        - mimeType
+        - data
+
+    documentsPostRequest:
+      type: object
+      properties:
+        interviewId:
+          $ref: "#/components/schemas/interviewId"
+        mimeType:
+          $ref: "#/components/schemas/documentMimeType"
+        answersPayload:
+          $ref: "#/components/schemas/answersPayload"
+      required:
+        - interviewId
+        - mimeType
+        - answersPayload
+
+    documentsPostResponse:
+      type: object
+      properties:
+        interviewId:
+          $ref: "#/components/schemas/interviewId"
+        storageType:
+          $ref: "#/components/schemas/storageType"
+          example: persistent
+        document:
+          $ref: "#/components/schemas/document"
+      required:
+        - interviewId
+        - storageType
+        - document
+
+    documentMimeType:
+      description: Mime type for Document output.
+      type: string
+      enum:
+        - text/html
+      default: text/html
+
+    fieldType:
+      description: Metadata type suggesting what this field should contain and loosely describing how a UI might display it for user interaction. The field type provides hints on the nature of the data and the appropriate form input controls to use.
+      type: object
+      enum:
+        - "TEXT"
+        - "PARAGRAPH"
+        - "DATE"
+        - "DROPDOWN"
+        - "NUMBER"
+        - "CURRENCY"
+        - "PERCENTAGE"
+        - "SSN"
+        - "RADIO"
+        - "CHECKBOX"
+        - "PHONE_NUMBER"
+        - "PHONE_EXT"
+
+    field:
+      description: |
+        The UI can choose which UI display component is best to display the type of data represented by these names.
+      type: object
+      properties:
+        id:
+          type: string
+          example: Fkrp98ynuj7gtr
+        type:
+          $ref: "#/components/schemas/fieldType"
+        default:
+          type: string
+          description: Indicates the default value for this field - for example if it is a Radio button then could be "true".
+            If there is no default then "" will be returned.
+          example: ""
+        label:
+          type: string
+          description: The label to apply to the input to guide the user about what information is expected.
+            For example if the question is about Address then the label might be for City.
+          example: "City"
+        symbol:
+          description: Any symbol relevant to display the field correctly.
+          type: string
+          example: "$"
+      required:
+        - id
+        - type
+        - default
+        - label
+
+    help:
+      type: string
+      example: "Your name should go here."
+
+    interview:
+      type: object
+      properties:
+        interviewId:
+          $ref: "#/components/schemas/interviewId"
+        interviewName:
+          type: string
+          description: The Interview's name.
+          example: Employment contract
+        templateId:
+          $ref: "#/components/schemas/templateId"
+        templateVersionId:
+          type: string
+          description: The unique identifier of the template version being used for this interview.
+          example: d9243532-6fae-41b8-a082-6d6844fa6246
+        partnerEndUserId:
+          $ref: "#/components/schemas/partnerEndUserId"
+        storageType:
+          $ref: "#/components/schemas/storageType"
+        interviewStatus:
+          type: string
+          description: The current status of the Interview.
+          enum:
+            - created
+            - completed
+          example: created
+        pageId:
+          type: string
+          description: If present, this is the last page updated by any process that updates the Interview.
+          example: 'Pkyezdgfswi58z'
+        createdAt:
+          type: string
+          description: The date the resource was created.
+          example: '2020-12-01T17:51:40.795Z'
+        updatedAt:
+          type: string
+          description: The date the resource was updated.
+          example: '2021-12-01T18:51:40.795Z'
+        binder:
+          $ref: '#/components/schemas/binder'
+        answersPayload:
+          $ref: "#/components/schemas/answersPayload"
+      required:
+        - interviewId
+        - interviewName
+        - interviewStatus
+        - createdAt
+        - updatedAt
+        - templateId
+        - templateVersionId
+
+    InterviewCompleteResponse:
+      type: object
+      properties:
+        binder:
+          $ref: '#/components/schemas/binder'
+
+    InterviewCreateRequest:
+      oneOf:
+        - $ref: "#/components/schemas/create_interview_with_party_email"
+        - $ref: "#/components/schemas/create_interview_with_binder"
+
+    createInterview:
+      type: object
+      properties:
+        templateId:
+          $ref: "#/components/schemas/templateId"
+        partnerEndUserId:
+          $ref: "#/components/schemas/partnerEndUserId"
+        inputData:
+          $ref: "#/components/schemas/tam"
+          description: The Tagged Answer Model (TAM) represents the structured format for injecting data into an interview or retrieving data from an interview. Retrieve a template's TAM with the [Retrieve Tagged Answer Model](/get-template-tam) endpoint.
+      required:
+        - templateId
+
+    create_interview_with_binder:
+      allOf:
+        - type: object
+          properties:
+            binderId:
+              $ref: "#/components/schemas/binderId"
+        - $ref: "#/components/schemas/createInterview"
+      required:
+        - binderId
+
+    create_interview_with_party_email:
+      allOf:
+        - type: object
+          properties:
+            partyEmailAddress:
+              $ref: "#/components/schemas/partyEmailAddress"
+        - $ref: "#/components/schemas/createInterview"
+      required:
+        - partyEmailAddress
+
+    binderId:
+      type: string
+      description: |
+        The unique identifier of the Binder to which the interview will be added. 
+        ⚠️ <small>This parameter is mutually exclusive with `partyEmailAddress`.</small> ⚠️
+      example: 0af17ba7-f332-5346-bb3f-00b7c9af7deb
+
+    partyEmailAddress:
+      type: string
+      description: |
+        The email address of the party for whom the interview is being created.
+        If provided, a new Binder is created for this email address.
+        ⚠️ <small>This parameter is mutually exclusive with `binderId`.</small> ⚠️
+      example: user@xyzcompany.com
+
+    interviewsGetResponse:
+      type: array
+      items:
+        $ref: '#/components/schemas/interview'
+
+    interviewUpdateRequest:
+      type: object
+      properties:
+        inputData:
+          $ref: '#/components/schemas/tam'
+          description: |
+            The Tagged Answer Model (TAM) represents the structured format for injecting data into an interview or retrieving data from an interview. Retrieve a interview's TAM with the following endpoint:
+            - [Retrieve Interview Data](/)
+
+    interviewId:
+      description: The unique identifier of the Interview.
+      type: string
+      example: 76105b3e-ac8a-4202-8ed2-b991a02b8456
+
+    pageId:
+      type: string
+      description: An opaque ID for a page. Do not depend on the format of these IDs.
+      example: "Fkbbc110f2d2eb"
+
+    pageResponse:
+      properties:
+        answersPayload:
+          $ref: "#/components/schemas/answersPayload"
+        preview:
+          $ref: "#/components/schemas/preview"
+        previousPageData:
+          oneOf:
+            - $ref: '#/components/schemas/pageDataReference'
+            - $ref: '#/components/schemas/pageDataDisplaySingle'
+            - $ref: '#/components/schemas/pageDataDisplayCyclical'
+        currentPageData:
+          oneOf:
+            - $ref: '#/components/schemas/pageDataReference'
+            - $ref: '#/components/schemas/pageDataDisplaySingle'
+            - $ref: '#/components/schemas/pageDataDisplayCyclical'
+        nextPageData:
+          oneOf:
+            - $ref: '#/components/schemas/pageDataDisplaySingle'
+            - $ref: '#/components/schemas/pageDataDisplayCyclical'
+            - $ref: '#/components/schemas/pageDataReference'
+
+    pageDataPatch:
+      description: |
+        Describes the type of page data:
+        - `reference`: Contains only the `pageId` and is used for iterating through an interview, providing navigation without detailed content.
+        - `display`: Shows the full question information for that page, including all content necessary for the interview process.
+      type: string
+      enum:
+        - display
+        - reference
+      default: reference
+
+    pageDataDisplaySingle:
+      allOf:
+        - $ref: "#/components/schemas/pageDataDisplayCommon"
+        - $ref: "#/components/schemas/pageDataDisplaySingleElements"
+
+    pageDataDisplayCyclical:
+      allOf:
+        - $ref: "#/components/schemas/pageDataDisplayCommon"
+        - $ref: "#/components/schemas/pageDataDisplayCyclicalElements"
+
+    pageDataDisplayCommon:
+      type: object
+      properties:
+        pageId:
+          $ref: "#/components/schemas/pageId"
+        format:
+          description: |
+            Describes the type of page data: 
+            - `reference`: only contains a `pageId` and it is used for iterating through an interview.
+            - `display`: shows the question information for the respective page.
+          type: string
+          enum:
+            - display
+        isFirst:
+          description: Defines if the page requested is the first page or not.
+          type: boolean
+        progressPercentage:
+          type: integer
+          example: '78'
+        questions:
+          $ref: "#/components/schemas/questions"
+      required:
+        - pageId
+        - format
+        - progressPercentage
+        - questions
+
+    pageDataDisplaySingleElements:
+      type: object
+      properties:
+        type:
+          description: Question being returned either a single or cyclical.
+          type: string
+          enum:
+            - single
+        answers:
+          type: object
+          description: The answer fields for the questions on the page returned.
+          example:
+            "Flfmulpp4orak5": "true"
+            "Flfmum2u1mcvif": "false"
+            "Flfmuuwxkfljt6": "true"
+      required:
+        - type
+        - answers
+
+    pageDataDisplayCyclicalElements:
+      type: object
+      properties:
+        cycleId:
+          type: string
+          description: |
+            Opaque UUID of the cycle.
+            ⚠️ <small>present only if `type=cyclical`.</small> ⚠️
+          example: "Clfqvxpiwq5btl"
+        type:
+          description: Question being returned either a single or cyclical.
+          type: string
+          enum:
+            - cyclical
+        title:
+          type: string
+          description: |
+            Used primarily with chain cyclicals for the overall question title.
+            <small>This in an optional field</small>.
+          example: "Title of a cyclical question"
+        answers:
+          type: array
+          items:
+            type: object
+            description: |
+              An array of answer objects for the questions on the page returned. 
+              ⚠️ <small>Used where `pageData` is `type=cyclical`.</small> ⚠️
+            example:
+              [
+                {
+                  "Flfqvvhivulxtb": "answer 1",
+                  "Flfqvwpr3a35lw": "answer 2"
+                },
+                {
+                  "Flfqvvhivulxtb": "answer 3",
+                  "Flfqvwpr3a35lw": "answer 4"
+                }
+              ]
+      required:
+        - cycleId
+        - type
+        - answers
+
+    pageDataReference:
+      type: object
+      properties:
+        pageId:
+          $ref: "#/components/schemas/pageId"
+        format:
+          description: |
+            Describes the type of page data: 
+            - `reference`: only contains a `pageId` and it is used for iterating through an interview.
+            - `display`: shows the question information for the respective page.
+          type: string
+          enum:
+            - reference
+      required:
+        - pageId
+        - format
+
+    getTaggedAnswersRequest:
+      properties:
+        answersPayload:
+          $ref: "#/components/schemas/answersPayload"
+
+    pagePatchRequest:
+      properties:
+        answersPayload:
+          $ref: "#/components/schemas/answersPayload"
+        currentPageData:
+          description: An instruction object for the returned current page data.
+          $ref: "#/components/schemas/currentPageDataPatchRequest"
+        previousPageData:
+          description: An instruction object for the returned previous page data.
+          $ref: "#/components/schemas/previousPageDataPatchRequest"
+        nextPageData:
+          description: An instruction object for the returned next page data.
+          $ref: "#/components/schemas/nextPageDataPatchRequest"
+        preview:
+          description: An instruction object for the preview data.
+          $ref: "#/components/schemas/previewPatchRequest"
+
+    partnerEndUserId:
+      type: string
+      description: A unique identifier for the end user provided by the partner application. This helps in linking the interview to a specific user within the partner's system.
+      example: cfd1ee5a-061a-40cc-be72-8cbb9945b5d9
+
+    question:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "Qkrp9n844hj7gtr"
+        title:
+          type: string
+          example: "what is your name?"
+        hint:
+          type: string
+          example: "Enter your name here"
+          # todo note that this can be returned as empty string ""
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/field"
+        help:
+          $ref: "#/components/schemas/help"
+        showIf:
+          description: if present then this is the field condition that must be met to show the question.
+          type: string
+          example: "(Fl1cgaazb4yehd = true)"
+      required:
+        - id
+        - title
+        - hint
+        - fields
+
+    questions:
+      type: array
+      items:
+        $ref: "#/components/schemas/question"
+
+    currentPageDataPatchRequest:
+      properties:
+        format:
+          $ref: "#/components/schemas/pageDataPatch"
+    
+    previousPageDataPatchRequest:
+      properties:
+        format:
+          $ref: "#/components/schemas/pageDataPatch"
+
+    nextPageDataPatchRequest:
+      properties:
+        format:
+          $ref: "#/components/schemas/pageDataPatch"
+    
+    previewPatchRequest:
+      properties:
+        mimeType:
+          $ref: "#/components/schemas/previewMimeType"
+
+    preview:
+      properties:
+        mimeType:
+          $ref: "#/components/schemas/previewMimeType"
+        data:
+          type: string
+          description: Base64 encoded string of the html of the document representing the document preview,
+            if answers have been provided then these will be included in the preview.
+          example: "PGh0bWw+PGJvZHk+Um9ja2V0RG9jdW1lbnQgcHJldmlldzwvYm9keT48L2h0bWw+Cg=="
+      required:
+        - mimeType
+        - data
+
+    previewMimeType:
+      description: Mime-type for the preview.
+      type: string
+      enum:
+        - "text/html"
+      default: text/html
+
+    storageType:
+      description: |
+        Specifies the type of backend data storage strategy used for this interview.
+      type: string
+      enum:
+        - ephemeral
+        - persistent
+      default: persistent
+
+    tam:
+      description: |
+        The Tagged Answer Model (TAM) represents the structured format for injecting data into an interview or retrieving data from an interview. This model maps the input data to the corresponding fields and entities within the document template.
+      type: object
+      properties:
+        name:
+          type: string
+          description: The name of the template being used for the interview.
+          example: Employment contract
+        templateId:
+          $ref: "#/components/schemas/templateId"
+        entities:
+          type: array
+          items:
+            $ref: "#/components/schemas/tamEntity"
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/tamField"
+      required:
+        - name
+        - entities
+        - fields
+
+    tamField:
+      type: object
+      description: Each field corresponds to a data point in the interview, allowing for the collection and retrieval of user-entered information. These fields are pre-filled with initial data and align with the template's structure, facilitating a customized and relevant interview process.
+      properties:
+        entity:
+          description: This entity correlates with an object in the entities array, linking the field to a specific entity involved in the interview. The entity helps to contextualize the field within the broader interview structure.
+          type: string
+        fieldClass:
+          $ref: "#/components/schemas/tamEntityClass"
+        type:
+          $ref: "#/components/schemas/fieldType"
+        value:
+          type: string
+          description: The actual value of the field. This is the data entered by the user or provided initially, corresponding to the field's type and purpose within the interview.
+        cycleId:
+          description: |
+            Id of the cycle. Not present if not cyclical. Cycle Ids can be of any type 
+            but numerical is most intuitive and most predictable for sorting.
+          type: string
+      required:
+        - entity
+        - fieldClass
+        - type
+        - value
+
+    tamEntity:
+      type: object
+      description: Represents an entity involved in the interview process. Entities can be individuals, organizations, or properties, each playing specific roles within the context of the interview.
+      properties:
+        name:
+          $ref: "#/components/schemas/tamEntityName"
+        class:
+          $ref: "#/components/schemas/tamClass"
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/tamRole"
+        isCyclical:
+          type: string
+          enum:
+            - true
+            - false
+          default: false
+          description: True if this Entity is cyclical. Not present or false if not.
+      required:
+        - name
+        - class
+        - roles
+
+    tamClass:
+      type: string
+      description: |
+        The classification of the entity. Can be either:
+        - `Person`
+        - `Organization`
+        - `Property`
+      enum:
+        - Person
+        - Organization
+        - Property
+      example:
+        Person
+
+    tamRole:
+      description: A list of roles that the entity plays within the interview context. Roles define the specific function or position of the entity in the interview, such as 'Applicant' or 'Employer'.
+      type: string
+      example: "Applicant"
+
+    tamEntityName:
+      description: The name of the entity. This could be the name of a person, organization, or property involved in the interview.
+      type: string
+      example: "Formed Entity"
+
+    tamEntityClass:
+      description: The classification of the field within the entity. This defines the type or category of the field, aligning with the entity's role and characteristics.
+      type: string
+      example: "Entity Type"
+
+    templateId:
+      description: The unique identifier of the document template to be used for the interview. This template defines the structure and content of the interview. Retrieve a list of available templates with the [Get Templates](/get-templates) endpoint.
+      type: string
+      example: 0bf17ad8-a229-1289-ef4a-00b7c9ad9cab
+
+    templatesGetResponse:
+      type: array
+      items:
+        $ref: "#/components/schemas/template"
+
+    templateGetResponse:
+      allOf:
+        - $ref: "#/components/schemas/template"
+
+    template:
+      type: object
+      properties:
+        templateId:
+          $ref: "#/components/schemas/templateId"
+        templateName:
+          type: string
+          description: The name of the interview template. This name typically reflects the purpose of the template, such as "Employment contract."
+          example: Employment contract
+        shortDescription:
+          type: string
+          description: A brief summary of the document template. This description provides a quick overview of the template's purpose and content.
+          example: A contract for employment.
+        longDescription:
+          type: string
+          description: A detailed description of the document template. This description offers an in-depth explanation of the template's contents, including any specific options or considerations.
+          example: A contract for employment with options for employer & employee.
+        medianMinutesToComplete:
+          type: integer
+          description: This is the median time expressed in minutes that takes to complete the entire Interview based on this Template.
+          example: 10
+        type:
+          type: string
+          enum:
+            - standard
+            - virtual
+          example: standard
+        memberOf:
+          type: array
+          description: This will be present if the Template (standard) has been grouped into one (1) or several virtual Templates. <small>(optional)</small>
+          items:
+            type: string
+          example: [ "5e281c0e-c7fc-4b32-85d9-d2c9c59c8aa5", "4b120b4d-b6fc-4b32-85d9-a1c9c59c8aa4" ]
+        thumbnailRef:
+          type: string
+          description: A URI to the thumbnail image representing the template. This thumbnail provides a visual representation of the template.
+          example: https://api-sandbox.rocketlawyer.com/rocketdoc/v2/templates/0bf17ad8-a229-1289-ef4a-00b7c9ad9cab/thumbnail
+        previewRef:
+          type: string
+          description: A URI to a preview of the template. This preview allows users to see a detailed view of the template before selecting or using it.
+          example: https://api-sandbox.rocketlawyer.com/rocketdoc/v2/templates/0bf17ad8-a229-1289-ef4a-00b7c9ad9cab/preview
+      required:
+        - templateId
+        - templateName
+        - shortDescription
+        - longDescription
+        - thumbnailRef
+        - previewRef
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+security:
+  - bearerAuth: [ ]

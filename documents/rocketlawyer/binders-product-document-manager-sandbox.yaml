@@ -1,0 +1,3578 @@
+openapi: 3.0.0
+info:
+  title: RocketSign & Binders API
+  description: |-
+    This API documentation describes the server-side contract by which complete documents can be managed and signed using the **RocketSign® & Binders API**.
+    <br/><br/>
+    For a step-by-step walkthrough of how to display and interact with your documents so you can
+    prepare them for signatures, sign and invite others to sign, check out [Quick Start: RocketSign
+    Embedded UX](/rocketsign-embedded-ux).
+
+
+
+
+    ## Binder Lifecycle Overview
+
+    To get started with our RocketSign & Binders API, it helps to first understand the binder lifecycle. Here is a quick summary of the four binder states:
+
+
+    ### IN_PREPARATION
+
+    When a binder is first created, it will be `IN_PREPARATION`. It will stay in this state until the document owner begins to sign or until parties are invited to sign. A binder will also return to `IN_PREPARATION` anytime signing is cancelled.
+
+    API calls to manipulate parties, documents and inputs can only be performed when a binder is `IN_PREPARATION`. It’s also the only time when the binder name can be changed.
+
+    ### REVIEW_AND_SHARE
+
+    If a document owner chooses to sign first or if they are otherwise determined to be the only signer, the binder state transitions to `REVIEW_AND_SHARE` (specifically, this occurs as soon as they begin to sign). In this state, no changes can be made to the binder and only the document owner can sign.
+
+    ### SIGN_IN_PROGRESS
+
+    After non-owner parties have been invited to sign, the binder state transitions to `SIGN_IN_PROGRESS`. The binder will remain in this state until all parties have signed/completed all mandatory boxes, or until signing is cancelled.
+
+    ### SIGN_COMPLETED
+
+    When all mandatory boxes have been completed, the binder state becomes `SIGN_COMPLETED`. Once a binder transitions to the `SIGN_COMPLETED` state, it will remain in this state forever.
+
+     <img src="https://rl-cicdv2-apigee-public-prod.apigee.io/files/binder-lifecycle.png" />
+  version: v1
+servers:
+  - url: 'https://api-sandbox.rocketlawyer.com/document-manager/v1'
+paths:
+  /binders:
+    post:
+      responses:
+        '201':
+          description: The binder has been created
+          content:
+            application/json:
+              example:
+                id: 936b41f1-66bc-4076-8d0e-5025b8f4b700
+                name: Assured shorthold tenancy binder
+                status: IN_PREPARATION
+                parties:
+                  - id: 9ba431fa-2dba-425b-a8cc-3b301c93d403
+                    reference: partyTest-001
+                    legalName: Owner Test
+                    email: user1@rocketlawyer.co.uk
+                    personId: b83a1b1e-04b2-4c74-b4eb-c1d3da1a9831
+                    roles:
+                      - OWNER
+                      - SIGNER
+                    metaData:
+                      partyMetaData1: stringValue1
+                      partyMetaData2: 3.14159
+                      partyMetaData3: false
+                    status: PENDING
+                  - id: 74eaab2f-7e0a-4d04-a6f9-224d481a53be
+                    reference: partyTest-002
+                    legalName: Signer1 Test
+                    email: user2@rocketlawyer.co.uk
+                    roles:
+                      - SIGNER
+                    status: PENDING
+                documents:
+                  - id: 22feb59b-678b-40bf-9ced-3d8458b8e153
+                    name: Assured Shorthold Tenancy Agreement 2
+                    signable: true
+                    order: 1
+                    inputs:
+                      - id: cc82f7ea-f914-4e29-b0d3-bd913c6a1615
+                        type: SIGNATURE_TEXT
+                        partyReference: partyTest-001
+                        status: PENDING
+                        position:
+                          type: PLACEHOLDER
+                          identifier: signature-001
+                      - id: 6feb3cb5-12b9-4fcf-b2ed-c1f620556068
+                        type: SIGNATURE_TEXT
+                        partyReference: partyTest-002
+                        status: PENDING
+                        position:
+                          type: PLACEHOLDER
+                          identifier: signature-002
+                    pages: []
+                  - id: e14e4809-4c31-4e8b-8e06-6f3dbb289b0d
+                    name: Addendum to tenancy agreement
+                    signable: false
+                    order: 2
+                    inputs: []
+                    metaData:
+                      externalDocId: 0178-4aa6-803f
+                events:
+                  - id: ba593f45-6f68-459e-8217-5b0b1d110535
+                    partyId: 9ba431fa-2dba-425b-a8cc-3b301c93d403
+                    occurredAt: '2020-09-16T07:45:06.493086+00:00'
+                    type: BINDER_CREATED
+                created: '2017-07-05T13:47:49+01:00'
+                defaultMessage: Invitation to sign
+                requests: []
+                timeOffset: '-09:00'
+                dateFormat: MM/DD/YYYY
+                configuration:
+                  locale:
+                    country: US
+                    language: en
+              schema:
+                $ref: '#/components/schemas/BinderOut'
+      description: |
+        <b>Allowed roles:</b> BACKEND<br/>
+        Creates the new Binder
+        <ul>
+          <li>Creates full binder with documents, inputs and parties.</li>
+          <li>Note that binder status is still <b>IN_PREPARATION</b> as document(s) need to be uploaded.</li>
+        </ul>
+      operationId: POST_binders
+      requestBody:
+        content:
+          application/json:
+            example:
+              name: Binder1
+              defaultMessage: Invitation to sign
+              parties:
+                - reference: partyTest-001
+                  legalName: Owner Test
+                  email: user1@rocketlawyer.co.uk
+                  roles:
+                    - OWNER
+                    - SIGNER
+                  metaData:
+                    partyMetaData1: stringValue1
+                    partyMetaData2: 3.14159
+                    partyMetaData3: false
+                - reference: partyTest-002
+                  legalName: Signer1 Test
+                  email: user2@rocketlawyer.co.uk
+                  roles:
+                    - SIGNER
+              documents:
+                - name: Assured Shorthold Tenancy Agreement
+                  order: 1
+                  inputs:
+                    - type: SIGNATURE_TEXT
+                      partyReference: partyTest-001
+                      position:
+                        type: PLACEHOLDER
+                        identifier: signature-001
+                    - type: SIGNATURE_TEXT
+                      partyReference: partyTest-002
+                      position:
+                        type: PLACEHOLDER
+                        identifier: signature-002
+                - name: Addendum to tenancy agreement
+                  order: 2
+                  metaData:
+                    externalDocId: 0178-4aa6-803f
+              timeOffset: '-09:00'
+              dateFormat: MM/DD/YYYY
+              configuration:
+                locale:
+                  country: US
+                  language: en
+            schema:
+              $ref: '#/components/schemas/CreateBinderIn'
+        required: true
+      parameters:
+        - name: Content-Type
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/json
+            type: string
+    get:
+      responses:
+        '200':
+          description: "The array of binder objects in JSON format
+          <br>Note: email addresses are only visible for Owner role. Non-owner Party only sees it's own email."
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BinderOut'
+              example:
+                - id: 7649c348-2a7c-4b49-960c-5bcae8e05b2c
+                  name: Simple binder
+                  status: IN_PREPARATION
+                  documents:
+                    - id: 80e31904-5947-4d21-a345-b0a2e62da4af
+                      name: Employment contract
+                      signable: true
+                      order: 1
+                      originalContentChecksum: 0da8395a881e5fc36cd7e272ff3b16d9fbed243c7b936278c7299da9d2c788ab
+                      contentType: application/pdf
+                      inputs:
+                        - id: 91780f76-91a6-4e06-95c2-b5b1509ad6d0
+                          type: SIGNATURE_TEXT
+                          position:
+                            type: SIGNATURE_PAGE
+                          status: PENDING
+                          partyReference: partyReference1
+                          optional: false
+                          content: {}
+                        - id: 787e3e50-d091-4ae1-ac98-9ef688a1d2cb
+                          type: DATE_SIGNED
+                          position:
+                            type: SIGNATURE_PAGE
+                          status: PENDING
+                          partyReference: partyReference1
+                          optional: false
+                          configuration:
+                            autoComplete: false
+                          content: {}
+                        - id: 92538fe2-0317-430a-9581-989cdce193f1
+                          type: SIGNATURE_TEXT
+                          position:
+                            type: SIGNATURE_PAGE
+                          status: PENDING
+                          partyReference: partyReference2
+                          optional: false
+                          content: {}
+                        - id: d2e11512-8981-4ecb-a761-223c9a5817c3
+                          type: DATE_SIGNED
+                          position:
+                            type: SIGNATURE_PAGE
+                          status: PENDING
+                          partyReference: partyReference2
+                          optional: false
+                          configuration:
+                            autoComplete: false
+                          content: {}
+                      pages:
+                        - id: 0dc384d6-edcb-5c60-8bad-771a225a092e
+                  parties:
+                    - id: 1d411047-e1a0-4509-9ea2-809ec22c4fd2
+                      reference: partyReference1
+                      legalName: Ryszard
+                      email: user+owner@rocketlawyer.co.uk
+                      jobTitle: Full time document signer
+                      personId: b9a03570-06a5-4815-89d9-23cbb54ebff4
+                      roles:
+                        - OWNER
+                        - SIGNER
+                      status: PENDING
+                    - id: f60881fd-e1db-4fb1-b095-86311a870bba
+                      reference: partyReference2
+                      legalName: Adam
+                      email: user+signer@rocketlawyer.co.uk
+                      jobTitle: Car seller
+                      roles:
+                        - SIGNER
+                      status: PENDING
+                    - id: b0ba924c-959b-42e2-8116-4d1e3bbb4c3f
+                      reference: partyReference3
+                      legalName: Julian Stanford
+                      email: user+viewer@rocketlawyer.co.uk
+                      jobTitle: Lawyer
+                      roles:
+                        - VIEWER
+                      status: PENDING
+                  events:
+                    - id: ddb56dbe-b8db-4cef-8ecd-10245f212b03
+                      partyId: 1d411047-e1a0-4509-9ea2-809ec22c4fd2
+                      occurredAt: '2021-08-23T09:30:21.135033+00:00'
+                      type: BINDER_CREATED
+                      details: {}
+                  locks: []
+                  created: '2021-08-23T09:30:21.042213+00:00'
+                  requests: []
+                  timeOffset: '-08:00'
+                  dateFormat: MM/dd/yyyy
+                  configuration:
+                    locale:
+                      country: US
+                      language: en
+                    notification: true
+      description: |
+        <b>Allowed roles:</b> BACKEND<br/>
+        List of Binders
+      operationId: GET_binders
+      parameters:
+        - name: q
+          in: query
+          description: |
+            Specify filters in format: 'key:value|key:value'.
+            Possible keys: [partyEmail]
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: |-
+            Specify limit of results
+            Limits upper bound is 100.
+          schema:
+            default: 10
+            type: integer
+        - name: offset
+          in: query
+          description: |
+            Specify offset of result
+          schema:
+            default: 0
+            type: integer
+        - name: sort
+          in: query
+          description: |
+            Comma-separated list of pairs &lt;field_name&gt; &lt;direction&gt;.<br/>
+            Direction can be ascending (ASC) or descending (DESC) and is "ASC" by default therefore can be omitted.<br/>
+            Possible field names are: created.
+          schema:
+            default: id ASC
+            type: string
+  '/binders/{binderId}':
+    get:
+      responses:
+        '200':
+          description: "The binder object in JSON format or all documents uploaded to the Binder merged into one PDF.<br>Note: email addresses are only visible for Owner role. Non-owner Party only sees it's own email."
+          content:
+            application/json:
+              example:
+                id: 936b41f1-66bc-4076-8d0e-5025b8f4b700
+                name: Assured shorthold tenancy binder
+                status: IN_PREPARATION
+                parties:
+                  - id: 9ba431fa-2dba-425b-a8cc-3b301c93d403
+                    reference: partyTest-001
+                    legalName: Owner Test
+                    email: user1@rocketlawyer.co.uk
+                    personId: b83a1b1e-04b2-4c74-b4eb-c1d3da1a9831
+                    roles:
+                      - OWNER
+                      - SIGNER
+                    metaData:
+                      partyMetaData1: stringValue1
+                      partyMetaData2: 3.14159
+                      partyMetaData3: false
+                    status: PENDING
+                  - id: 74eaab2f-7e0a-4d04-a6f9-224d481a53be
+                    reference: partyTest-002
+                    legalName: Signer1 Test
+                    email: user2@rocketlawyer.co.uk
+                    roles:
+                      - SIGNER
+                    status: PENDING
+                documents:
+                  - id: 22feb59b-678b-40bf-9ced-3d8458b8e153
+                    name: Assured Shorthold Tenancy Agreement 2
+                    signable: true
+                    order: 1
+                    inputs:
+                      - id: cc82f7ea-f914-4e29-b0d3-bd913c6a1615
+                        type: SIGNATURE_TEXT
+                        partyReference: partyTest-001
+                        status: PENDING
+                        position:
+                          type: PLACEHOLDER
+                          identifier: signature-001
+                      - id: 6feb3cb5-12b9-4fcf-b2ed-c1f620556068
+                        type: SIGNATURE_TEXT
+                        partyReference: partyTest-002
+                        status: PENDING
+                        position:
+                          type: PLACEHOLDER
+                          identifier: signature-002
+                    pages: []
+                  - id: e14e4809-4c31-4e8b-8e06-6f3dbb289b0d
+                    name: Addendum to tenancy agreement
+                    signable: false
+                    order: 2
+                    inputs: []
+                    metaData:
+                      externalDocId: 0178-4aa6-803f
+                events:
+                  - id: ba593f45-6f68-459e-8217-5b0b1d110535
+                    partyId: 9ba431fa-2dba-425b-a8cc-3b301c93d403
+                    occurredAt: '2020-09-16T07:45:06.493086+00:00'
+                    type: BINDER_CREATED
+                created: '2017-07-05T13:47:49+01:00'
+                defaultMessage: Invitation to sign
+                requests: []
+                timeOffset: '-09:00'
+                dateFormat: MM/DD/YYYY
+                configuration:
+                  locale:
+                    country: US
+                    language: en
+              schema:
+                $ref: '#/components/schemas/BinderOut'
+      description: |
+        <b>Allowed roles:</b> FRONTEND (all parties), BACKEND<br/>
+        Retrieves binder
+      operationId: GET_binders-binderId
+      parameters:
+        - name: Accept
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/json
+              - application/pdf
+            type: string
+        - name: unsigned
+          in: query
+          description: |
+            If present, then unsigned versions of all documents are served as a merged PDF.
+            Unsigned is in fact the last uploaded version of the document (just before invitation was triggered).
+          schema:
+            type: string
+    delete:
+      responses:
+        '204':
+          description: The binder has been deleted
+      description: |
+        <b>Allowed roles:</b> BACKEND<br/>
+        Deletes binder
+      operationId: DELETE_binders-binderId
+    patch:
+      responses:
+        '200':
+          description: The binder has been updated
+          content:
+            application/json:
+              example:
+                id: 936b41f1-66bc-4076-8d0e-5025b8f4b700
+                name: Assured shorthold tenancy binder
+                status: IN_PREPARATION
+                parties:
+                  - id: 9ba431fa-2dba-425b-a8cc-3b301c93d403
+                    reference: partyTest-001
+                    legalName: Owner Test
+                    email: user1@rocketlawyer.co.uk
+                    personId: b83a1b1e-04b2-4c74-b4eb-c1d3da1a9831
+                    roles:
+                      - OWNER
+                      - SIGNER
+                    metaData:
+                      partyMetaData1: stringValue1
+                      partyMetaData2: 3.14159
+                      partyMetaData3: false
+                    status: PENDING
+                  - id: 74eaab2f-7e0a-4d04-a6f9-224d481a53be
+                    reference: partyTest-002
+                    legalName: Signer1 Test
+                    email: user2@rocketlawyer.co.uk
+                    roles:
+                      - SIGNER
+                    status: PENDING
+                documents:
+                  - id: 22feb59b-678b-40bf-9ced-3d8458b8e153
+                    name: Assured Shorthold Tenancy Agreement 2
+                    signable: true
+                    order: 1
+                    inputs:
+                      - id: cc82f7ea-f914-4e29-b0d3-bd913c6a1615
+                        type: SIGNATURE_TEXT
+                        partyReference: partyTest-001
+                        status: PENDING
+                        position:
+                          type: PLACEHOLDER
+                          identifier: signature-001
+                      - id: 6feb3cb5-12b9-4fcf-b2ed-c1f620556068
+                        type: SIGNATURE_TEXT
+                        partyReference: partyTest-002
+                        status: PENDING
+                        position:
+                          type: PLACEHOLDER
+                          identifier: signature-002
+                    pages: []
+                  - id: e14e4809-4c31-4e8b-8e06-6f3dbb289b0d
+                    name: Addendum to tenancy agreement
+                    signable: false
+                    order: 2
+                    inputs: []
+                    metaData:
+                      externalDocId: 0178-4aa6-803f
+                events:
+                  - id: ba593f45-6f68-459e-8217-5b0b1d110535
+                    partyId: 9ba431fa-2dba-425b-a8cc-3b301c93d403
+                    occurredAt: '2020-09-16T07:45:06.493086+00:00'
+                    type: BINDER_CREATED
+                created: '2017-07-05T13:47:49+01:00'
+                defaultMessage: Invitation to sign
+                requests: []
+                timeOffset: '-09:00'
+                dateFormat: MM/DD/YYYY
+                configuration:
+                  locale:
+                    country: US
+                    language: en
+              schema:
+                $ref: '#/components/schemas/BinderOut'
+      description: |
+        <b>Allowed roles:</b> FRONTEND (OWNER only), BACKEND<br/>
+        Updates binder
+        <ul>
+        <li>A binder can be updated only when it is in the IN_PREPARATION status.</li>
+        <li>Updates comply as per RFC-7396</li>
+        </ul>
+      operationId: PATCH_binders-binderId
+      requestBody:
+        content:
+          application/json:
+            example:
+              name: Binder1 name changed
+              parties:
+                - id: 9ba431fa-2dba-425b-a8cc-3b301c93d403
+                  legalName: Owner Test changed
+                  email: user1_changed@rocketlawyer.co.uk
+                  metaData: null
+                - id: 74eaab2f-7e0a-4d04-a6f9-224d481a53be
+            schema:
+              $ref: '#/components/schemas/UpdateBinderIn'
+        required: true
+      parameters:
+        - name: Content-Type
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/merge-patch+json
+            type: string
+    parameters:
+      - name: binderId
+        in: path
+        required: true
+        schema:
+          type: string
+  '/binders/{binderId}/status':
+    get:
+      responses:
+        '200':
+          description: Status of the binder and result of preflight validations
+          content:
+            application/json:
+              example:
+                status: IN_PREPARATION
+                readyForSign: false
+                unfilledConditions:
+                  - status: 400
+                    code: error.client.condition.singleMatchingPlaceholderIdentifier
+                    title: Unfilled condition
+                    detail: 'Invalid identifier (_ID_1234_), not found in uploaded document'
+                    source:
+                      pointer: /documents/0/inputs/3/position/identifier
+                  - status: 400
+                    code: error.client.condition.documentContentUploaded
+                    title: Unfilled condition
+                    detail: Document content has to be uploaded
+                    source:
+                      pointer: /documents/1
+              schema:
+                $ref: '#/components/schemas/StatusOut'
+      description: |
+        <b>Allowed roles:</b> FRONTEND (all parties), BACKEND<br/>
+        Series of validations (preflight check) is performed on binder with status IN_PREPARATION.
+        Response clearly indicates if binder is ready to be FINALISED or if some changes are still needed.
+      operationId: GET_binders-binderId-status
+      parameters:
+        - name: Accept
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/json
+            type: string
+    parameters:
+      - name: binderId
+        in: path
+        required: true
+        schema:
+          type: string
+  '/binders/{binderId}/locks':
+    post:
+      responses:
+        '201':
+          description: The lock has been created (acquired).
+          content:
+            application/json:
+              example:
+                id: 373b69fc-9c60-47b1-85f5-0f6f179fde18
+                reason: Reason for the Lock
+                type: CANCELLATION
+              schema:
+                $ref: '#/components/schemas/LockOut'
+      description: |
+        <b>Allowed roles:</b> BACKEND <br/>
+        Creates of lock preventing certain actions on the binder. In example having a cancellation lock on a binder will prevent signing from being cancelled.
+      operationId: POST_binders-binderId-locks
+      requestBody:
+        content:
+          application/json:
+            example:
+              type: CANCELLATION
+              reason: Reason for the Lock
+            schema:
+              $ref: '#/components/schemas/LockIn'
+        required: true
+      parameters:
+        - name: Accept
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/json
+            type: string
+    parameters:
+      - name: binderId
+        in: path
+        required: true
+        schema:
+          type: string
+  '/binders/{binderId}/locks/{lockId}':
+    delete:
+      responses:
+        '204':
+          description: The lock has been deleted (released).
+      description: |
+        <b>Allowed roles:</b> BACKEND <br/>
+        Delete a lock from the binder.
+        Locks can be deleted only by the client that acquired the lock
+      operationId: DELETE_binders-binderId-locks-lockId
+      parameters:
+        - name: Accept
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/json
+            type: string
+    parameters:
+      - name: lockId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: binderId
+        in: path
+        required: true
+        schema:
+          type: string
+  '/binders/{binderId}/parties':
+    get:
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              example:
+                id: 03cf517c-dee7-4e72-b2b7-dc6086dc4f47
+                reference: partyTest-003
+                legalName: Ashima 'SIGNER'
+                email: aParty+SIGNER@rocketlawyer.co.uk
+                personId: b83a1b1e-04b2-4c74-b4eb-c1d3da1a9831
+                roles:
+                  - SIGNER
+                status: PENDING
+              schema:
+                $ref: '#/components/schemas/PartyOut'
+        '400':
+          description: The party ID from the passed Service Token is not present in the Binder object.
+        '403':
+          description: Passed service token does not give permission to view parties of this Binder.
+      description: |
+        <b>Allowed roles:</b> FRONTEND (OWNER only), BACKEND<br/>
+        Get party represented by service token.
+      operationId: GET_binders-binderId-parties
+      parameters:
+        - name: serviceToken
+          in: query
+          required: true
+          description: Service Token of a party to check the details about
+          schema:
+            type: string
+    post:
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              example:
+                id: 03cf517c-dee7-4e72-b2b7-dc6086dc4f47
+                reference: partyTest-003
+                legalName: He Who Must Not Be Named
+                email: signer@rocketlawyer.co.uk
+                personId: b83a1b1e-04b2-4c74-b4eb-c1d3da1a9831
+                roles:
+                  - SIGNER
+                status: PENDING
+              schema:
+                $ref: '#/components/schemas/PartyOut'
+      description: |
+        <b>Allowed roles:</b> FRONTEND (OWNER only), BACKEND<br/>
+        Add a party to a binder
+        <ul>
+          <li>Normally a party can be added only when the binder is in the `IN_PREPARATION` state.</li>
+          <li>A party with the `VIEWER` role can be added even after sign invitation is triggered. If the party is added
+          after sign invitation, an email containing link to binder will be send to the recently
+          added viewer.</li>
+        </ul>
+      operationId: POST_binders-binderId-parties
+      requestBody:
+        content:
+          application/json:
+            example:
+              reference: partyTest-002
+              legalName: Ashima 'SIGNER'
+              email: example+SIGNER@rocketlawyer.co.uk
+              roles:
+                - SIGNER
+            schema:
+              $ref: '#/components/schemas/CreatePartyIn'
+        required: true
+      parameters:
+        - name: Content-Type
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/json
+            type: string
+    parameters:
+      - name: binderId
+        in: path
+        required: true
+        schema:
+          type: string
+  '/binders/{binderId}/parties/{partyId}':
+    patch:
+      responses:
+        '200':
+          description: The binder has been updated
+          content:
+            application/json:
+              example:
+                legalName: Owner Test changed
+                email: user1_changed@rocketlawyer.co.uk
+              schema:
+                $ref: '#/components/schemas/PartyOut'
+      description: |
+        <b>Allowed roles:</b> FRONTEND (OWNER only), BACKEND<br/>
+        Update party.
+          <ul>
+          <li>A party can be updated only when binder is in the `IN_PREPARATION` state.</li>
+          <li>Updates comply with RFC-7396</li>
+          </ul>
+      operationId: PATCH_binders-binderId-parties-partyId
+      requestBody:
+        content:
+          application/json:
+            example:
+              legalName: Owner Test changed
+              email: user1_changed@rocketlawyer.co.uk
+            schema:
+              $ref: '#/components/schemas/PatchPartyIn'
+        required: true
+      parameters:
+        - name: Content-Type
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/merge-patch+json
+            type: string
+    delete:
+      responses:
+        '204':
+          description: Party has been deleted
+      description: |
+        <b>Allowed roles:</b> FRONTEND (OWNER only), BACKEND<br/>
+        Delete a party.
+        <ul>
+          <li>Normally a party can only be deleted when binder is in the `IN_PREPARATION` state.</li>
+          <li>If the party has the `VIEWER` role, it may be deleted even when the binder is in a different state.</li>
+          <li>The owning party cannot be deleted.</li>
+        </ul>
+      operationId: DELETE_binders-binderId-parties-partyId
+    parameters:
+      - name: partyId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: binderId
+        in: path
+        required: true
+        schema:
+          type: string
+  '/binders/{binderId}/documents':
+    post:
+      responses:
+        '201':
+          description: Document created
+          content:
+            application/json:
+              example:
+                id: a023c3c5-5859-40a1-a2a6-150a75c35ab6
+                name: Tenancy agreement
+                signable: true
+                order: 1
+                inputs:
+                  - id: 3071aec4-94c7-490e-a721-f9008f418dbb
+                    type: SIGNATURE_TEXT
+                    position:
+                      type: SIGNATURE_PAGE
+                    status: PENDING
+                    partyReference: partyTest-001
+                  - id: 8e48c3f5-1957-43af-91bc-7fe5358e55b2
+                    type: SIGNATURE_TEXT
+                    position:
+                      type: SIGNATURE_PAGE
+                    status: PENDING
+                    partyReference: partyTest-002
+              schema:
+                $ref: '#/components/schemas/DocumentOut'
+      description: |
+        <b>Allowed roles:</b> FRONTEND (OWNER only), BACKEND<br/>
+        Adds a document to a binder.
+      operationId: POST_binders-binderId-documents
+      requestBody:
+        content:
+          application/json:
+            example:
+              name: Tenancy agreement
+              order: 1
+              inputs:
+                - type: SIGNATURE_TEXT
+                  partyReference: partyTest-001
+                  position:
+                    type: SIGNATURE_PAGE
+                - type: SIGNATURE_TEXT
+                  partyReference: partyTest-002
+                  position:
+                    type: SIGNATURE_PAGE
+            schema:
+              $ref: '#/components/schemas/CreateDocumentIn'
+        required: true
+      parameters:
+        - name: Content-Type
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/json
+            type: string
+    parameters:
+      - name: binderId
+        in: path
+        required: true
+        schema:
+          type: string
+  '/binders/{binderId}/documents/{documentId}':
+    get:
+      responses:
+        '303':
+          description: Redirection to the file
+          headers:
+            location:
+              description: location of the resource where the client should be redirected to
+              schema:
+                type: string
+      description: |
+        <b>Allowed roles:</b> FRONTEND, BACKEND<br/>
+        Retrieves a document in the format defined by Accept header.<br/>
+        If the file type is not supported, a status code of 412 (Precondition Failed) is returned.
+      operationId: GET_binders-binderId-documents-documentId
+      parameters:
+        - name: Accept
+          in: header
+          required: false
+          schema:
+            enum:
+              - application/pdf
+              - text/html
+            type: string
+        - name: unsigned
+          in: query
+          description: |
+            If present, then an unsigned version of the document is served.
+            Unsigned is in fact the last uploaded version of the document (just before invitation was triggered).
+          schema:
+            type: string
+    put:
+      responses:
+        '200':
+          description: Content of document has been uploaded
+          content:
+            application/json:
+              example:
+                id: 0a2fcbd7-1067-41b3-b8b5-0465c25aa444
+                name: Assured Shorthold Tenancy Agreement
+                signable: true
+                order: 1
+                originalContentChecksum: c72bb8592e2299f1d1d7ef2aa940015d36380f029234943e09684606416fdaf5
+                inputs:
+                  - id: 678f5202-ef56-4a05-9923-369c87bac6a4
+                    type: SIGNATURE_TEXT
+                    partyReference: partyTest-001
+                    status: PENDING
+                    position:
+                      type: SIGNATURE_PAGE
+                  - id: abedaa7d-71c4-4e2f-b019-b72489ef1dbd
+                    type: SIGNATURE_TEXT
+                    partyReference: partyTest-002
+                    status: PENDING
+                    position:
+                      type: SIGNATURE_PAGE
+              schema:
+                $ref: '#/components/schemas/DocumentOut'
+      description: |
+        <b>Allowed roles:</b> FRONTEND (OWNER only), BACKEND<br/>
+        Uploads content of document
+      operationId: PUT_binders-binderId-documents-documentId
+      requestBody:
+        content:
+          application/pdf:
+            schema:
+              type: string
+              format: binary
+          text/html:
+            schema:
+              type: string
+              format: binary
+        required: true
+      parameters:
+        - name: Content-Type
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/pdf
+              - text/html
+            type: string
+    patch:
+      responses:
+        '200':
+          description: Document was updated
+          content:
+            application/json:
+              example:
+                id: 0a2fcbd7-1067-41b3-b8b5-0465c25aa444
+                name: Assured Shorthold Tenancy Agreement
+                signable: true
+                order: 1
+                originalContentChecksum: c72bb8592e2299f1d1d7ef2aa940015d36380f029234943e09684606416fdaf5
+                inputs:
+                  - id: abedaa7d-71c4-4e2f-b019-b72489ef1dbd
+                    type: SIGNATURE_TEXT
+                    partyReference: partyTest-002
+                    status: PENDING
+                    position:
+                      type: PLACEHOLDER
+                      identifier: signature-002
+              schema:
+                $ref: '#/components/schemas/DocumentOut'
+      description: |
+        <b>Allowed roles:</b> FRONTEND (OWNER only), BACKEND<br/>
+        Update document:
+        <ul>
+          <li>A document can be updated only when the binder containing it is in the `IN_PREPARATION` state.</li>
+          <li>Non-editable parts are: id, originalContentChecksum, contentType</li>
+          <li>Updates comply with RFC-7396</li>
+        </ul>
+      operationId: PATCH_binders-binderId-documents-documentId
+      requestBody:
+        content:
+          application/json:
+            example:
+              name: new document name
+              inputs:
+                - type: SIGNATURE_TEXT
+                  partyReference: partyTest-002
+                  position:
+                    type: PLACEHOLDER
+                    identifier: signature-002
+            schema:
+              $ref: '#/components/schemas/PatchDocumentIn'
+        required: true
+      parameters:
+        - name: Content-Type
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/merge-patch+json
+            type: string
+    delete:
+      responses:
+        '204':
+          description: The document has been deleted
+      description: |
+        <b>Allowed roles:</b> FRONTEND (OWNER only), BACKEND<br/>
+        Delete document:
+        <ul>
+          <li>A document can be deleted only when the binder containing it is in the `IN_PREPARATION` state.</li>
+        </ul>
+      operationId: DELETE_binders-binderId-documents-documentId
+    parameters:
+      - name: documentId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: binderId
+        in: path
+        required: true
+        schema:
+          type: string
+  '/binders/{binderId}/documents/{documentId}/inputs':
+    post:
+      responses:
+        '201':
+          description: Input created
+          content:
+            application/json:
+              example:
+                id: 92caa253-b3fd-43a3-947b-38694906804d
+                type: SIGNATURE_TEXT
+                position:
+                  type: ABSOLUTE
+                  pageId: 9b4e639c-b9b7-444d-8c76-fd505c09589a
+                  xOffset: 0
+                  yOffset: 0
+                  width: 100
+                  height: 100
+                  hAlignment: CENTER
+                  vAlignment: MIDDLE
+                status: PENDING
+                partyReference: partyTest-002
+                configuration:
+                  autoComplete: true
+              schema:
+                $ref: '#/components/schemas/InputOut'
+      description: |
+        <b>Allowed roles:</b> FRONTEND (OWNER only), BACKEND<br/>
+        Adds a new input to the given document
+      operationId: POST_binders-binderId-documents-documentId-inputs
+      requestBody:
+        content:
+          application/json:
+            example:
+              type: SIGNATURE_TEXT
+              position:
+                type: ABSOLUTE
+                pageId: 9b4e639c-b9b7-444d-8c76-fd505c09589a
+                xOffset: 0
+                yOffset: 0
+                width: 100
+                height: 100
+                hAlignment: CENTER
+                vAlignment: MIDDLE
+              partyReference: partyTest-002
+              configuration:
+                autoComplete: true
+            schema:
+              $ref: '#/components/schemas/CreateInputIn'
+        required: true
+      parameters:
+        - name: Content-Type
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/json
+            type: string
+    parameters:
+      - name: documentId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: binderId
+        in: path
+        required: true
+        schema:
+          type: string
+  '/binders/{binderId}/documents/{documentId}/inputs/{inputId}':
+    patch:
+      responses:
+        '200':
+          description: Input was updated
+          content:
+            application/json:
+              example:
+                id: 92caa253-b3fd-43a3-947b-38694906804d
+                type: SIGNATURE_TEXT
+                position:
+                  type: ABSOLUTE
+                  pageId: 9b4e639c-b9b7-444d-8c76-fd505c09589a
+                  xOffset: 0
+                  yOffset: 0
+                  width: 100
+                  height: 100
+                  hAlignment: CENTER
+                  vAlignment: MIDDLE
+                status: PENDING
+                partyReference: partyTest-002
+                configuration:
+                  autoComplete: true
+              schema:
+                $ref: '#/components/schemas/InputOut'
+      description: |
+        <b>Allowed roles:</b> FRONTEND (OWNER only), BACKEND<br/>
+        Update input.
+        <ul>
+           <li>An input can be updated only when the binder that contains it is in the `IN_PREPARATION` state.</li>
+           <li>Updates comply with RFC-7396</li>
+         </ul>
+      operationId: PATCH_binders-binderId-documents-documentId-inputs-inputId
+      requestBody:
+        content:
+          application/json:
+            example:
+              type: SIGNATURE_TEXT
+              partyReference: partyTest-002
+            schema:
+              $ref: '#/components/schemas/PatchInputIn'
+        required: true
+      parameters:
+        - name: Content-Type
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/merge-patch+json
+            type: string
+    delete:
+      responses:
+        '204':
+          description: The input has been deleted
+      description: |
+        <b>Allowed roles:</b> FRONTEND (OWNER only), BACKEND<br/>
+        Delete input.
+        <ul>
+          <li>A input can be deleted only when the binder that contains it is in the `IN_PREPARATION` status.</li>
+        </ul>
+      operationId: DELETE_binders-binderId-documents-documentId-inputs-inputId
+    parameters:
+      - name: inputId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: documentId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: binderId
+        in: path
+        required: true
+        schema:
+          type: string
+  '/binders/{binderId}/documents/{documentId}/pages/{pageId}':
+    get:
+      responses:
+        '303':
+          description: Address of PNG image in storage
+      description: |
+        <b>Allowed roles:</b> FRONTEND (all parties), BACKEND<br/>
+        Retrieves single page in specified format. Only supported format is PNG for now.
+      operationId: GET_binders-binderId-documents-documentId-pages-pageId
+      parameters:
+        - name: Accept
+          in: header
+          required: true
+          schema:
+            enum:
+              - image/png
+            type: string
+        - name: resolution
+          in: query
+          description: |
+            Resolution of generated PNG in DPIs.<br/><ul><li>Minimum value: 10</li><li>Maximum value: 300</li><li>Default value: 150</li></ul>Predefined values:
+            <ul>
+              <li><b>thumbnail</b> - 72dpi</li>
+              <li><b>small</b> - 92dpi</li>
+              <li><b>medium</b> - 150dpi</li>
+              <li><b>large</b> - 300dpi</li>
+            </ul>
+          schema:
+            type: string
+    parameters:
+      - name: pageId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: documentId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: binderId
+        in: path
+        required: true
+        schema:
+          type: string
+  '/binders/{binderId}/requests/finalisations':
+    post:
+      responses:
+        '201':
+          description: The request to send reminder was registered
+          content:
+            application/json:
+              example:
+                id: d017e8a7-1330-4812-8093-4be0124e12a1
+                type: FINALISATION
+                message: You were invited to review document
+                recipients:
+                  - partyId: 097b9e7f-b715-45f6-903b-238a297a5346
+                    emailUsed: leia.organa@starwars.com
+                    binderUrl: 'https://www.rocketlawyer.com/us/en/sign#serviceToken=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJyb2NrZXRsYXd5ZXIuY29tIiwiYXVkIjpbInJvY2tldGxhd3llci5jb20vc2VydmljZS10b2tlbnMiXSwiZXhwIjoxNTM1NzkzMDk3LCJpYXQiOjE1Mjc4NDQyOTcsInNydiI6eyJleHBpcmF0aW9uVGltZSI6MTUzNTc5MzA5Nywib3JpZ2luYWxDbGllbnRJZCI6ImQ1YmY2MGEwLWU2MTgtNDM1Yi05MDg1LTQxMGIwYjQ0M2E5MiIsInB1cnBvc2UiOiJhcGkucm9ja2V0bGF3eWVyLmNvbS9yb2NrZXRzaWduL2JpbmRlci9zaWduIiwidXBpZCI6ImY1NDkyODM3LTM4NDUtNDZjMi1hNDRhLWE2YTJmYmY2OTIzNyJ9fQ.cAkcatMQYu_epyacNPBeAuEjiMEadk1HCyGHIFlBXVA'
+                created: '2018-05-25T17:16:38+01:00'
+              schema:
+                $ref: '#/components/schemas/FinalisationOut'
+      description: |
+        <b>Allowed roles:</b> FRONTEND (only document owner), BACKEND<br/>
+        Performs pre-flight checks and moves binder into `REVIEW_AND_SHARE` state. Invitations are also sent to `VIEWER`s
+      operationId: POST_binders-binderId-requests-finalisations
+      requestBody:
+        content:
+          application/json:
+            example:
+              message: You were invited to review document
+              recipients:
+                - partyId: 097b9e7f-b715-45f6-903b-238a297a5346
+                  emailUsed: leia.organa@starwars.com
+                  binderUrl: 'https://www.rocketlawyer.com/us/en/sign#serviceToken=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJyb2NrZXRsYXd5ZXIuY29tIiwiYXVkIjpbInJvY2tldGxhd3llci5jb20vc2VydmljZS10b2tlbnMiXSwiZXhwIjoxNTM1NzkzMDk3LCJpYXQiOjE1Mjc4NDQyOTcsInNydiI6eyJleHBpcmF0aW9uVGltZSI6MTUzNTc5MzA5Nywib3JpZ2luYWxDbGllbnRJZCI6ImQ1YmY2MGEwLWU2MTgtNDM1Yi05MDg1LTQxMGIwYjQ0M2E5MiIsInB1cnBvc2UiOiJhcGkucm9ja2V0bGF3eWVyLmNvbS9yb2NrZXRzaWduL2JpbmRlci9zaWduIiwidXBpZCI6ImY1NDkyODM3LTM4NDUtNDZjMi1hNDRhLWE2YTJmYmY2OTIzNyJ9fQ.cAkcatMQYu_epyacNPBeAuEjiMEadk1HCyGHIFlBXVA'
+            schema:
+              $ref: '#/components/schemas/FinalisationIn'
+        required: true
+      parameters:
+        - name: Content-Type
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/json
+            type: string
+    parameters:
+      - name: binderId
+        in: path
+        required: true
+        schema:
+          type: string
+  '/binders/{binderId}/requests/invitations':
+    post:
+      responses:
+        '201':
+          description: The invitation request was successfully processed
+          content:
+            application/json:
+              example:
+                id: a017e8a7-1330-4812-8093-4be0124e12a1
+                type: SIGN_INVITATION
+                subject: Tenancy agreement to be signed
+                message: Please sign our tenancy agreement
+                recipients:
+                  - partyId: 087b9e7f-b715-45f6-903b-238a297a5346
+                    binderUrl: 'https://www.rocketlawyer.com/us/en/sign#serviceToken=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJyb2NrZXRsYXd5ZXIuY29tIiwiYXVkIjpbInJvY2tldGxhd3llci5jb20vc2VydmljZS10b2tlbnMiXSwiZXhwIjoxNTM1NzkzMDk3LCJpYXQiOjE1Mjc4NDQyOTcsInNydiI6eyJleHBpcmF0aW9uVGltZSI6MTUzNTc5MzA5Nywib3JpZ2luYWxDbGllbnRJZCI6ImQ1YmY2MGEwLWU2MTgtNDM1Yi05MDg1LTQxMGIwYjQ0M2E5MiIsInB1cnBvc2UiOiJhcGkucm9ja2V0bGF3eWVyLmNvbS9yb2NrZXRzaWduL2JpbmRlci9zaWduIiwidXBpZCI6ImY1NDkyODM3LTM4NDUtNDZjMi1hNDRhLWE2YTJmYmY2OTIzNyJ9fQ.cAkcatMQYu_epyacNPBeAuEjiMEadk1HCyGHIFlBXVA'
+                    emailUsed: leia.organa@starwars.com
+                    notification: false
+                  - partyId: 2e3e39cd-498a-41d4-8d90-028869b34fbb
+                    binderUrl: 'https://www.starwars.com/sign#token=a97062b6b583ee7c464e825a'
+                    emailUsed: luke.skywalker@starwars.com
+                    notification: true
+                created: '2017-07-06T17:16:38+01:00'
+              schema:
+                $ref: '#/components/schemas/SignInvitationOut'
+      description: |
+        <b>Allowed roles:</b> FRONTEND (OWNER only), BACKEND<br/>
+        Starts the signing process by creating invitations
+        <ul>
+          <li>Collect signers as recipients if not provided in request</li>
+          <li>Change binder status changed to SIGN_IN_PROGRESS </li>
+          <li>Send invitation emails</li>
+        </ul>
+        If <b>recipients</b> list is not provided or is empty all signers (parties with SIGNER role) are invited.
+      operationId: POST_binders-binderId-requests-invitations
+      requestBody:
+        content:
+          application/json:
+            example:
+              subject: Tenancy agreement to be signed
+              message: Please sign our tenancy agreement
+              recipients:
+                - partyId: 087b9e7f-b715-45f6-903b-238a297a5346
+                  notification: false
+                  customMessage: 'hello, signer 1'
+                - partyId: 2e3e39cd-498a-41d4-8d90-028869b34fbb
+                  binderUrl: 'https://www.starwars.com/sign#token=a97062b6b583ee7c464e825a'
+                  notification: true
+                  customMessage: 'hello, signer 2'
+            schema:
+              $ref: '#/components/schemas/SignInvitationIn'
+        required: true
+      parameters:
+        - name: Content-Type
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/json
+            type: string
+    parameters:
+      - name: binderId
+        in: path
+        required: true
+        schema:
+          type: string
+  '/binders/{binderId}/requests/cancellations':
+    post:
+      responses:
+        '201':
+          description: The cancellation request was successfully processed
+          content:
+            application/json:
+              example:
+                id: a017e8a7-1330-4812-8093-4be0124e12a1
+                type: SIGN_CANCELLATION
+                reason: I found an error on contract
+                message: 'Sorry, signing was cancelled!'
+                recipients:
+                  - partyId: 087b9e7f-b715-45f6-903b-238a297a5346
+                    binderUrl: N/A
+                    emailUsed: leia.organa@starwars.com
+                    notification: true
+                  - partyId: 2e3e39cd-498a-41d4-8d90-028869b34fbb
+                    binderUrl: N/A
+                    emailUsed: luke.skywalker@starwars.com
+                    notification: true
+                created: '2017-07-06T17:16:38+01:00'
+              schema:
+                $ref: '#/components/schemas/SignCancellationOut'
+      description: |
+        <b>Allowed roles:</b> FRONTEND (OWNER only), BACKEND<br/>
+        Stops the signing process by cancelling invitations
+        <ul>
+          <li>Capture signers as notification recipients if recipients not specified in request</li>
+          <li>Bring binder and documents to state BEFORE invitation</li>
+          <li>Change binder status to `IN_PREPARATION`</li>
+          <li>Send cancellation notifications</li>
+        </ul>
+        If <b>recipients</b> list is not provided or is empty all signers (parties with SIGNER role) are notified.
+      operationId: POST_binders-binderId-requests-cancellations
+      requestBody:
+        content:
+          application/json:
+            example:
+              reason: I found an error on contract
+              message: 'Sorry, signing was cancelled!'
+              recipients:
+                - partyId: 087b9e7f-b715-45f6-903b-238a297a5346
+                  notification: false
+                  customMessage: 'hello, signer 1'
+                - partyId: 2e3e39cd-498a-41d4-8d90-028869b34fbb
+                  binderUrl: 'https://www.starwars.com/sign#token=a97062b6b583ee7c464e825a'
+                  notification: true
+                  customMessage: 'hello, signer 2'
+            schema:
+              $ref: '#/components/schemas/SignCancellationIn'
+        required: true
+      parameters:
+        - name: Content-Type
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/json
+            type: string
+    parameters:
+      - name: binderId
+        in: path
+        required: true
+        schema:
+          type: string
+  '/binders/{binderId}/requests/signatures':
+    post:
+      responses:
+        '201':
+          description: All signatures were recorded
+          content:
+            application/json:
+              example:
+                id: 0726ca46-e938-42cd-af09-25f5666f4b3f
+                type: SIGNATURE_RECORD
+                created: '2018-05-18T14:54:08.750898+00:00'
+                recipients:
+                  - partyId: ace6783e-b311-4429-81d2-aee89ec4ccf5
+                    emailUsed: leia.organa@starwars.com
+                    binderUrl: 'https://www.rocketlawyer.eu/us/en/sign#serviceToken=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJyb2NrZXRsYXd5ZXIuY29tIiwiYXVkIjpbInJvY2tldGxhd3llci5jb20vc2VydmljZS10b2tlbnMiXSwiZXhwIjoxNTM1NzkzMDk3LCJpYXQiOjE1Mjc4NDQyOTcsInNydiI6eyJleHBpcmF0aW9uVGltZSI6MTUzNTc5MzA5Nywib3JpZ2luYWxDbGllbnRJZCI6ImQ1YmY2MGEwLWU2MTgtNDM1Yi05MDg1LTQxMGIwYjQ0M2E5MiIsInB1cnBvc2UiOiJhcGkucm9ja2V0bGF3eWVyLmNvbS9yb2NrZXRzaWduL2JpbmRlci9zaWduIiwidXBpZCI6ImY1NDkyODM3LTM4NDUtNDZjMi1hNDRhLWE2YTJmYmY2OTIzNyJ9fQ.cAkcatMQYu_epyacNPBeAuEjiMEadk1HCyGHIFlBXVA'
+                    notification: true
+                  - partyId: 26ac2136-d1c6-4be7-af83-263b7aa48f2d
+                    emailUsed: luke.skywalker@starwars.com
+                    binderUrl: 'https://www.rocketlawyer.eu/us/en/sign#serviceToken=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJyb2NrZXRsYXd5ZXIuY29tIiwiYXVkIjpbInJvY2tldGxhd3llci5jb20vc2VydmljZS10b2tlbnMiXSwiZXhwIjoxNTM1NzkzMDk3LCJpYXQiOjE1Mjc4NDQyOTcsInNydiI6eyJleHBpcmF0aW9uVGltZSI6MTUzNTc5MzA5Nywib3JpZ2luYWxDbGllbnRJZCI6ImQ1YmY2MGEwLWU2MTgtNDM1Yi05MDg1LTQxMGIwYjQ0M2E5MiIsInB1cnBvc2UiOiJhcGkucm9ja2V0bGF3eWVyLmNvbS9yb2NrZXRzaWduL2JpbmRlci9zaWduIiwidXBpZCI6ImY1NDkyODM3LTM4NDUtNDZjMi1hNDRhLWE2YTJmYmY2OTIzNyJ9fQ.cAkcatMQYu_epyacNPBeAuEjiMEadk1HCyGHIFlBXVA'
+                    notification: true
+                data:
+                  signatures:
+                    - id: cc82f7ea-f914-4e29-b0d3-bd913c6a1615
+                      font:
+                        type: DANCING_SCRIPT
+                      value: John Doe
+                    - id: 0541e916-3088-461f-835b-e15038f135f7
+                      value: '2017-07-05'
+                    - id: 0541e916-3088-461f-835b-e150354261324
+                      type: IMAGE
+              schema:
+                $ref: '#/components/schemas/SignaturesOut'
+      description: |
+        <b>Allowed roles:</b> FRONTEND (all parties), BACKEND<br/>
+        Records signature inputs provided by a signer. All inputs provided should reference same party (related to a single signer).
+      operationId: POST_binders-binderId-requests-signatures
+      requestBody:
+        content:
+          application/json:
+            example:
+              data:
+                signatures:
+                  - id: cc82f7ea-f914-4e29-b0d3-bd913c6a1615
+                    font:
+                      type: DANCING_SCRIPT
+                      minFontSizeInPx: 10
+                    value: John Doe
+                  - id: 0541e916-3088-461f-835b-e15038f135f7
+                    value: '2017-07-05'
+                  - id: 0541e916-3088-461f-835b-e150354261324
+                    value: PHN2ZyBoZWlnaHQ9IjEwMCIgd2lkdGg9IjEwMCI+CiAgPGNpcmNsZSBjeD0iNTAiIGN5PSI1MCIgcj0iNDAiIHN0cm9rZT0iYmxhY2siIHN0cm9rZS13aWR0aD0iMyIgZmlsbD0icmVkIiAvPgo8L3N2Zz4g
+                    type: IMAGE
+            schema:
+              $ref: '#/components/schemas/SignaturesIn'
+        required: true
+      parameters:
+        - name: Content-Type
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/json
+            type: string
+    parameters:
+      - name: binderId
+        in: path
+        required: true
+        schema:
+          type: string
+  '/binders/{binderId}/requests/declines':
+    post:
+      responses:
+        '201':
+          description: The signature decline was recorded
+          content:
+            application/json:
+              example:
+                id: a017e8a7-1330-4812-8093-4be0124e12a1
+                type: SIGNATURE_DECLINE
+                reason: Other
+                message: I changed my mind
+                recipients:
+                  - partyId: 087b9e7f-b715-45f6-903b-238a297a5346
+                    binderUrl: N/A
+                    emailUsed: leia.organa@starwars.com
+                    notification: true
+                  - partyId: 2e3e39cd-498a-41d4-8d90-028869b34fbb
+                    binderUrl: N/A
+                    emailUsed: luke.skywalker@starwars.com
+                    notification: true
+                created: '2017-07-06T17:16:38+01:00'
+                data:
+                  partyId: 087b9e7f-b715-45f6-903b-238a297a5346
+              schema:
+                $ref: '#/components/schemas/DeclinesOut'
+      description: |
+        <b>Allowed roles:</b> FRONTEND (all parties with SIGNER role), BACKEND<br/>
+        Records that the signer declined to sign. The `OWNER` will be notified that this `SIGNER` has declined.
+      operationId: POST_binders-binderId-requests-declines
+      requestBody:
+        content:
+          application/json:
+            example:
+              reason: Other
+              message: I changed my mind
+              data:
+                partyId: 087b9e7f-b715-45f6-903b-238a297a5346
+            schema:
+              $ref: '#/components/schemas/DeclinesIn'
+        required: true
+      parameters:
+        - name: Content-Type
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/json
+            type: string
+    parameters:
+      - name: binderId
+        in: path
+        required: true
+        schema:
+          type: string
+  '/binders/{binderId}/requests/reminders':
+    post:
+      responses:
+        '201':
+          description: The request to send a reminder was registered
+          content:
+            application/json:
+              example:
+                id: d017e8a7-1330-4812-8093-4be0124e12a1
+                type: SIGN_REMINDER
+                message: This is to remind you that you have one document awaiting for your signature
+                recipients:
+                  - partyId: 097b9e7f-b715-45f6-903b-238a297a5346
+                    emailUsed: leia.organa@starwars.com
+                    binderUrl: 'https://www.rocketlawyer.com/us/en/sign#serviceToken=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJyb2NrZXRsYXd5ZXIuY29tIiwiYXVkIjpbInJvY2tldGxhd3llci5jb20vc2VydmljZS10b2tlbnMiXSwiZXhwIjoxNTM1NzkzMDk3LCJpYXQiOjE1Mjc4NDQyOTcsInNydiI6eyJleHBpcmF0aW9uVGltZSI6MTUzNTc5MzA5Nywib3JpZ2luYWxDbGllbnRJZCI6ImQ1YmY2MGEwLWU2MTgtNDM1Yi05MDg1LTQxMGIwYjQ0M2E5MiIsInB1cnBvc2UiOiJhcGkucm9ja2V0bGF3eWVyLmNvbS9yb2NrZXRzaWduL2JpbmRlci9zaWduIiwidXBpZCI6ImY1NDkyODM3LTM4NDUtNDZjMi1hNDRhLWE2YTJmYmY2OTIzNyJ9fQ.cAkcatMQYu_epyacNPBeAuEjiMEadk1HCyGHIFlBXVA'
+                  - partyId: 8e3e39cd-498a-41d4-8d90-028869b34fbb
+                    emailUsed: luke.skywalker@starwars.com
+                    binderUrl: 'https://www.rocketlawyer.com/us/en/sign#serviceToken=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJyb2NrZXRsYXd5ZXIuY29tIiwiYXVkIjpbInJvY2tldGxhd3llci5jb20vc2VydmljZS10b2tlbnMiXSwiZXhwIjoxNTM1NzkzMDk3LCJpYXQiOjE1Mjc4NDQyOTcsInNydiI6eyJleHBpcmF0aW9uVGltZSI6MTUzNTc5MzA5Nywib3JpZ2luYWxDbGllbnRJZCI6ImQ1YmY2MGEwLWU2MTgtNDM1Yi05MDg1LTQxMGIwYjQ0M2E5MiIsInB1cnBvc2UiOiJhcGkucm9ja2V0bGF3eWVyLmNvbS9yb2NrZXRzaWduL2JpbmRlci9zaWduIiwidXBpZCI6ImY1NDkyODM3LTM4NDUtNDZjMi1hNDRhLWE2YTJmYmY2OTIzNyJ9fQ.cAkcatMQYu_epyacNPBeAuEjiMEadk1HCyGHIFlBXVA'
+                created: '2018-05-25T17:16:38+01:00'
+              schema:
+                $ref: '#/components/schemas/SendReminderOut'
+      description: |
+        <b>Allowed roles:</b> FRONTEND (only document owner), BACKEND<br/>
+        Sends a reminders to sign or view the document to the given signers and/or viewers. It is possible to send the reminder only if the binder state is `SIGN_IN_PROGRESS`. Reminder requests will be ignored for signers that have already signed.
+      operationId: POST_binders-binderId-requests-reminders
+      requestBody:
+        content:
+          application/json:
+            example:
+              message: This is to remind you that you have one document awaiting for your signature
+              recipients:
+                - partyId: 097b9e7f-b715-45f6-903b-238a297a5346
+                  binderUrl: 'https://www.rocketlawyer.com/us/en/sign#serviceToken=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJyb2NrZXRsYXd5ZXIuY29tIiwiYXVkIjpbInJvY2tldGxhd3llci5jb20vc2VydmljZS10b2tlbnMiXSwiZXhwIjoxNTM1NzkzMDk3LCJpYXQiOjE1Mjc4NDQyOTcsInNydiI6eyJleHBpcmF0aW9uVGltZSI6MTUzNTc5MzA5Nywib3JpZ2luYWxDbGllbnRJZCI6ImQ1YmY2MGEwLWU2MTgtNDM1Yi05MDg1LTQxMGIwYjQ0M2E5MiIsInB1cnBvc2UiOiJhcGkucm9ja2V0bGF3eWVyLmNvbS9yb2NrZXRzaWduL2JpbmRlci9zaWduIiwidXBpZCI6ImY1NDkyODM3LTM4NDUtNDZjMi1hNDRhLWE2YTJmYmY2OTIzNyJ9fQ.cAkcatMQYu_epyacNPBeAuEjiMEadk1HCyGHIFlBXVA'
+                - partyId: 8e3e39cd-498a-41d4-8d90-028869b34fbb
+            schema:
+              $ref: '#/components/schemas/SendReminderIn'
+        required: true
+      parameters:
+        - name: Content-Type
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/json
+            type: string
+    parameters:
+      - name: binderId
+        in: path
+        required: true
+        schema:
+          type: string
+  '/binders/{binderId}/requests/viewers':
+    post:
+      responses:
+        '201':
+          description: Viewer added to the binder
+          content:
+            application/json:
+              example:
+                id: 4fa31663-0de3-4d2a-be10-3e12170b54f2
+                type: VIEWER_CREATION
+                created: '2019-02-26T11:29:12.576373+00:00'
+                recipients:
+                  - partyId: 4231a730-3103-41e6-aa9d-b526b7f86326
+                    emailUsed: user+newAdded@rocketlawyer.co.uk
+                    binderUrl: 'http://www.rocketlawyer.com/'
+                    notification: false
+                party:
+                  id: 4231a730-3103-41e6-aa9d-b526b7f86326
+                  reference: '123435'
+                  legalName: Christopher Pike
+                  email: ChristopherPike+newAdded@startrek.uss
+                  roles:
+                    - VIEWER
+                  status: INVITED
+                  metaData:
+                    userGlobalId: 11876876-0502-4f5a-96d0-8befc17175d6
+              schema:
+                $ref: '#/components/schemas/CreateViewersOut'
+      description: |
+        <b>Allowed roles:</b> FRONTEND (only document owner), BACKEND<br/>
+        Adds a party with the `VIEWER` role to a binder and sends view invitation notifications.
+        A `VIEWER` may be added during any binder state except in `IN_PREPARATION`.
+      operationId: POST_binders-binderId-requests-viewers
+      requestBody:
+        content:
+          application/json:
+            example:
+              party:
+                reference: '123435'
+                legalName: James Kirk
+                email: JamesKirk+newAdded@startrekoriginal.com
+                metaData:
+                  userGlobalId: 11876876-0502-4f5a-96d0-8befc17175d6
+              notification: false
+              binderUrl: www.rocketlawyer.co.uk
+            schema:
+              $ref: '#/components/schemas/CreateViewersIn'
+        required: true
+      parameters:
+        - name: Content-Type
+          in: header
+          required: true
+          schema:
+            enum:
+              - application/json
+            type: string
+    parameters:
+      - name: binderId
+        in: path
+        required: true
+        schema:
+          type: string
+components:
+  schemas:
+    UUID:
+      description: |
+        A unique ID. Generated by system, <b>Read-only</b>.
+      type: string
+    PatchUUID:
+      description: |
+        Unique id generated by server.
+      type: string
+    Json:
+      description: |
+        A free-form JSON object.
+      type: string
+    Status:
+      description: |
+        Supported states for binders:
+        <ul>
+          <li>IN_PREPARATION - When binder is created then initial status is IN_PREPARATION and binder stays in this status until parties are invited for signing. Also when signing is cancelled then binder status gets changed back to IN_PREPARATION. It is safe to say that when binder is in IN_PREPARATION status then sign process is in it's preparation stage. This is only status that allows API client to add/remove/update parties, documents and inputs. Some basic binder attributes (like binder name) can be changed in this status. This is only status that allows binder changes to binder and it's child entities. Basic validations are applied to endpoints that facilitate those changes but there is no guarantee that binder can be signed. It is responsibility of API client to populate binder so that is fit to be signed.
+
+        </li>
+          <li>REVIEW_AND_SHARE - As soon as finalisation is triggered and it's successfully performed (preflight check is successful), binder status is changed to `REVIEW_AND_SHARE`. This status essentially indicates that binder data are properly configured and binder is fit for sign. In this status binder is locked for changes and only Document_OWNER can record signatures. If DOCUMENT_OWNER is only signer then binder can be completed without passing SIGN_IN_PROGRESS status. If sign_cancellation is triggered then binder is going back into IN_PREPARATION status and gets unlocked for changes.</li>
+          <li>SIGN_IN_PROGRESS - After invitation to sign is triggered, binder status is changed to SIGN_IN_PROGRESS. This status essentially indicates that SIGNERs were notified and they can submit signatures (sign process is in it's execution stage). Binders stays in this status until all parties sign all theirs mandatory inputs or until sign_cancellation is triggered. When all inputs are signed, binder status proceeds to SIGN_COMPLETED. On the other hand, when signing is cancelled (on behalf of Document Owner) then binder status goes back to IN_PREPARATION.</li>
+          <li>SIGN_COMPLETED - Name of this status is also self-explanatory. When all mandatory inputs are successfully completed then status is changed to SIGN_COMPLETED and binder stays in this final status henceforward. Sign process is in it's final stage.
+
+        </li>
+        </ul>
+      enum:
+        - IN_PREPARATION
+        - REVIEW_AND_SHARE
+        - SIGN_IN_PROGRESS
+        - SIGN_COMPLETED
+      type: string
+    PartyRole:
+      description: |
+        Supported types of party roles:
+        <ul>
+          <li>OWNER - Creator of the binder who can prepare documents for signing, invite signers, cancel signing</li>
+          <li>SIGNER - A person who can read and sign the document</li>
+          <li>VIEWER - A person who can view the document and who receives the copy of the document</li>
+          <li>PAYER - A person who should pay the payee</li>
+          <li>PAYEE - A person who receives payment</li>
+        </ul>
+      enum:
+        - OWNER
+        - SIGNER
+        - VIEWER
+        - PAYER
+        - PAYEE
+      type: string
+    InputType:
+      description: |
+        Supported types of input:
+        <ul>
+          <li>SIGNATURE_TEXT - input used for rendering signature text (name) into the document</li>
+          <li>DATE_SIGNED - input used for rendering a date (day of signing) into document</li>
+          <li>INITIALS - input used to record initials of signer. Position type of either ABSOLUTE or STICKY` supported for this input type.</li>
+          <li>CUSTOM_TEXT - input used to record a custom text. Custom text is an answer/value for a prompt/question in the
+          document. Only position type ABSOLUTE is allowed for this input type.</li>
+        </ul>
+      enum:
+        - SIGNATURE_TEXT
+        - DATE_SIGNED
+        - INITIALS
+        - CUSTOM_TEXT
+      type: string
+    InputStatus:
+      description: |
+        Supported statuses of input:
+        <ul>
+          <li>PENDING - input is initialized</li>
+          <li>COMPLETED - input was completed by the party (text entered, checkbox checked, ...)</li>
+          <li>DECLINED - the party declined to complete the input</li>
+        </ul>
+      enum:
+        - PENDING
+        - COMPLETED
+        - DECLINED
+      type: string
+    PartyStatus:
+      description: |
+        Supported statuses of party:
+        <ul>
+          <li>PENDING - either the binder is in the preparation phase, or the party no longer has permission to access it</li>
+          <li>INVITED - the party has been invited to sign or to view</li>
+          <li>VIEWED - the party has opened the document (provided on a best-effort basis)</li>
+        </ul>
+      enum:
+        - PENDING
+        - INVITED
+        - VIEWED
+      type: string
+    InputPositionType:
+      description: |
+        Supported types of input position:
+        <ul>
+          <li>ABSOLUTE - position is specified by page, XY-coordinates, units of coordinates</li>
+          <li>PLACEHOLDER - the signature position is marked by a string of unique text</li>
+          <li>SIGNATURE_PAGE - separate signature page is appended to document</li>
+          <li>STICKY - position sticks to one corner. This position type is used for input type INITIALS</li>
+        </ul>
+      enum:
+        - ABSOLUTE
+        - PLACEHOLDER
+        - SIGNATURE_PAGE
+        - STICKY
+      type: string
+    Unit:
+      description: |
+        Supported unit types for postion coordinates:
+        <ul>
+          <li>PCT - Coordinates are in percent as fraction of container size</li>
+        </ul>
+      enum:
+        - PCT
+      type: string
+    FontType:
+      description: |
+        Supported font types
+      enum:
+        - CAVEAT_REGULAR
+        - SHADOW_INTO_LIGHT_TWO
+        - DANCING_SCRIPT
+        - JUST_ME_AGAIN_DOWN_HERE
+        - LORA
+        - TINOS
+        - OPEN_SANS
+      type: string
+    FontWeight:
+      description: |
+        Supported font weights
+      enum:
+        - NORMAL_400
+      type: string
+    RequestType:
+      description: |
+        Supported types of sign requests:
+        <ul>
+          <li>SIGN_INVITATION - Request that starts the signing process by sending invitations to signer-type parties</li>
+          <li>FINALISATION - Request used for finalizing the binder and putting it into REVIEW_AND_SHARE state</li>
+          <li>SIGN_CANCELLATION - Request that stops signing process by sending cancellation notifications to signer-type parties</li>
+          <li>SIGNATURE_RECORD - Request that records signatures provided by one of signer parties</li>
+          <li>VIEWER_CREATION - Request that adds viewer to the binder in any state except IN_PREPARATION</li>
+          <li><span style="color:red;"></span> SIGNATURE_DECLINE - Request that signature was decined by one of signer parties</li>
+          <li> SIGN_REMINDER - Request used for reminding the signer to view or sign the document</li>
+        </ul>
+      enum:
+        - SIGN_INVITATION
+        - FINALISATION
+        - SIGN_CANCELLATION
+        - SIGNATURE_RECORD
+        - VIEWER_CREATION
+        - SIGNATURE_DECLINE
+        - SIGN_REMINDER
+      type: string
+    Locale:
+      title: Locale
+      properties:
+        language:
+          default: |
+            Value from Partner's Configuration, or "en"
+          description: |
+            Language code - ISO 639-1. Used to create the URL of binder and to select template language version.
+          type: string
+        country:
+          default: |
+            Value from Partner's Configuration, or "US"
+          description: |
+            Country code - ISO 3166-1 alpha-2. Used to create the URL of binder and to select template language version.
+          type: string
+      type: object
+    BinderConfiguration:
+      title: Binder configuration
+      properties:
+        locale:
+          $ref: '#/components/schemas/Locale'
+      type: object
+    CreateBinderIn:
+      title: Binder
+      properties:
+        name:
+          description: |
+            Name of the binder.
+          type: string
+        defaultMessage:
+          description: |
+            Default message used in notifications. Used only if a message is not provided by a specific notification request.
+          type: string
+        parties:
+          description: |
+            Collection of parties in the binder.
+          type: array
+          items:
+            $ref: '#/components/schemas/CreatePartyIn'
+        documents:
+          description: |
+            Collection of documents in the binder.
+          type: array
+          items:
+            $ref: '#/components/schemas/CreateDocumentIn'
+        metaData:
+          description: |
+            Metadata associated with the binder.
+          $ref: '#/components/schemas/Json'
+        timeOffset:
+          default: '-08:00'
+          description: |
+            The offset from UTC in the format ±[hh]:[mm], ±[hh][mm], or ±[hh].
+          type: string
+        dateFormat:
+          default: |
+            Default value for particular brand is taken from your configuration. If this parameter is not configured then default value is 'MM-dd-yyyy'.
+          description: |
+            The date format used on signature page. Only following list supported date formats are accepted as valid date
+            formats: 'MM-dd-yyyy', 'MMM dd, yyyy', 'dd MMMM yyyy', 'dd/MM/yyyy', 'MM/dd/yyyy' and 'yyyy/MM/dd'.
+          type: string
+        configuration:
+          $ref: '#/components/schemas/BinderConfiguration'
+      required:
+        - name
+        - parties
+        - documents
+      type: object
+    CreatePartyIn:
+      title: new party
+      properties:
+        reference:
+          description: |
+            Reference to the party, unique in scope of binder. Used for linking a party with an input.
+          type: string
+        legalName:
+          description: |
+            Legal name of the party.
+          type: string
+        jobTitle:
+          description: |
+            Job title.
+          type: string
+        companyName:
+          description: |
+            Company name.
+          type: string
+        email:
+          description: |
+            Email address of the party. Notification emails are sent to this address. Email is only required for parties with the `OWNER` role.
+            <p>Validation: valid email (matches pattern)</p>
+          type: string
+        roles:
+          description: |
+            Collection of party roles.
+          type: array
+          items:
+            $ref: '#/components/schemas/PartyRole'
+        metaData:
+          description: |
+            Metadata associated with the party.
+          $ref: '#/components/schemas/Json'
+      required:
+        - reference
+        - legalName
+        - roles
+      type: object
+    CreateViewerIn:
+      title: new viewer
+      properties:
+        reference:
+          description: |
+            Reference to the party, unique in scope of binder.
+          type: string
+        legalName:
+          description: |
+            Legal name of the party.
+          type: string
+        jobTitle:
+          description: |
+            Job title.
+          type: string
+        companyName:
+          description: |
+            Company name.
+          type: string
+        email:
+          description: |
+            Email address of the party. Notification emails are sent to this address. Email is only required for parties with the `OWNER` role.
+            <p>Validation: valid email (matches pattern)</p>
+          type: string
+        metaData:
+          description: |
+            Metadata associated with the party.
+          $ref: '#/components/schemas/Json'
+      required:
+        - reference
+        - legalName
+      type: object
+    CreateViewerOut:
+      title: new party
+      properties:
+        reference:
+          description: |
+            Reference to the party, unique in scope of binder.
+          type: string
+        legalName:
+          description: |
+            Legal name of the party.
+          type: string
+        jobTitle:
+          description: |
+            Job title.
+          type: string
+        companyName:
+          description: |
+            Company name.
+          type: string
+        email:
+          description: |
+            Email address of the party. Notification emails are sent to this address. Email is only required for parties with the `OWNER` role.
+            <p>Validation: valid email (matches pattern)</p>
+          type: string
+        metaData:
+          description: |
+            Metadata associated with the party.
+          $ref: '#/components/schemas/Json'
+      required:
+        - reference
+        - legalName
+      type: object
+    CreateDocumentIn:
+      title: new document
+      properties:
+        name:
+          description: |
+            Name of the document.
+          type: string
+        signable:
+          default: true
+          description: |
+            Specifies if the document is signable or not.
+            Auxiliary/Accessory documents are usually not signable.
+          type: boolean
+        order:
+          description: |
+            Specifies order of the documents within the binder. The order of signable documents is used for the signing process.
+          type: integer
+        inputs:
+          description: |
+            A collection of inputs within the document.
+            This is not applicable for documents that are non-signable (document.signable=false), or for a document that uses hidden tags (InputPositionType.HIDDEN_TAG).
+          type: array
+          items:
+            $ref: '#/components/schemas/CreateInputIn'
+        metaData:
+          description: |
+            Metadata associated with the document.
+          $ref: '#/components/schemas/Json'
+      required:
+        - name
+        - order
+      type: object
+    InputConfiguration:
+      title: InputConfiguration
+      properties:
+        autoComplete:
+          description: |
+            Indicates if the input should be automatically completed during the signing. Can be used only with the `DATE_SIGNED` input type. The default value is 'false'.
+          type: boolean
+      type: object
+    CreateInputIn:
+      title: new input
+      properties:
+        type:
+          description: |
+            Type of the input. Supported types are listed in <b>InputType</b>.
+          $ref: '#/components/schemas/InputType'
+        partyReference:
+          description: |
+            Reference to a party that must interact with the input. For example: A party that completes the input in order to sign the document.
+            The value must be from the collection of references provided with parties of the binder.
+          type: string
+        optional:
+          description: |
+            Indicates whether the input is optional. If the input is marked as optional, the binder will be marked as
+            completed if the optional input is not signed but all other non-optional inputs are signed.
+          type: boolean
+        prompt:
+          description: |
+            This attribute is applicable only for the input type `CUSTOM_TEXT`. This is a question/label for the custom text
+            input value.
+          type: string
+        position:
+          description: |
+            This is the position of the input which an be specified in several ways:
+          $ref: '#/components/schemas/CreateInputPositionIn'
+        font:
+          description: |
+            Specification of Font (type, size, weight, color) used for a given input
+          $ref: '#/components/schemas/InputFont'
+        configuration:
+          $ref: '#/components/schemas/InputConfiguration'
+      required:
+        - type
+        - partyReference
+        - position
+      type: object
+    InputFont:
+      title: input font specification
+      properties:
+        type:
+          description: |
+            Type of signature text font. Supported types are listed in <b>FontType</b>.
+          $ref: '#/components/schemas/FontType'
+        sizeInPx:
+          description: |
+            Size of signature text in pixels. A predefined default is provided for each supported font.
+          type: integer
+        minFontSizeInPx:
+          description: |
+            This may be used by the backend to resize the text if it does not fit into the provided box. Value is the minimum font size we want the text to be down-scaled to when resizing.
+          type: integer
+        weight:
+          description: |
+            Weight of font variant. The only supported font weight is “NORMAL_400“, which is set by default.
+          $ref: '#/components/schemas/FontWeight'
+        color:
+          description: Color of the signature text. A hexadecimal CSS value of
+          type: string
+      required:
+        - type
+      type: object
+    CreateInputPositionIn:
+      title: new input position
+      properties:
+        type:
+          description: |
+            Type of the input position. Supported types are listed in <b>InputPositionType</b>.
+          $ref: '#/components/schemas/InputPositionType'
+        pageId:
+          description: |
+            Specification on which page input is positioned. Only applicable for InputPositionType.ABSOLUTE, InputPositionType.PLACEHOLDER and InputPositionType.STICKY.
+            <b>Note</b>: For input position InputPositionType.STICKY and InputPositionType.ABSOLUTE this field is required.
+          $ref: '#/components/schemas/UUID'
+        xOffset:
+          format: double
+          description: |
+            Horizontal offset of the input <b>top-left</b> corner, as measured from the <b>left</b> edge of the page using the units specified by the unit attribute.
+            Only applicable for InputPositionType.ABSOLUTE and InputPositionType.STICKY.
+            For InputPositionType.STICKY, it is a read-only field. It will be calculated after a sign invitation is
+            triggered.
+          type: number
+        yOffset:
+          format: double
+          description: |
+            Vertical offset of the input's <b>top-left</b> corner, as measured from the <b>top</b> edge of the page using the units specified by the unit attribute.
+            Only applicable for InputPositionType.ABSOLUTE and InputPositionType.STICKY.
+            For InputPositionType.STICKY, it is a read-only field. It will be calculated after a sign invitation is
+            triggered.
+          type: number
+        width:
+          format: double
+          description: |
+            Width of the input, using the units specified by unit attribute. Only applicable for InputPositionType.ABSOLUTE, InputPositionType.PLACEHOLDER, InputPositionType.STICKY.
+          type: number
+        height:
+          format: double
+          description: |
+            Height of the input, using the units specified by the unit attribute Only applicable for InputPositionType.ABSOLUTE, InputPositionType.PLACEHOLDER, InputPositionType.STICKY.
+          type: number
+        unit:
+          description: |
+            Unit for xOffset, yOffset, width & height. Default and only supported value is Unit.PCT. Only applicable for InputPositionType.ABSOLUTE, InputPositionType.PLACEHOLDER, InputPositionType.STICKY.
+          $ref: '#/components/schemas/Unit'
+        identifier:
+          description: |
+            Unique character sequence used as a placeholder identification. Placing the signature into the document means rendering a signature on position marked by the placeholder.
+            Only applicable for InputPositionType.PLACEHOLDER.
+          type: string
+        vAlignment:
+          description: |
+            When the position type is “ABSOLUTE”, it specifies where the text will be rendered within the defined box (vertical alignment). If not specified the “TOP” value is used.
+          enum:
+            - TOP
+            - MIDDLE
+            - BOTTOM
+          type: string
+        hAlignment:
+          description: |
+            When the position type is “ABSOLUTE”, it specifies where the text will be rendered within the defined box (horizontal alignment). If not specified the “LEFT” value is used.
+          enum:
+            - LEFT
+            - CENTER
+            - RIGHT
+          type: string
+        corner:
+          description: |
+            For input type INITIALS defines in which corner the initials will start to appear. Default: <b>BOTTOM_RIGHT</b>
+          enum:
+            - TOP_LEFT
+            - TOP_RIGHT
+            - BOTTOM_LEFT
+            - BOTTOM_RIGHT
+          type: string
+        direction:
+          description: |
+            For input type INITIALS defines in which direction next initials should be added. Default: <b>HORIZONTAL</b>
+          enum:
+            - VERTICAL
+            - HORIZONTAL
+          type: string
+        hOffset:
+          format: double
+          description: |
+            Horizontal distance of the box from the given corner using the units specified by the unit attribute. It is
+            only applicable for InputPositionType.STICKY. The default value is 0, the corner horizontal edge.
+          type: number
+        vOffset:
+          format: double
+          description: |
+            Vertical distance of the box from the given corner using the units specified by the unit attribute. It is
+            only applicable for InputPositionType.STICKY. The default value is 0, the corner vertical edge.
+          type: number
+      required:
+        - type
+      type: object
+    InputPositionUpdateIn:
+      title: input position update to apply while storing input value
+      properties:
+        type:
+          description: |
+            Type of the input position. Supported only for InputPositionType.ABSOLUTE.
+            In other words, only input with `ABSOLUTE` type can perform this type of while recording an input value.
+          $ref: '#/components/schemas/InputPositionType'
+        xOffset:
+          format: double
+          description: |
+            Horizontal offset of the input's <b>top-left</b> corner, as measured from the <b>left</b> edge of the page using the units specified by the unit attribute.
+          type: number
+        yOffset:
+          format: double
+          description: |
+            Vertical offset of the input's <b>top-left</b> corner, as measured from the <b>top</b> edge of the page using the units specified by the unit attribute.
+          type: number
+        width:
+          format: double
+          description: |
+            Width of input, using unit specified by unit attribute.
+          type: number
+        height:
+          format: double
+          description: |
+            Height of the input, using the units specified by the unit attribute.
+          type: number
+        vAlignment:
+          description: |
+            When the position type is “ABSOLUTE”, it specifies where the text will be rendered within the defined box (vertical alignment). If not specified the “TOP” value is used.
+          enum:
+            - TOP
+            - MIDDLE
+            - BOTTOM
+          type: string
+        hAlignment:
+          description: |
+            When the position type is “ABSOLUTE”, it specifies where the text will be rendered within the defined box (horizontal alignment). If not specified the “LEFT” value is used.
+          enum:
+            - LEFT
+            - CENTER
+            - RIGHT
+          type: string
+        hOffset:
+          format: double
+          description: |
+            Horizontal distance of the box from the given corner using the units specified by the unit attribute. It is
+            only applicable for InputPositionType.STICKY.
+          type: number
+        vOffset:
+          format: double
+          description: |
+            Vertical distance of the box from the given corner using the units specified by the unit attribute. It is
+            only applicable for InputPositionType.STICKY.
+          type: number
+      required:
+        - type
+      type: object
+    UpdateBinderIn:
+      title: updated binder
+      properties:
+        name:
+          description: |
+            Name of the binder.
+          type: string
+        defaultMessage:
+          description: |
+            Default message to use in notification emails. Used only if a message is not provided in the notification request.
+          type: string
+        parties:
+          description: |
+            Collection of parties in the binder.
+          type: array
+          items:
+            $ref: '#/components/schemas/PatchBinderUpdatePartyIn'
+        documents:
+          description: |
+            Collection of documents in the binder.
+          type: array
+          items:
+            $ref: '#/components/schemas/UpdateDocumentIn'
+        metaData:
+          description: |
+            Metadata associated with the binder.
+          $ref: '#/components/schemas/Json'
+        configuration:
+          $ref: '#/components/schemas/BinderConfiguration'
+      type: object
+    UpdatePartyIn:
+      title: existing/new party
+      properties:
+        id:
+          description: |
+            Read-only unique party id generated by server. Used in URI as party identifier for party-related endpoints.
+          $ref: '#/components/schemas/UUID'
+        reference:
+          description: |
+            Reference to the party, unique in scope of binder. Used for linking party with input.
+          type: string
+        legalName:
+          description: |
+            Legal name of the party.
+          type: string
+        email:
+          description: |
+            Email address of the party. Notification emails are sent to that address.
+            <p>Validation: valid email (matches pattern)</p>
+          type: string
+        roles:
+          description: |
+            Collection of party roles.
+          type: array
+          items:
+            $ref: '#/components/schemas/PartyRole'
+        metaData:
+          description: |
+            Metadata associated with the party.
+          $ref: '#/components/schemas/Json'
+      type: object
+    PatchBinderUpdatePartyIn:
+      title: existing/new party
+      properties:
+        id:
+          $ref: '#/components/schemas/PatchUUID'
+        reference:
+          description: |
+            Reference to the party, unique within the scope of a single binder. Used for linking a party with an input.
+          type: string
+        legalName:
+          description: |
+            Legal name of the party.
+          type: string
+        email:
+          description: |
+            Email address of the party. Notification emails are sent to this address.
+            <p>Validation: valid email (matches pattern)</p>
+          type: string
+        roles:
+          description: |
+            Collection of party roles.
+          type: array
+          items:
+            $ref: '#/components/schemas/PartyRole'
+        metaData:
+          description: |
+            Metadata associated with the party.
+          $ref: '#/components/schemas/Json'
+      type: object
+    UpdateDocumentIn:
+      title: existing/new document
+      properties:
+        id:
+          description: |
+            Read-only unique document id generated by server. Used in URI as document identifier for document-related endpoints.
+          $ref: '#/components/schemas/PatchUUID'
+        name:
+          description: |
+            Name of the document.
+          type: string
+        signable:
+          default: true
+          description: |
+            Specifies if the document is signable or not.
+            A document that is NOT signable contains no required inputs. Auxiliary/Accessory documents are usually not signable.
+          type: boolean
+        order:
+          description: |
+            Specifies order of the documents within the binder. The order of signable documents is used for the signing process.
+          type: integer
+        inputs:
+          description: |
+            A collection of inputs within the document.
+            This is not applicable for documents that are non-signable (document.signable=false), or for a document that uses hidden tags (InputPositionType.HIDDEN_TAG).
+          type: array
+          items:
+            $ref: '#/components/schemas/UpdateInputIn'
+        metaData:
+          description: |
+            Metadata associated with the document.
+          $ref: '#/components/schemas/Json'
+      type: object
+    UpdateInputIn:
+      title: existing/new input
+      properties:
+        id:
+          description: |
+            Read-only unique input id generated by server. Used in URI as input identifier for input-related endpoints.
+          $ref: '#/components/schemas/PatchUUID'
+        type:
+          description: |
+            Type of the input. Supported types are listed in <b>InputType</b>..
+          $ref: '#/components/schemas/InputType'
+        partyReference:
+          description: |
+            Reference to a party that must interact with the input. For example: A party that completes the input in order to sign the document.
+            The value must be from the collection of references provided with parties of the binder.
+          type: string
+        optional:
+          description: |
+            Indicates whether the input as optional. If the input is marked as optional, the binder will be marked as
+            completed when the optional input is not signed but all other non-optional inputs are signed.
+          type: boolean
+        prompt:
+          description: |
+            This attribute is applicable only for the input type CUSTOM_TEXT. This is a question/label for the custom text
+            input value.
+          type: string
+        position:
+          description: |
+            This is the position of the input which an be specified in several ways:
+          $ref: '#/components/schemas/CreateInputPositionIn'
+        font:
+          description: |
+            Specification of Font (type, size, weight, color) used for given input
+          $ref: '#/components/schemas/InputFont'
+        configuration:
+          $ref: '#/components/schemas/InputConfiguration'
+      type: object
+    SignatureInputIn:
+      title: signature data
+      properties:
+        id:
+          description: |
+            Input id of input that is being signed.
+          type: string
+        value:
+          description: |
+            Value of input (name, date, initials) provided by signer. Depending on <b>type</b> field:
+            <ul><li>TEXT - should be text signarure (i.e. legal name of signing party) or date in MM/DD/YYYY format</li><li>IMAGE - base64 encoded SVG signature</li></ul>
+          type: string
+        type:
+          type: string
+          description: Type of signature submitted - plain text or base64 encoded SVG signature. Defaults to TEXT if not provided
+          enum:
+            - TEXT
+            - IMAGE
+        font:
+          $ref: '#/components/schemas/InputFont'
+        position:
+          $ref: '#/components/schemas/InputPositionUpdateIn'
+      required:
+        - id
+        - value
+      type: object
+    PatchPartyIn:
+      title: patch of party
+      properties:
+        reference:
+          description: |
+            Reference to the party, unique in the scope of a single binder. Used for linking party with input.
+          type: string
+        legalName:
+          description: |
+            Legal name of the party.
+          type: string
+        email:
+          description: |
+            Email address of the party. Notification emails are sent to this address.
+            <p>Validation: valid email (matches pattern)</p>
+          type: string
+        roles:
+          description: |
+            Collection of party roles.
+          type: array
+          items:
+            $ref: '#/components/schemas/PartyRole'
+        metaData:
+          description: |
+            Metadata associated with the party.
+          $ref: '#/components/schemas/Json'
+      type: object
+    PatchDocumentIn:
+      title: patch of document
+      properties:
+        name:
+          description: |
+            The name of the document.
+          type: string
+        signable:
+          default: true
+          description: |
+            Specifies if the document is signable or not.
+            A document that is NOT signable contains no required inputs. Auxiliary/Accessory documents are usually not signable.
+          type: boolean
+        order:
+          description: |
+            Specifies order of the documents within the binder. The order of signable documents is used for the signing process.
+          type: integer
+        inputs:
+          description: |
+            A collection of inputs within the document.
+            This is not applicable for documents that are non-signable (document.signable=false), or for a document that uses hidden tags (InputPositionType.HIDDEN_TAG).
+          type: array
+          items:
+            $ref: '#/components/schemas/UpdateInputIn'
+        metaData:
+          $ref: '#/components/schemas/Json'
+      type: object
+    PatchInputIn:
+      title: patch of input
+      properties:
+        type:
+          description: |
+            Type of the input. Supported types are listed in <b>InputType</b>.
+          $ref: '#/components/schemas/InputType'
+        partyReference:
+          description: |
+            Reference to a party that must interact with the input. For example: A party that completes the input in order to complete signing for the document.
+            The value must be a reference to a party within this binder.
+          type: string
+        optional:
+          description: |
+            Indicates whether the input is optional. If the input is marked as optional, the binder will be marked as
+            completed if the optional input is not signed but all other non-optional inputs are signed.
+          type: boolean
+        prompt:
+          description: |
+            This attribute is applicable only for the input type CUSTOM_TEXT. This is a question/label for the custom text
+            input value.
+          type: string
+        position:
+          description: |
+            This is the position of the input which an be specified in several ways:
+          $ref: '#/components/schemas/CreateInputPositionIn'
+        font:
+          description: |
+            Specification of Font (type, size, weight, color) used for given input
+          $ref: '#/components/schemas/InputFont'
+        configuration:
+          $ref: '#/components/schemas/InputConfiguration'
+      type: object
+
+    BinderOut:
+      title: Binder
+      properties:
+        id:
+          description: |
+            Read-only unique binder id generated by server. Used in URI as binder identifier for binder-related endpoints.
+          $ref: '#/components/schemas/UUID'
+        name:
+          description: |
+            Name of the binder.
+          type: string
+        status:
+          description: |
+            Read-only status of the binder.
+          $ref: '#/components/schemas/Status'
+        created:
+          description: |
+            Read-only ISO-8601 timestamp of binder creation
+          type: string
+        defaultMessage:
+          description: |
+            Default message for notification emails. Used only if a message is not provided in the notification request.
+          type: string
+        parties:
+          description: |
+            Collection of parties in the binder.
+          type: array
+          items:
+            $ref: '#/components/schemas/PartyOut'
+        documents:
+          description: |
+            Collection of documents in the binder.
+          type: array
+          items:
+            $ref: '#/components/schemas/DocumentOut'
+        events:
+          description: |
+            Collection of events in the binder.
+          type: array
+          items:
+            $ref: '#/components/schemas/Event'
+        locks:
+          description: |
+            A collection of locks preventing certain actions on the binder. For example, a cancellation lock prevents signing from being cancelled on a binder.
+          type: array
+          items:
+            $ref: '#/components/schemas/LockOut'
+        requests:
+          description: |
+            Collection of requests registered for the binder.
+          type: array
+          items:
+            $ref: '#/components/schemas/RequestOut'
+        metaData:
+          description: |
+            Metadata associated with the binder.
+          $ref: '#/components/schemas/Json'
+        timeOffset:
+          description: |
+            The offset from UTC in the format ±[hh]:[mm], ±[hh][mm], or ±[hh].
+          type: string
+        dateFormat:
+          default: |
+            Default value for particular brand is taken from the Partner's configuration. If this parameter is not configured there then default value is 'MM-dd-yyyy'.
+          description: |
+            The date format used on signature page.
+          type: string
+        configuration:
+          $ref: '#/components/schemas/ClientConfigurationOut'
+      required:
+        - id
+        - name
+        - status
+        - created
+        - parties
+        - documents
+        - requests
+        - timeOffset
+      type: object
+    LockOut:
+      title: Lock
+      properties:
+        id:
+          description: |
+            A read-only unique lock id generated by server. Used in URI as a lock identifier for lock-related endpoints.
+          $ref: '#/components/schemas/UUID'
+        reason:
+          description: |
+            The reason of why this Lock was acquired.
+          type: string
+        type:
+          description: |
+            The type of the Lock.
+          $ref: '#/components/schemas/LockStatus'
+      required:
+        - id
+        - reason
+        - type
+      type: object
+    LockIn:
+      title: New Lock
+      properties:
+        reason:
+          description: |
+            The reason of why this Lock was acquired.
+          type: string
+        type:
+          description: |
+            The type of the Lock.
+          $ref: '#/components/schemas/LockStatus'
+      required:
+        - reason
+        - type
+      type: object
+    LockStatus:
+      description: |
+        Supported statuses of Lock:
+        <ul>
+          <li>CANCELLATION - Binder cannot be cancelled until all Locks of this type are removed.</li>
+        </ul>
+      enum:
+        - CANCELLATION
+      type: string
+    PartyOut:
+      title: Party
+      properties:
+        id:
+          description: |
+            Read-only unique party id generated by server. Used in URI as party identifier for party-related endpoints.
+          $ref: '#/components/schemas/UUID'
+        reference:
+          description: |
+            A reference to a party, unique in scope of a single binder. Used for linking party with input.
+          type: string
+        legalName:
+          description: |
+            Legal name of the party.
+          type: string
+        jobTitle:
+          description: |
+            Job title.
+          type: string
+        companyName:
+          description: |
+            Company name.
+          type: string
+        personId:
+          description: |
+            UUID of a corresponding Person. PersonId is unique and linked with Party's email address.
+          $ref: '#/components/schemas/UUID'
+        email:
+          description: |
+            Email address of the party. Notification emails are sent to this address. An email address is only required for parties with `OWNER` role.
+            <p>Validation: valid email (matches pattern)</p>
+          type: string
+        roles:
+          description: |
+            Collection of party roles.
+          type: array
+          items:
+            $ref: '#/components/schemas/PartyRole'
+        metaData:
+          description: |
+            Metadata associated with the party.
+          $ref: '#/components/schemas/Json'
+        status:
+          description: |-
+            Read-only status of party. Initialy it is `PENDING`. After the sign invitation, it's changed to INVITED. If the
+            access right of the party is revoked, it's changed to PENDING again.
+            When party opened the document status is changed to `VIEWED`
+          $ref: '#/components/schemas/PartyStatus'
+      required:
+        - id
+        - reference
+        - legalName
+        - personId
+        - roles
+        - status
+      type: object
+    DocumentOut:
+      title: Document
+      properties:
+        id:
+          description: |
+            Read-only unique document id generated by server. Used in URI as document identifier for document-related endpoints.
+          $ref: '#/components/schemas/UUID'
+        name:
+          description: |
+            Name of the document.
+          type: string
+        signable:
+          default: true
+          description: |
+            Specifies if the document is signable or not.
+            A document that is NOT signable contains no required inputs. Auxiliary/Accessory documents are usually not signable.
+          type: boolean
+        contentType:
+          description: |
+            Specifies the content type of document's content.
+          enum:
+            - application/pdf
+            - text/html
+          type: string
+        order:
+          description: |
+            Specifies the order of documents within a binder. The order of signable documents is used for the signing process.
+          type: integer
+        originalContentChecksum:
+          description: |
+            When document content is uploaded, a checksum is calculated using the SHA-256 cryptographic hash algorithm.
+            An empty value indicates that documents weren't uploaded or that upload was not successful.
+          type: string
+        inputs:
+          description: |
+            A collection of inputs within the document.
+            This is not applicable for documents that are non-signable (document.signable=false).
+          type: array
+          items:
+            $ref: '#/components/schemas/InputOut'
+        pages:
+          description: |
+            Collection of pages in the document.
+            When document content is uploaded, content pages are identified and provided as collection for each uploaded docuemnt.
+          type: array
+          items:
+            $ref: '#/components/schemas/PageOut'
+        metaData:
+          description: |
+            Metadata associated with the document.
+          $ref: '#/components/schemas/Json'
+      required:
+        - id
+        - name
+        - signable
+        - order
+        - inputs
+      type: object
+    PageOut:
+      title: Page
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+      required:
+        - id
+    InputOut:
+      title: Input
+      properties:
+        id:
+          description: |
+            Read-only unique input id generated by server. Used in URI as input identifier for input-related endpoints.
+          $ref: '#/components/schemas/UUID'
+        type:
+          description: |
+            Type of the input. Supported types are listed in <b>InputType</b>.
+          $ref: '#/components/schemas/InputType'
+        partyReference:
+          description: |
+            Reference to a party that must interact with the input. For example: A party that completes the input in order to sign the document.
+            The value must reference a party within this binder.
+          type: string
+        optional:
+          description: |
+            This attribute is applicable only for the input type `CUSTOM_TEXT` or `INITIALS`. It indicates whether the input is optional
+            input. If the input is marked as optional, the binder will be marked as completed if the optional input is
+            not signed but all other non-optional inputs are signed.
+          type: boolean
+        prompt:
+          description: |
+            This attribute is applicable only for the input type `CUSTOM_TEXT`. This is a question/label for the custom text
+            input value.
+          type: string
+        status:
+          description: |
+            Read-only status of input. Initialy it is `PENDING`. Later, based on party interaction it can be `COMPLETED` or `DECLINED`.
+          $ref: '#/components/schemas/InputStatus'
+        finished:
+          description: |
+            ISO-8601 timestamp when input was completed or declined (finished).
+          type: string
+        position:
+          description: |
+            This is the position of the input which an be specified in several ways:
+          $ref: '#/components/schemas/InputPositionOut'
+        value:
+          description: |
+            Value of input (name, date, initials) provided by signer. For IMAGE type, the value is not returned
+          type: string
+        font:
+          description: |
+            Specification of Font (type, size, weight, color) used for given input
+          $ref: '#/components/schemas/InputFont'
+      required:
+        - id
+        - type
+        - partyReference
+        - status
+        - position
+      type: object
+    InputPositionOut:
+      title: InputPosition
+      properties:
+        type:
+          description: |
+            Type of the input position. Supported types are listed in <b>InputPositionType</b>.
+          $ref: '#/components/schemas/InputPositionType'
+        pageId:
+          description: |
+            Specification on which page input is positioned.
+          $ref: '#/components/schemas/UUID'
+        xOffset:
+          format: double
+          description: |
+            Horizontal offset of the input's <b>top-left</b> corner, as measured from the <b>left</b> edge of the page using unit specified by the unit attribute.
+          type: number
+        yOffset:
+          format: double
+          description: |
+            Vertical offset of the input's <b>top-left</b> corner, as measured from the <b>top</b> edge of the page using the units specified by the unit attribute.
+          type: number
+        width:
+          format: double
+          description: |
+            Width of input using units specified by unit attribute.
+          type: number
+        height:
+          format: double
+          description: |
+            Height of input using units specified by unit attribute.
+          type: number
+        unit:
+          description: |
+            Unit for xOffset, yOffset, width & height.
+          $ref: '#/components/schemas/Unit'
+        identifier:
+          description: |
+            Unique character sequence used as a placeholder identification. Placing the signature into the document means rendering a signature in the position marked by the placeholder.
+            Only applicable for InputPositionType.PLACEHOLDER.
+          type: string
+        vAlignment:
+          description: |
+            When the position type is “ABSOLUTE” or "STICKY", it specifies where the text will be rendered within the defined box (vertical alignment). If not specified the “TOP” value is used.
+          enum:
+            - TOP
+            - MIDDLE
+            - BOTTOM
+          type: string
+        hAlignment:
+          description: |
+            When the position type is “ABSOLUTE” or "STICKY", it specifies where the text will be rendered within the defined box (vertical alignment). If not specified the “TOP” value is used.
+          enum:
+            - LEFT
+            - CENTER
+            - RIGHT
+          type: string
+        corner:
+          description: |
+            For input type INITIALS defines in which corner the initials will start to appear. Default: <b>BOTTOM_RIGHT</b>
+          enum:
+            - TOP_LEFT
+            - TOP_RIGHT
+            - BOTTOM_LEFT
+            - BOTTOM_RIGHT
+          type: string
+        direction:
+          description: |
+            For input type INITIALS defines in which direction next initials should be added. Default: <b>HORIZONTAL</b>
+          enum:
+            - VERTICAL
+            - HORIZONTAL
+          type: string
+      required:
+        - type
+      type: object
+    RecipientIn:
+      title: Recipient
+      type: object
+      properties:
+        partyId:
+          description: |
+            UUID of recipient party
+          type: string
+        binderUrl:
+          description: |
+            Generated link to binder (included in notifications). Not required if notification is false. If empty then default bindeUrl will be created.
+          type: string
+        customMessage:
+          description: |
+            Custom message provided to signer recipient.
+          type: string
+        notification:
+          description: |
+            Flag to indicate whether notifications should be sent to recipient. Default value - true
+          type: boolean
+      required:
+        - partyId
+    RecipientOut:
+      title: Recipient
+      type: object
+      properties:
+        partyId:
+          description: |
+            ID of recipient party
+          type: string
+        emailUsed:
+          description: |
+            Email address used for sending email address notifications
+          type: string
+        binderUrl:
+          description: |-
+            Generated link to binder (included in notifications)
+            Only visible for BACKEND role
+          type: string
+        notification:
+          description: |
+            Flag to indicate whether notifications should be sent to recipient. Default value - true
+          type: boolean
+      required:
+        - partyId
+        - binderUrl
+        - notification
+    RequestOut:
+      title: SignRequest
+      type: object
+      properties:
+        id:
+          description: |
+            Read-only unique request id generated by server.
+          $ref: '#/components/schemas/UUID'
+        type:
+          description: |
+            Type of sign request
+          $ref: '#/components/schemas/RequestType'
+        created:
+          description: |
+            Read-only ISO-8601 timestamp of request registration
+          type: string
+        message:
+          description: |
+            Message text used for all notifications triggered by this request, provided by owner.
+          type: string
+        subject:
+          description: |
+            Subject text used for all notifications triggered by this request, provided by owner.
+          type: string
+        reason:
+          description: |
+            Reason for notification (provided by party).
+          type: string
+        recipients:
+          description: |
+            Collection of recipients (parties related to the request).
+          type: array
+          items:
+            $ref: '#/components/schemas/RecipientOut'
+      required:
+        - id
+        - type
+        - created
+        - recipients
+    FinalisationIn:
+      title: Finalisation Request type
+      type: object
+      properties:
+        subject:
+          description: |
+            Subject text used for all notifications trigered by this request
+          type: string
+        message:
+          description: |
+            Message text used for all notifications trigered by this request
+          type: string
+        recipients:
+          description: |
+            Collection of recipients (parties related to the request). If no recipients are provided then default recipients are genereated.
+            Either provide recipients for all parties or none of them.
+          type: array
+          items:
+            $ref: '#/components/schemas/RecipientIn'
+    FinalisationOut:
+      title: Finalisation Request
+      type: object
+      properties:
+        id:
+          description: |
+            Read-only unique request id generated by server.
+          $ref: '#/components/schemas/UUID'
+        type:
+          enum:
+            - FINALISATION
+          type: string
+        message:
+          description: |
+            Message text used for all notifications triggered by this request, provided by owner.
+          type: string
+        recipients:
+          description: |
+            Collection of recipients (VIEWERs who are receiving invitation)
+          type: array
+          items:
+            $ref: '#/components/schemas/RecipientOut'
+        created:
+          description: |
+            Read-only ISO-8601 timestamp of request registration
+          type: string
+      required:
+        - id
+        - type
+        - recipients
+        - created
+    SignInvitationIn:
+      title: SignInvitation Request
+      type: object
+      properties:
+        subject:
+          description: |
+            Subject text used for all notifications trigered by this request
+          type: string
+        message:
+          description: |
+            Message text used for all notifications trigered by this request
+          type: string
+        recipients:
+          description: |
+            Collection of recipients (parties related to the request). If no recipients are provided then default recipients are genereated.
+            Either provide recipients for all parties or none of them.
+          type: array
+          items:
+            $ref: '#/components/schemas/RecipientIn'
+    SignInvitationOut:
+      title: SignInvitation Response
+      type: object
+      properties:
+        id:
+          description: |
+            Read-only unique request id generated by server.
+          $ref: '#/components/schemas/UUID'
+        type:
+          enum:
+            - SIGN_INVITATION
+          type: string
+        subject:
+          description: |
+            Subject text used for all notifications triggered by this request, provided by the owner.
+          type: string
+        message:
+          description: |
+            Message text used for all notifications triggered by this request, provided by the owner.
+          type: string
+        recipients:
+          description: |
+            Collection of recipients (parties related to the request)
+          type: array
+          items:
+            $ref: '#/components/schemas/RecipientOut'
+        created:
+          description: |
+            Read-only ISO-8601 timestamp of request registration
+          type: string
+      required:
+        - id
+        - type
+        - recipients
+        - created
+    CreateViewersIn:
+      title: POST Viewers Request
+      type: object
+      properties:
+        party:
+          description: Party definition to be added
+          $ref: '#/components/schemas/CreateViewerIn'
+        notification:
+          description: |
+            Flag to indicate whether notifications should be sent to recipient. Default value - true
+          type: boolean
+        binderUrl:
+          description: |
+            Link to binder (included in notifications). If empty then the default binderUrl will be used.
+          type: string
+      required:
+        - party
+    CreateViewersOut:
+      title: POST Viewers Response
+      type: object
+      properties:
+        id:
+          description: |
+            Read-only unique request id generated by server.
+          $ref: '#/components/schemas/UUID'
+        type:
+          enum:
+            - VIEWER_CREATION
+          type: string
+        created:
+          description: |
+            Read-only ISO-8601 timestamp of request registration
+          type: string
+        recipients:
+          description: |
+            Collection of recipients (parties related to the request).
+          type: array
+          items:
+            $ref: '#/components/schemas/RecipientIn'
+        party:
+          description: Added party definition
+          $ref: '#/components/schemas/PartyOut'
+      required:
+        - id
+        - type
+        - created
+        - recipients
+        - party
+    SignCancellationIn:
+      title: SignCancellation Request
+      type: object
+      properties:
+        reason:
+          description: |
+            Reason provided by owner
+          type: string
+        message:
+          description: |
+            Message text used for all notifications trigered by this request
+          type: string
+        recipients:
+          description: |
+            Collection of recipients (parties related to the request). If no recipients are provided then default recipients are genereated.
+            Either provide recipients for all parties or none of them.
+          type: array
+          items:
+            $ref: '#/components/schemas/RecipientIn'
+    SignCancellationOut:
+      title: SignCancellation Response
+      type: object
+      properties:
+        id:
+          description: |
+            Read-only unique request id generated by server.
+          $ref: '#/components/schemas/UUID'
+        type:
+          enum:
+            - SIGN_CANCELLATION
+          type: string
+        reason:
+          description: |
+            Reason provided by owner.
+          type: string
+        message:
+          description: |
+            Message text used for all emails triggered by this request, provided by owner.
+          type: string
+        recipients:
+          description: |
+            Collection of recipients (parties related to the request)
+          type: array
+          items:
+            $ref: '#/components/schemas/RecipientOut'
+        created:
+          description: |
+            Read-only ISO-8601 timestamp of request registration
+          type: string
+      required:
+        - id
+        - type
+        - recipients
+        - created
+    SignaturesIn:
+      title: SignatureRecord Request
+      type: object
+      properties:
+        recipients:
+          description: |
+            Collection of recipients (parties related to the request). If no recipients are provided then default recipients are genereated.
+            Either provide recipients for all parties or none of them.
+          type: array
+          items:
+            $ref: '#/components/schemas/RecipientIn'
+        data:
+          $ref: '#/components/schemas/DataInputs'
+      required:
+        - data
+    DataInputs:
+      title: ' '
+      type: object
+      properties:
+        signatures:
+          description: |
+            Array of inputs to be recorded. Inputs are related to only one signer but may be related to several documents.
+          type: array
+          items:
+            $ref: '#/components/schemas/SignatureInputIn'
+      required:
+        - signatures
+    SignaturesOut:
+      title: SignatureRecord Response
+      type: object
+      properties:
+        id:
+          description: |
+            Read-only unique request id generated by server.
+          $ref: '#/components/schemas/UUID'
+        type:
+          enum:
+            - SIGNATURE_RECORD
+          type: string
+        recipients:
+          description: |
+            Collection of recipients (parties related to the request)
+          type: array
+          items:
+            $ref: '#/components/schemas/RecipientOut'
+        created:
+          description: |
+            Read-only ISO-8601 timestamp of request registration
+          type: string
+        data:
+          description: |
+            Data related to request, in this case array of signatures to recordobject
+          $ref: '#/components/schemas/Json'
+      required:
+        - id
+        - type
+        - recipients
+        - created
+        - data
+    DeclinesIn:
+      title: SignatureDecline Request
+      type: object
+      properties:
+        reason:
+          description: |
+            Reason provided by party that declined to sign
+          type: string
+        message:
+          description: |
+            Message text used for all notifications trigered by this request
+          type: string
+        data:
+          description: |
+            Data related to request, in this case array of signature inputs to record
+          $ref: '#/components/schemas/DataDeclines'
+      required:
+        - data
+    DataDeclines:
+      type: object
+      properties:
+        partyId:
+          description: |
+            Id of party that declined to sign
+          type: string
+      required:
+        - partyId
+    DeclinesOut:
+      title: SignatureDecline Response
+      type: object
+      properties:
+        id:
+          description: |
+            Read-only unique request id generated by server.
+          $ref: '#/components/schemas/UUID'
+        type:
+          enum:
+            - SIGNATURE_DECLINE
+          type: string
+        message:
+          description: |
+            Message text used for all emails triggered by this request, provided by owner.
+          type: string
+        recipients:
+          description: |
+            Collection of recipients (parties related to the request)
+          type: array
+          items:
+            $ref: '#/components/schemas/RecipientOut'
+        created:
+          description: |
+            Read-only ISO-8601 timestamp of request registration
+          type: string
+        data:
+          description: |
+            Data related to request, in this case array of signatures in record object
+          $ref: '#/components/schemas/Json'
+      required:
+        - id
+        - type
+        - recipients
+        - created
+        - data
+    SendReminderIn:
+      title: SendReminder Request
+      type: object
+      properties:
+        message:
+          description: |
+            Message text used for sending the reminder email. The default message will be used if it is not provided.
+          type: string
+        recipients:
+          description: |
+            Collection of recipients (parties related to the request) to whom the reminder is to be sent. When the recipients
+            list is not provided, it will send reminder to all signers who has not completed signing and to all viewers.
+            The recipient list cannot be empty.
+          type: array
+          items:
+            $ref: '#/components/schemas/ReminderRecipientIn'
+    SendReminderOut:
+      title: SendReminder Response
+      type: object
+      properties:
+        id:
+          description: |
+            Read-only unique request id generated by server.
+          $ref: '#/components/schemas/UUID'
+        message:
+          description: |
+            Message text used for sending the reminder email
+          type: string
+        recipients:
+          description: |
+            Collection of recipients for whom we are sending reminders
+          type: array
+          items:
+            $ref: '#/components/schemas/ReminderRecipientOut'
+        RequestType:
+          description: |
+            Supported types of sign requests:
+            <ul>
+              <li> SIGN_REMINDER - Request used for reminding the signer to view or sign the document</li>
+            </ul>
+          enum:
+            - SIGN_REMINDER
+          type: string
+        created:
+          description: |
+            Read-only ISO-8601 timestamp when the reminder request was registered
+          type: string
+      required:
+        - id
+        - created
+    ReminderRecipientIn:
+      title: ReminderRecipient
+      type: object
+      properties:
+        partyId:
+          description: |
+            ID of reminder recipient party. Only ID associated to a party having `SIGNER` or `VIEWER` role is allowed.
+          type: string
+        binderUrl:
+          description: |
+            Link to binder (included in email). If empty then the default binderUrl will be used.
+          type: string
+      required:
+        - partyId
+    ReminderRecipientOut:
+      title: ReminderRecipient
+      type: object
+      properties:
+        partyId:
+          description: |
+            ID of reminder recipient party
+          type: string
+        emailUsed:
+          description: |
+            Email address used for sending the reminder notification
+          type: string
+        binderUrl:
+          description: |-
+            Generated link to binder (included in notifications)
+            Only visible for BACKEND role.
+          type: string
+        notification:
+          description: |
+            Flag if email was sent to the recipient. It will be 'false' if sending reminder was skipped for given recipient.
+          type: boolean
+      required:
+        - partyId
+        - binderUrl
+        - notification
+    EventType:
+      description: |
+        <ul>
+        <li><b>BINDER_CREATED</b> - Begin of binder history. Binder was created</li>
+        <li><b>FINALISATION</b> - Binder owner finished editing binder and is ready to sent invitation</li>
+        <li><b>INVITATION_TO_SIGN_SENT</b> - Binder owner invited parties to sign</li>
+        <li><b>VIEWER_INVITED</b> - Binder owner invited viewers to review the document</li>
+        <li><b>BINDER_VIEWED</b> - Someone viewed binder</li>
+        <li><b>BINDER_SIGNED</b> - Someone signed document in binder</li>
+        <li><b>SIGN_REMINDER_SENT</b> - Owner sent reminders to signers to sign the document</li>
+        <li><b>BINDER_DOWNLOADED</b> - Someone downloaded Documents from the binder (pdf format)</li>
+        <li><b>BINDER_PRINTED</b> - Someone printed Documents from the binder (pdf format)</li>
+        <li><b>BINDER_CANCELED</b> - Binder owner changed the mind. Binder is no longer available for signing.</li>
+        <li><b>VIEWER_REMOVED_FROM_BINDER</b> - Owner removed viewer from the document, they can no longer access it</li>
+        <li><b>BINDER_SIGN_COMPLETED</b> - All Signers signed.</li>
+        <li><b>BINDER_DOCUMENT_CHANGED</b> - Owner has edited the document.</li>
+        </ul>
+      enum:
+        - BINDER_CREATED
+        - FINALISATION
+        - INVITATION_TO_SIGN_SENT
+        - VIEWER_INVITED
+        - BINDER_VIEWED
+        - BINDER_SIGNED
+        - SIGN_REMINDER_SENT
+        - BINDER_DOWNLOADED
+        - BINDER_PRINTED
+        - BINDER_CANCELED
+        - SIGNER_DECLINED_TO_SIGN
+        - VIEWER_REMOVED_FROM_BINDER
+        - BINDER_SIGN_COMPLETED
+        - BINDER_DOCUMENT_CHANGED
+      type: string
+    EventDetails:
+      title: EventDetails
+      type: object
+      properties:
+        description:
+          description: |
+            User-friendly description what happened to the binder.
+          type: string
+        binderName:
+          description: |
+            Name of the binder when the event was registered.
+          type: string
+        documentName:
+          description: |
+            Name of the document when the event was registered.
+          type: string
+        legalName:
+          description: |
+            Name of the party when the event was registered.
+          type: string
+    Event:
+      title: Event
+      type: object
+      properties:
+        id:
+          description: |
+            Id of event.
+          $ref: '#/components/schemas/UUID'
+        binderId:
+          description: |
+            ID of binder for which event was triggered.
+          $ref: '#/components/schemas/UUID'
+        documentId:
+          description: |
+            ID of document for which event was triggered.
+          $ref: '#/components/schemas/UUID'
+        partyId:
+          description: |
+            ID of party who triggered the event.
+          $ref: '#/components/schemas/UUID'
+        occurredAt:
+          description: |
+            Date and time in ISO8601 when event occured. Provided in UTC ("Zulu time").
+          type: string
+        type:
+          $ref: '#/components/schemas/EventType'
+        details:
+          $ref: '#/components/schemas/EventDetails'
+      required:
+        - id
+        - binderId
+        - occurredAt
+        - type
+        - details
+    StatusOut:
+      title: Status Response
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/Status'
+        readyForSign:
+          type: boolean
+        unfilledConditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConditionOut'
+      required:
+        - status
+        - readyForSign
+        - unfilledConditions
+    ConditionOut:
+      title: Condition
+      description: 'For a detailed overview visit https://jsonapi.org/format/#error-objects'
+      type: object
+      properties:
+        code:
+          type: string
+        status:
+          type: number
+        title:
+          type: string
+        detail:
+          type: string
+        source:
+          type: object
+          properties:
+            pointer:
+              type: string
+            parameter:
+              type: string
+      required:
+        - code
+        - status
+        - title
+        - detail
+    SignerRoleParty:
+      title: Signer role party
+      properties:
+        reference:
+          description: |
+            Reference to the party, unique within the scope of of this binder. Used for linking party with input. All corresponding
+            signer role references from template inputs will be replaced by this value when a binder is created from
+            the template.
+          type: string
+        legalName:
+          description: |
+            Legal name of the party.
+          type: string
+        jobTitle:
+          description: |
+            Job title.
+          type: string
+        companyName:
+          description: |
+            Company name.
+          type: string
+        email:
+          description: |
+            Email address of the party. Notification emails are sent to this address. An email address is only required for parties with `OWNER` role.
+            <p>Validation: valid email (matches pattern)</p>
+          type: string
+        roles:
+          description: |
+            Collection of party roles.
+          type: array
+          items:
+            $ref: '#/components/schemas/PartyRole'
+        metaData:
+          description: |
+            Metadata associated with the party.
+          $ref: '#/components/schemas/Json'
+      required:
+        - reference
+        - legalName
+        - roles
+      type: object
+    ClientConfigurationIn:
+      title: ClientConfiguration Request
+      properties:
+        urlTemplate:
+          description: |
+            Defines the template of the URL for email CTA buttons. The template accepts following placeholders:
+            <ul>
+              <li>[domain]</li>
+              <li>[locale]</li>
+              <li>[serviceToken]</li>
+            </ul>
+            Placeholders will be replaced by this API on fly.
+            Default: https://www.[domain]/[locale]/sign#serviceToken=[serviceToken]
+          type: string
+        emailTemplatePrefix:
+          description: |
+            This is a client-specific email template prefix. Currently, only "TRN_" is supported.
+            Default: "TRN_"
+          type: string
+      type: object
+    ClientConfigurationOut:
+      title: ClientConfiguration Response
+      properties:
+        urlTemplate:
+          description: |
+            Defines the template of the URL for email CTA buttons. The template accepts following placeholders:
+            <ul>
+              <li>[domain]</li>
+              <li>[locale]</li>
+              <li>[serviceToken]</li>
+            </ul>
+            Placeholders will be replaced by this API on fly.
+            Default: https://www.[domain]/[locale]/sign#serviceToken=[serviceToken]
+          type: string
+        emailTemplatePrefix:
+          description: |
+            This is a client-specific email template prefix. Currently, only "TRN_" is supported.
+            Default: "TRN_"
+          type: string
+      type: object
+  responses: {}
+  parameters: {}
+  examples: {}
+  requestBodies: {}
+  headers: {}
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  links: {}
+  callbacks: {}
+security:
+  - bearerAuth: []

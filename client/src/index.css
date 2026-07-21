@@ -1,0 +1,391 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { scroll-behavior: smooth; }
+  body { @apply font-sans antialiased; }
+  *:focus-visible { @apply outline-none ring-2 ring-brand ring-offset-2; }
+
+  /* Stronger focus on form controls used on login / payments */
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  button:focus-visible,
+  a:focus-visible {
+    @apply outline-none ring-2 ring-brand ring-offset-2;
+  }
+
+  .skip-link {
+    @apply sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-lg focus:bg-white focus:px-4 focus:py-2.5 focus:text-sm focus:font-semibold focus:text-slate-900 focus:shadow-lg focus:ring-2 focus:ring-brand;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* ── Keyframes ─────────────────────────────────────────────────────────────── */
+@keyframes motion-fade-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes motion-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes motion-slide-down {
+  from { opacity: 0; transform: translateY(-12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes motion-slide-in-left {
+  from { opacity: 0; transform: translateX(-16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes motion-scale-in {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes motion-pop {
+  0%   { opacity: 0; transform: scale(0.88); }
+  70%  { transform: scale(1.02); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes drawer-slide-in {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
+@keyframes modal-backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes modal-panel-in {
+  from { opacity: 0; transform: translateY(24px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes rent-shine {
+  0%   { transform: translateX(-120%) skewX(-12deg); }
+  100% { transform: translateX(220%) skewX(-12deg); }
+}
+
+@keyframes login-float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-8px); }
+}
+
+@keyframes portal-fade-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes portal-pop {
+  0%   { transform: scale(0.85); opacity: 0.5; }
+  60%  { transform: scale(1.12); }
+  100% { transform: scale(1.1); opacity: 1; }
+}
+
+@keyframes portal-progress {
+  from { width: 0%; }
+  to   { width: 100%; }
+}
+
+@keyframes count-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.7; }
+}
+
+@layer components {
+  /* ── Page & layout ── */
+  .motion-page {
+    animation: motion-fade-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .motion-topbar {
+    animation: motion-slide-down 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .motion-sidebar {
+    animation: motion-slide-in-left 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .motion-intro {
+    animation: motion-fade-up 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .motion-pop {
+    animation: motion-pop 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .login-form-enter {
+    animation: motion-scale-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0.1s both;
+  }
+
+  /* ── Stagger grids (dashboard KPI rows, action docks) ── */
+  .stagger-grid > * {
+    animation: motion-fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .stagger-grid > *:nth-child(1)  { animation-delay: 0ms; }
+  .stagger-grid > *:nth-child(2)  { animation-delay: 55ms; }
+  .stagger-grid > *:nth-child(3)  { animation-delay: 110ms; }
+  .stagger-grid > *:nth-child(4)  { animation-delay: 165ms; }
+  .stagger-grid > *:nth-child(5)  { animation-delay: 220ms; }
+  .stagger-grid > *:nth-child(6)  { animation-delay: 275ms; }
+  .stagger-grid > *:nth-child(7)  { animation-delay: 330ms; }
+  .stagger-grid > *:nth-child(8)  { animation-delay: 385ms; }
+
+  .stagger-list > * {
+    animation: motion-fade-up 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .stagger-list > *:nth-child(1)  { animation-delay: 80ms; }
+  .stagger-list > *:nth-child(2)  { animation-delay: 130ms; }
+  .stagger-list > *:nth-child(3)  { animation-delay: 180ms; }
+  .stagger-list > *:nth-child(4)  { animation-delay: 230ms; }
+  .stagger-list > *:nth-child(5)  { animation-delay: 280ms; }
+  .stagger-list > *:nth-child(6)  { animation-delay: 330ms; }
+  .stagger-list > *:nth-child(7)  { animation-delay: 380ms; }
+  .stagger-list > *:nth-child(8)  { animation-delay: 430ms; }
+
+  .stagger-section > * {
+    animation: motion-fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .stagger-section > *:nth-child(1) { animation-delay: 0ms; }
+  .stagger-section > *:nth-child(2) { animation-delay: 100ms; }
+  .stagger-section > *:nth-child(3) { animation-delay: 200ms; }
+  .stagger-section > *:nth-child(4) { animation-delay: 300ms; }
+  .stagger-section > *:nth-child(5) { animation-delay: 400ms; }
+
+  /* ── Cards & interactive ── */
+  /* Tenant move-in checklist (Dribbble-style popup card) */
+  .checkin-popup {
+    animation: modal-panel-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .checkin-step {
+    animation: motion-fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .portal-card {
+    @apply rounded-2xl border border-slate-200/80 bg-white shadow-sm;
+  }
+
+  .portal-card-hover {
+    @apply rounded-2xl border border-slate-200/80 bg-white shadow-sm transition-all duration-200 hover:border-slate-300 hover:shadow-md;
+  }
+
+  .hover-lift {
+    @apply transition-all duration-300 ease-out;
+  }
+  .hover-lift:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 12px 28px -8px rgb(0 0 0 / 0.12);
+  }
+
+  .hover-scale {
+    @apply transition-transform duration-200 ease-out;
+  }
+  .hover-scale:hover {
+    transform: scale(1.03);
+  }
+
+  .btn-motion {
+    @apply transition-all duration-200 ease-out active:scale-[0.98];
+  }
+
+  .nav-motion {
+    @apply transition-all duration-200 ease-out;
+  }
+  .nav-motion:hover {
+    transform: translateX(3px);
+  }
+  @media (hover: none) {
+    .nav-motion:hover {
+      transform: none;
+    }
+  }
+
+  .safe-bottom {
+    padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+  }
+  .safe-top {
+    padding-top: max(0px, env(safe-area-inset-top));
+  }
+
+  /* Touch-friendly scrolling with visible scrollbars (iPhone / narrow viewports) */
+  .scroll-touch {
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: rgb(148 163 184) rgb(241 245 249);
+  }
+  .scroll-touch::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .scroll-touch::-webkit-scrollbar-track {
+    background: rgb(241 245 249);
+    border-radius: 5px;
+  }
+  .scroll-touch::-webkit-scrollbar-thumb {
+    background: rgb(148 163 184);
+    border-radius: 5px;
+    border: 2px solid rgb(241 245 249);
+  }
+  .scroll-touch::-webkit-scrollbar-thumb:hover {
+    background: rgb(100 116 139);
+  }
+
+  .scroll-x-touch {
+    @apply scroll-touch overflow-x-auto overflow-y-hidden;
+  }
+
+  .table-scroll {
+    @apply scroll-x-touch w-full max-w-full;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    /* Rounded corners when paired with border on this element */
+    isolation: isolate;
+  }
+  /* Fade hint on narrow screens that more content is off-screen */
+  @media (max-width: 639px) {
+    .table-scroll-edge {
+      position: relative;
+    }
+    .table-scroll-edge::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 1.75rem;
+      pointer-events: none;
+      background: linear-gradient(to left, rgb(255 255 255 / 0.95), transparent);
+      border-radius: inherit;
+    }
+  }
+
+  .portal-pill {
+    @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold;
+  }
+
+  .skeleton {
+    @apply rounded-xl bg-slate-100;
+    background-image: linear-gradient(90deg, #f1f5f9 0%, #e2e8f0 50%, #f1f5f9 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+
+  /* ── Modals & drawers (add class to overlay root) ── */
+  .modal-overlay {
+    @apply scroll-touch fixed inset-0 z-[200] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    animation: modal-backdrop-in 0.22s ease both;
+  }
+  .modal-overlay > div,
+  .modal-overlay > form {
+    @apply max-h-[min(92dvh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)))] w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-2xl sm:rounded-2xl;
+    animation: modal-panel-in 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .drawer-overlay {
+    @apply scroll-touch fixed inset-0 z-[200] flex justify-end bg-black/30;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    animation: modal-backdrop-in 0.22s ease both;
+  }
+  .drawer-overlay > div.relative {
+    @apply h-full max-h-[100dvh] w-full max-w-lg overflow-y-auto overscroll-contain pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)];
+    animation: drawer-slide-in 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  /* ── Tables ── */
+  .portal-table tbody tr {
+    animation: motion-fade-up 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+    transition: background-color 0.15s ease;
+  }
+  .portal-table tbody tr:nth-child(1) { animation-delay: 40ms; }
+  .portal-table tbody tr:nth-child(2) { animation-delay: 70ms; }
+  .portal-table tbody tr:nth-child(3) { animation-delay: 100ms; }
+  .portal-table tbody tr:nth-child(4) { animation-delay: 130ms; }
+  .portal-table tbody tr:nth-child(5) { animation-delay: 160ms; }
+  .portal-table tbody tr:nth-child(6) { animation-delay: 190ms; }
+  .portal-table tbody tr:nth-child(7) { animation-delay: 220ms; }
+  .portal-table tbody tr:nth-child(8) { animation-delay: 250ms; }
+  .portal-table tbody tr:hover {
+    @apply bg-slate-50;
+  }
+
+  /* ── Rent hero shine ── */
+  .rent-shine {
+    @apply relative overflow-hidden;
+  }
+  .rent-shine::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.12) 50%, transparent 60%);
+    animation: rent-shine 4s ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  /* ── Login ── */
+  .login-mesh {
+    background-color: #0f172a;
+    background-image:
+      radial-gradient(ellipse 80% 60% at 20% 30%, rgba(99, 102, 241, 0.35), transparent),
+      radial-gradient(ellipse 60% 50% at 85% 15%, rgba(124, 58, 237, 0.28), transparent),
+      radial-gradient(ellipse 70% 55% at 60% 95%, rgba(37, 99, 235, 0.25), transparent);
+  }
+
+  .login-grid::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px);
+    background-size: 24px 24px;
+    mask-image: linear-gradient(to bottom, black 20%, transparent 90%);
+    pointer-events: none;
+  }
+
+  .login-panel {
+    background-color: #f8fafc;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 100% 0%, rgba(37, 99, 235, 0.06), transparent),
+      radial-gradient(ellipse 60% 40% at 0% 100%, rgba(124, 58, 237, 0.05), transparent);
+  }
+
+  .login-float       { animation: login-float 6s ease-in-out infinite; }
+  .login-float-delay { animation: login-float 7s ease-in-out 1s infinite; }
+  .login-float-slow  { animation: login-float 8s ease-in-out 0.5s infinite; }
+
+  /* ── Portal reveal ── */
+  .portal-reveal-fade    { animation: portal-fade-up 0.6s ease-out both; }
+  .portal-reveal-card    { min-width: 5.5rem; animation: portal-fade-up 0.5s ease-out both; }
+  .portal-reveal-card-active { animation: portal-pop 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+  .portal-reveal-expand  { animation: portal-fade-up 0.5s ease-out both; }
+  .portal-reveal-progress { animation: portal-progress 1.1s ease-in-out forwards; }
+
+  /* ── Loader ── */
+  .motion-loader {
+    animation: motion-pop 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+}

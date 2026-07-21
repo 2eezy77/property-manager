@@ -1,0 +1,445 @@
+---
+openapi: '3.0.3'
+info:
+  title: 'Events API'
+  version: '1'
+  description: |
+    This API documentation describes the server-side contract by which Rocket Lawyer Events can be subscribed to and events can be pulled using the Partner Events API.
+    <br/><br/>
+    Steps to pull events - 
+    1. Use POST /subscriptions API to create a subscription
+    2. Use POST /subscriptions/{subscriptionId}/eventPulls API to pull events
+    3. Use POST /subscriptions/{subscriptionId}/eventAcknowledgements to acknowledge the pulled events
+
+servers:
+  - url: 'https://api-sandbox.rocketlawyer.com/events/v1'
+    description: 'Sandbox'
+  - url: 'https://api.rocketlawyer.com/events/v1'
+    description: 'Production'
+tags:
+  - name: 'Subscription Management'
+  - name: 'Event Consumption'
+paths:
+
+  /subscriptions:
+    post:
+      tags:
+        - 'Subscription Management'
+      operationId: 'createSubscription'
+      description: |
+        Create a subscription. <br/><br/>
+          <b>Subscription Expiration</b>: If there is no interaction with the subscription over the period of 31 days, 
+        it will be automatically deleted.
+        <br/><br/>
+        Authorization\: Requires a general access token.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubscriptionPost'
+      responses:
+        201:
+          description: 'The subscription was created successfully'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        403:
+          description: 'You do not have sufficient permission to create a subscription'
+
+  /subscriptions/{subscriptionId}:
+    parameters:
+      - name: 'subscriptionId'
+        in: 'path'
+        #description: 'The ID of a pre-existing subscription'
+        required: true
+        schema:
+          $ref: '#/components/schemas/SubscriptionId'
+    get:
+      tags:
+        - 'Subscription Management'
+      operationId: 'getSubscription'
+      description: |
+        Get a subscription. This can be used to confirm that a subscription exists.
+        <br/>
+        <b>Subscription Expiration</b>: If there is no interaction with the subscription over the period of 31 days, 
+        it will be automatically deleted.
+        <br/><br/>
+        Authorization\: Requires a general access or scoped access token.
+      responses:
+        200:
+          description: 'The subscription exists'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        204:
+          description: 'The subscription does not exist'
+        403:
+          description: 'You do not have sufficient permission to access this subscription'
+    delete:
+      tags:
+        - 'Subscription Management'
+      operationId: 'deleteSubscription'
+      description: |
+        Delete a subscription. This will cause the acknowledgement state of all events to be
+        forgotten. If you wish to "undo" a deletion, you may create a new subscription and
+        perform a seek request to just before the time of deletion, though you must be
+        prepared to handle a few duplicate events.
+        <br/><br/>
+        Authorization\: Requires a general access or scoped access token.
+      responses:
+        204:
+          description: 'The subscription is deleted'
+        403:
+          description: 'You do not have sufficient permission to delete this subscription'
+        404:
+          description: 'The subscription does not exist'
+
+
+  /subscriptions/{subscriptionId}/eventPulls:
+    parameters:
+      - name: 'subscriptionId'
+        in: 'path'
+        description: ''
+        required: true
+        schema:
+          $ref: '#/components/schemas/SubscriptionId'
+    post:
+      tags:
+        - 'Event Consumption'
+      operationId: 'createEventPull'
+      description: |
+        Pull a batch of pending events for this subscription. Pulled events must be acknowledged promptly
+        or else they will be redelivered in subsequent event pulls.
+        <br/>
+        <b>Retention</b>: Events have a retention period of <b>7 days</b>.
+        <br/><br/>
+        Authorization\: Requires a general access or scoped access token.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventPullPost'
+      responses:
+        200:
+          description: 'The event pull request has been performed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventPull'
+        403:
+          description: 'You do not have sufficient permission to pull events from this subscription'
+
+        404:
+          description: 'The subscription does not exist'
+
+
+  /subscriptions/{subscriptionId}/eventAcknowledgements:
+    parameters:
+      - name: 'subscriptionId'
+        in: 'path'
+        description: ''
+        required: true
+        schema:
+          $ref: '#/components/schemas/SubscriptionId'
+    post:
+      tags:
+        - 'Event Consumption'
+      operationId: 'createEventAcknowledgement'
+      description: |
+        Acknowledge a set of events to prevent them from being re-delivered
+        <br/><br/>
+        Authorization\: Requires a general access or scoped access token.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventAcknowledgementPost'
+      responses:
+
+        200:
+          description: 'The events are acknowledged'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventAcknowledgement'
+
+        403:
+          description: 'You do not have sufficient permission to acknowledge events from this subscription'
+
+        404:
+          description: 'The subscription does not exist'
+
+  /subscriptions/{subscriptionId}/seekRequests:
+    parameters:
+      - name: 'subscriptionId'
+        in: 'path'
+        description: ''
+        required: true
+        schema:
+          $ref: '#/components/schemas/SubscriptionId'
+    post:
+      tags:
+        - 'Subscription Management'
+      operationId: 'createSubscriptionSeekRequest'
+      description: |
+        Move a subscription to a specified time. If the specified time is in the past and within
+        the event retention timeframe (7 days), already-acknowledged events may be replayed. It is also
+        possible to use this operation to "skip" events by seeking to a time that is _after_ some number of
+        non-acknowledged events.
+        <br/><br/>
+        Authorization\: Requires a general access or scoped access token.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SeekRequestPost'
+      responses:
+        200:
+          description: |
+            The seek request has been fulfilled. Events from roughly the specified time will be replayed for
+            this subscription.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeekRequest'
+
+        403:
+          description: 'You do not have sufficient permission to request seeks for this subscription'
+
+        404:
+          description: 'The subscription does not exist'
+
+        409:
+          description: |
+            The request could not be performed, as the timestamp is outside of the event retention period.
+            This is returned on a best-effort basis, so it is possible that a "success" response will be
+            returned but a few events will be missed.
+
+components:
+  schemas:
+
+    SubscriptionCreatedAtTimestamp:
+      description: 'Time when this subscription was created'
+      type: 'string'
+      format: 'date-time'
+      example: '2021-04-12T04:20:50Z'
+
+    SubscriptionUpdatedAtTimestamp:
+      description: 'Time when this subscription was last updated'
+      type: 'string'
+      format: 'date-time'
+      example: '2021-05-11T23:10:51Z'
+
+    SeekToTimestamp:
+      description: |
+        Time to seek the subscription to. This is expected to generally be a
+        time in the past to initiate event replay, but it may be any timestamp.
+      type: 'string'
+      format: 'date-time'
+      example: '2021-10-01T10:22:02Z'
+
+    SubscriptionId:
+      description: The ID for a specific subscription.
+      type: 'string'
+      format: 'uuid'
+      example: 'f3443a23-301d-4b6b-a178-3840d8cb9e5f'
+
+    SubscriptionPost:
+      description: "The spec for a subscription"
+      type: 'object'
+
+    Subscription:
+      description: "A specific subscription"
+      type: 'object'
+      properties:
+        subscriptionId:
+          $ref: '#/components/schemas/SubscriptionId'
+        createdAt:
+          $ref: '#/components/schemas/SubscriptionCreatedAtTimestamp'
+        updatedAt:
+          $ref: '#/components/schemas/SubscriptionUpdatedAtTimestamp'
+      required:
+        - 'subscriptionId'
+        - 'createdAt'
+        - 'updatedAt'
+
+    EventAcknowledgement:
+      description: 'A fulfilled request to acknowledge a set of events'
+      type: 'object'
+      properties:
+        eventAcknowledementId:
+          $ref: '#/components/schemas/EventAcknowledgementId'
+        eventHandles:
+          type: 'array'
+          items:
+            $ref: '#/components/schemas/EventHandle'
+      required:
+        - 'eventAcknowledgementId'
+        - 'eventHandles'
+
+    EventAcknowledgementPost:
+      description: 'A request to acknowledge a set of events'
+      type: 'object'
+      properties:
+        eventHandles:
+          type: 'array'
+          items:
+            $ref: '#/components/schemas/EventHandle'
+      required:
+        - 'eventHandles'
+
+    EventAcknowledgementId:
+      description: |
+        An ID which may be used to reference a specific event acknowledgement in communication with Rocket Lawyer. If an event acknowledgement ID is
+        not provided, one will be generated automatically. If an ID _is_ provided, it should have a unique value for each each acknowledgement request.
+      type: 'string'
+      format: 'uuid'
+      example: 'ae416a84-f5cc-49f5-8706-e0e2fa57c21c'
+
+    EventHandle:
+      description: 'An opaque string that allows a specific event to be acknowledged'
+      type: 'string'
+      example: |-
+        RVNEUAYWLF1GSFE3GQhoUQ5PXiM_NSAoRREICBQFfH1yQ1V1VTN1B1ENGXN6MnI7XkUBBRcFdF9RGx9ZXET_zPq2L1BdYndrWBUJAERSfFtYGQlqVHTo_4y_tfqXVG9WYpnKqf5lXv6uhbtZZiE9XxJLLD5-LTJFQV5AEkwmB0RJUytDCypYEU4EISE-MD4
+
+    SeekRequestPost:
+      description: |
+        A spec for a request to seek a subscription to a different timestamp
+      type: 'object'
+      properties:
+        seekTo:
+          $ref: '#/components/schemas/SeekToTimestamp'
+
+    SeekRequest:
+      description: |
+        Result of a specific seek request. Currently just includes a unique ID
+        that may be used as reference with Rocket Lawyer
+      type: 'object'
+      properties:
+        seekRequestId:
+          $ref: '#/components/schemas/SeekRequestId'
+        seekTo:
+          $ref: '#/components/schemas/SeekToTimestamp'
+      required:
+        - 'seekRequestId'
+        - 'seekTo'
+
+    SeekRequestId:
+      description: |
+        An ID which may be used to reference a specific seek request in communication with Rocket Lawyer. If an seek request ID is not provided,
+        one will be generated automatically. If an ID _is_ provided, it should have a unique value for each each seek request.
+      type: 'string'
+      format: 'uuid'
+      example: '2acbdced-121d-4896-a02c-5b77528f8b77'
+
+    MaxEventCount:
+      type: 'string'
+      format: 'unsigned-int32'
+      example: '20'
+      description: 'The maximum number of events to include in an event pull. Note that a smaller number of events might be included in the actual pull.'
+
+    EventPull:
+      description: 'A fullfilled request to pull events from a given subscription'
+      type: 'object'
+      properties:
+        eventPullId:
+          $ref: '#/components/schemas/EventPullId'
+        maxEvents:
+          $ref: '#/components/schemas/MaxEventCount'
+        events:
+          type: 'array'
+          items:
+            $ref: '#/components/schemas/Event'
+      required:
+        - 'eventPullId'
+        - 'maxEvents'
+        - 'events'
+
+    EventPullPost:
+      description: 'A request to pull events from a subscription'
+      type: 'object'
+      properties:
+        maxEvents:
+          $ref: '#/components/schemas/MaxEventCount'
+
+    EventPullId:
+      description: |
+        An ID which may be used to reference a specific event pull in communication with Rocket Lawyer. If an event pull ID is not provided,
+        one will be generated automatically. If an ID _is_ provided, it should have a unique value for each each event pull.
+      type: 'string'
+      format: 'uuid'
+      example: 'bd329b6c-f4d0-4606-b179-4dbbc69ecedf'
+
+    Event:
+      description: 'An event which occurred within the Rocket Lawyer platform'
+      type: 'object'
+      properties:
+        eventHandle:
+          $ref: '#/components/schemas/EventHandle'
+        coreProperties:
+          $ref: '#/components/schemas/EventCoreProperties'
+        name:
+          type: 'string'
+          example: 'session-established'
+        payload:
+          $ref: '#/components/schemas/EventPayload'
+      required:
+        - 'eventHandle'
+        - 'coreProperties'
+        - 'name'
+
+    EventCoreProperties:
+      description: 'A set of core properties which may be provided for any event'
+      type: 'object'
+      properties:
+        eventTimestamp:
+          type: 'string'
+          format: 'date-time'
+          example: '2021-12-11T15:00:50.338Z'
+          description: 'The approximate time when the event occurred'
+        eventUniqueId:
+          type: 'string'
+          format: 'uuid'
+          example: '4a42d30f-a13a-4034-90fd-7cb2679c0253'
+          description: |
+            A unique ID for this event, which is constant across retries. Please note
+            that our event system uses _at least once delivery_. This means that it
+            is possible for there to be duplicates deliveries of a given event. For
+            this reason, partners are advised to use the eventUniqueId to deduplicate
+            events within their systems if repeated processing is undesirable.
+        relatedRlRequestId:
+          type: 'string'
+          format: 'uuid'
+          nullable: true
+          example: 'ac871cfc-1f21-4a02-b81e-11a48eef0386'
+          description: |
+            A unique ID to allow cross-correlating events that originate from the same underlying request to a
+            Rocket Lawyer API. This is provided on a best-effort basis.
+        relatedSessionId:
+          type: 'string'
+          format: 'uuid'
+          nullable: true
+          example: '1b305d40-7c28-4d2f-8e36-4726179d38b9'
+          description: |
+            A unique ID to allow cross-correlating events that originate from the same underlying session.
+      required:
+        - 'eventTimestamp'
+        - 'eventUniqueId'
+
+    EventPayload:
+      description: |
+        Extra event context. The contents of this payload will differ for each type of event so the "name" field
+        should be consulted before trying to interpret it.
+      type: 'object'
+      example:
+        userAgent: |-
+          Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.131 Safari/537.36
+  securitySchemes:
+    bearerAuth:
+      type: "http"
+      scheme: "bearer"
+      bearerFormat: "JWT"
+security:
+  - bearerAuth: []

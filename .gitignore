@@ -1,0 +1,37 @@
+# Environment — NEVER commit this
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+client/node_modules/
+
+# Build output
+client/dist/
+client/.vite/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
+.cursor/mcp.json
+
+# Stripe CLI (if keys accidentally cached)
+.stripe/
+
+# Local auth session caches
+scripts/.dominion-auth-session.json
+
+# Uploaded visit photos (local dev)
+uploads/
+
+# Plaid/compliance uploads (may contain PII — do not commit)
+assets/compliance/
