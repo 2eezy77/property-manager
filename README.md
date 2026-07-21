@@ -17,22 +17,28 @@ Env template: [`.env.example`](.env.example). First-run guide: [`SETUP.md`](SETU
 
 ## Screenshots
 
-UI previews below use **synthetic demo data only** (fake names, addresses, and amounts). No real tenant, bank, or lease records are shown.
+Real UI captures with **names, emails, and street addresses redacted**.
 
-| Login | Tenant portal |
-|:-----:|:-------------:|
+| Login | Tenant — My Home |
+|:-----:|:----------------:|
 | ![Sign-in](docs/login.jpg) | ![Tenant My Home](docs/tenant-portal.jpg) |
 
-| Manager portal | Owner portal |
-|:--------------:|:------------:|
-| ![Manager dashboard](docs/manager-portal.jpg) | ![Owner oversight](docs/owner-portal.jpg) |
+| Manager — Dashboard | Manager — Tenants |
+|:-------------------:|:-----------------:|
+| ![Manager dashboard](docs/manager-portal.jpg) | ![Tenants list](docs/manager-tenants.jpg) |
+
+| Manager — Payments | Manager — Maintenance |
+|:------------------:|:---------------------:|
+| ![Payments](docs/manager-payments.jpg) | ![Maintenance queue](docs/manager-maintenance.jpg) |
+
+| Owner — Overview |
+|:----------------:|
+| ![Owner oversight](docs/owner-portal.jpg) |
 
 - **Login** — one secure entry for all roles; role is revealed after sign-in.
-- **Tenant** — rent balance / Autopay, maintenance, lease, and bank link (Plaid → Stripe ACH).
-- **Manager** — portfolio stats, maintenance queue, and recent payments.
-- **Owner** — high-level rent roll, occupancy, and property oversight.
-
-Demo HTML used to regenerate these images (optional): [`docs/demo/`](docs/demo/).
+- **Tenant** — check-in checklist, quick actions, rent status / overdue.
+- **Manager** — ops dashboard, tenant roster + “View as”, payments (incl. Cash App import), maintenance queue.
+- **Owner** — portfolio oversight, collected vs expected rent, manager playbook.
 
 ---
 
@@ -42,7 +48,7 @@ Demo HTML used to regenerate these images (optional): [`docs/demo/`](docs/demo/)
 |------|----------------|
 | `src/` | Express API — auth, payments, utilities, leases, site visits, webhooks, email, DB migrations |
 | `client/` | React + Vite UI for login + all three portals |
-| `docs/` | README screenshots (demo / scrubbed) |
+| `docs/` | README screenshots (PII redacted) |
 | `scripts/` | Ops helpers (Cash App import, smoke tests, bank reminders, QA) |
 | `schema.sql` | Base Postgres schema |
 | `src/db/migrations/` | Incremental SQL migrations |
