@@ -146,6 +146,23 @@ function checkEnv(checks) {
   } else {
     checks.push(check('env.rent_billing', 'env', 'pass', `Rent billing scheduler on (hour ${process.env.RENT_BILLING_HOUR ?? 8})`));
   }
+
+  if (process.env.CASHAPP_GMAIL_SYNC_ENABLED === 'false') {
+    checks.push(check(
+      'env.cashapp_gmail_sync',
+      'env',
+      'warn',
+      'CASHAPP_GMAIL_SYNC_ENABLED=false — off-app Cash App Gmail import will not auto-run'
+    ));
+  } else {
+    const mins = process.env.CASHAPP_GMAIL_SYNC_MINUTES ?? 15;
+    checks.push(check(
+      'env.cashapp_gmail_sync',
+      'env',
+      'pass',
+      `Cash App Gmail auto-import every ${mins}m (advisory-locked)`
+    ));
+  }
 }
 
 async function checkStripeApi(checks) {

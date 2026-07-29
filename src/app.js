@@ -270,6 +270,14 @@ app.listen(PORT, HOST, () => {
     const { scheduleDailyRentBilling } = require('./services/rent-billing.service');
     scheduleDailyRentBilling();
   }
+  if (process.env.CASHAPP_GMAIL_SYNC_ENABLED !== 'false') {
+    try {
+      const { scheduleCashAppGmailSync } = require('./services/cashapp-gmail-scheduler.service');
+      scheduleCashAppGmailSync();
+    } catch (err) {
+      console.warn('[cashapp-gmail-sync] scheduler not started:', err.message);
+    }
+  }
   try {
     const { startEventsPoller } = require('./services/rocketlawyer.service');
     startEventsPoller();

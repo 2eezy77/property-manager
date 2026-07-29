@@ -121,7 +121,7 @@ cd client; npm run dev
 | `npm run build` | Build `client/dist` |
 | `npm run payments:health` | Stripe / Plaid / tenant bank readiness |
 | `npm run tenant:bank:status` | Who still needs a verified bank |
-| `npm run import:cashapp -- --gmail` | Dry-run Cash App import from Gmail |
+| `npm run import:cashapp -- --gmail` | Dry-run Cash App import from Gmail (prod also auto-imports every ~15m) |
 | `npm run db:reset-password` | List / set passwords |
 | `npm run qa:bootstrap -- --apply` | Align local QA passwords (requires `SMOKE_TEST_PASSWORD` or `--staff-pw`) |
 
