@@ -1,6 +1,6 @@
 /**
  * App.jsx
- * Defines the complete route tree using React Router v6 createBrowserRouter.
+ * Defines the complete route tree using React Router createBrowserRouter.
  *
  * AppRoot wraps AuthProvider around all routes so Sidebar/portals always have auth context.
  */
