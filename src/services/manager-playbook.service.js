@@ -45,7 +45,7 @@ const DEFAULT_ITEMS = [
   {
     category: 'utilities',
     label: 'Process utility bills and tenant splits',
-    notes: '743 A Ave electric/water/trash — create bills, notify tenants, charge splits under Utilities.',
+    notes: '743 A Ave electric/water/trash — review Balances, remind tenants to pay in the portal; resolve disputes. Do not landlord-ACH as the main path.',
     sort_order: 7,
   },
   {

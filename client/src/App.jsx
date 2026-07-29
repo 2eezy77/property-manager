@@ -33,6 +33,7 @@ import ForbiddenPage from '@/pages/ForbiddenPage';
 import TenantDashboard   from '@/pages/tenant/Dashboard';
 import TenantLease       from '@/pages/tenant/Lease';
 import TenantPayments    from '@/pages/tenant/Payments';
+import TenantUtilities   from '@/pages/tenant/Utilities';
 import TenantMaintenance from '@/pages/tenant/Maintenance';
 import TenantMessages       from '@/pages/tenant/Messages';
 import TenantAnnouncements  from '@/pages/tenant/Announcements';
@@ -93,6 +94,7 @@ export const router = createBrowserRouter([
             { path: '/tenant',             element: <TenantDashboard /> },
             { path: '/tenant/lease',       element: <TenantLease /> },
             { path: '/tenant/payments',    element: <TenantPayments /> },
+            { path: '/tenant/utilities',   element: <TenantUtilities /> },
             { path: '/tenant/maintenance', element: <TenantMaintenance /> },
             { path: '/tenant/messages',       element: <TenantMessages /> },
             { path: '/tenant/announcements',  element: <TenantAnnouncements /> },

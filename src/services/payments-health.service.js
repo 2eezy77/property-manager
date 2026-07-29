@@ -163,6 +163,23 @@ function checkEnv(checks) {
       `Cash App Gmail auto-import every ${mins}m (advisory-locked)`
     ));
   }
+
+  if (process.env.UTILITIES_SYNC_ENABLED === 'false') {
+    checks.push(check(
+      'env.utilities_sync',
+      'env',
+      'warn',
+      'UTILITIES_SYNC_ENABLED=false — utility import/notify/remind workers will not auto-run'
+    ));
+  } else {
+    const mins = process.env.UTILITIES_SYNC_MINUTES ?? 20;
+    checks.push(check(
+      'env.utilities_sync',
+      'env',
+      'pass',
+      `Utilities sync every ${mins}m (import → notify → remind; never ACH)`
+    ));
+  }
 }
 
 async function checkStripeApi(checks) {

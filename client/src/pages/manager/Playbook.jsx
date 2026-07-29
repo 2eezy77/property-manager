@@ -48,7 +48,7 @@ const STEP_GUIDE = {
   utilities: {
     phase: 'ongoing',
     title: 'Utility bills are split and sent to tenants',
-    help: 'When water or electric bills arrive, add the bill under Utilities, notify tenants, then charge their share after the dispute window.',
+    help: 'When water or electric bills arrive, shares show on Utilities. Remind tenants to pay in the portal — do not rely on charging them yourself. Resolve disputes if needed.',
     where: { label: 'Open Utilities', path: '/manager/utilities' },
   },
   announcements: {

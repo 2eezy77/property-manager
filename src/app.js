@@ -278,6 +278,14 @@ app.listen(PORT, HOST, () => {
       console.warn('[cashapp-gmail-sync] scheduler not started:', err.message);
     }
   }
+  if (process.env.UTILITIES_SYNC_ENABLED !== 'false') {
+    try {
+      const { scheduleUtilitiesSync } = require('./services/utilities-scheduler.service');
+      scheduleUtilitiesSync();
+    } catch (err) {
+      console.warn('[utilities-sync] scheduler not started:', err.message);
+    }
+  }
   try {
     const { startEventsPoller } = require('./services/rocketlawyer.service');
     startEventsPoller();

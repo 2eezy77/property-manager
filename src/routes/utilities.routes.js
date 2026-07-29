@@ -59,6 +59,19 @@ router.post('/bills', Guards.staffOnly, async (req, res) => {
   }
 });
 
+// GET /balances — who owes what (staff board)
+router.get('/balances', Guards.staffOnly, async (req, res) => {
+  try {
+    const result = await uc.listBalances(req.user.id, req.user.role, {
+      filter: req.query.filter || 'owes',
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('[utilities/balances]', err);
+    res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
 // GET /bills — list
 router.get('/bills', Guards.staffOnly, async (req, res) => {
   try {

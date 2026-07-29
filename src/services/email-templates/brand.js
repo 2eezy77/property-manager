@@ -27,7 +27,7 @@ const BRAND = {
   managerUtilitiesUrl: `${PORTAL_ORIGIN}/manager/utilities`,
   managerPlaybookUrl: `${PORTAL_ORIGIN}/manager/playbook`,
   managerMaintenanceUrl: `${PORTAL_ORIGIN}/manager/maintenance`,
-  utilitiesUrl: `${PORTAL_ORIGIN}/tenant/payments`,
+  utilitiesUrl: `${PORTAL_ORIGIN}/tenant/utilities`,
   messagesUrl: `${PORTAL_ORIGIN}/manager/messages`,
   supportLine: 'Property management portal',
 };

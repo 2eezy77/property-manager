@@ -105,10 +105,12 @@ function UtilitySharesCard({ splits, onDispute }) {
           </div>
           <h2 className="text-sm font-semibold text-slate-900">Utility shares</h2>
         </div>
-        <span className="portal-pill bg-slate-100 text-slate-500">{open.length} open</span>
+        <Link to="/tenant/utilities" className="text-xs font-medium text-indigo-600 hover:underline">
+          View all · {open.length} open
+        </Link>
       </div>
       <ul className="divide-y divide-slate-50">
-        {open.map(s => {
+        {open.slice(0, 3).map(s => {
           const hrs = hoursLeft(s.dispute_deadline_at);
           const canDispute = s.status === 'notified' && hrs > 0;
           return (
@@ -144,11 +146,21 @@ function UtilitySharesCard({ splits, onDispute }) {
                     Dispute
                   </button>
                 )}
+                <Link to="/tenant/payments" className="mt-1 block text-xs font-medium text-indigo-600 hover:underline">
+                  Pay
+                </Link>
               </div>
             </li>
           );
         })}
       </ul>
+      {open.length > 3 && (
+        <div className="border-t border-slate-50 px-5 py-3 text-center">
+          <Link to="/tenant/utilities" className="text-xs font-medium text-indigo-600 hover:underline">
+            See all utility shares
+          </Link>
+        </div>
+      )}
     </div>
   );
 }

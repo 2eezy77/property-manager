@@ -485,7 +485,7 @@ export default function PaymentsPage() {
       showToast(
         data.message
           || (enabled
-            ? 'Autopay on — rent late fees waived while enabled. Utilities auto-debit after each bill.'
+            ? 'Autopay on — rent late fees waived while enabled. Utilities debit only if Autopay is on.'
             : 'Autopay off — late fees apply if rent is unpaid after the grace period.'),
         enabled ? 'success' : 'error'
       );
@@ -777,7 +777,7 @@ export default function PaymentsPage() {
         <div className="min-w-0">
           <h2 id="autopay-heading" className="text-base font-semibold text-slate-900">Autopay</h2>
           <p className="mt-1 text-xs text-slate-500">
-            ACH on the 1st · utilities auto-debit after the dispute window
+            ACH on the 1st · utilities debit only when Autopay is on
           </p>
           {autopay?.autopay_enabled ? (
             <p className="mt-2 text-xs font-medium text-emerald-700">Late-fee protection on — keep Autopay enabled</p>
@@ -830,7 +830,7 @@ export default function PaymentsPage() {
             <Landmark size={28} strokeWidth={1.5} className="mx-auto mb-2 text-emerald-400" aria-hidden />
             <p className="text-sm font-medium text-slate-800">Connect a bank to unlock Autopay</p>
             <p className="mx-auto mt-1 max-w-sm text-xs text-slate-500">
-              Autopay waives late fees while it is on. Also needed for security deposits and utility ACH.
+              Autopay waives late fees while it is on. Also needed for security deposits. Utilities ACH only if Autopay is enabled.
               {cashAppAvailable && rentDue ? ' Portal Cash App above still works for one-time rent.' : ''}
             </p>
             <button

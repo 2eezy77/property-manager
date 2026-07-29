@@ -36,6 +36,13 @@ async function executeDisputeShare({ tenantId, splitId, reason }) {
     [String(reason).trim(), splitId]
   );
 
+  try {
+    const { alertStaffUtilityDispute } = require('../../services/utility-comms.service');
+    await alertStaffUtilityDispute(splitId);
+  } catch (err) {
+    console.warn('[uc04-dispute] staff alert:', err.message);
+  }
+
   return { split: updated };
 }
 

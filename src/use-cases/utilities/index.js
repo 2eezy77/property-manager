@@ -12,7 +12,7 @@ const {
   executeGmailCallback,
   executeImportFromGmail,
 } = require('./uc08-gmail');
-const { listBills, getBillForStaff, getTenantSplits } = require('./queries');
+const { listBills, getBillForStaff, getTenantSplits, listBalances } = require('./queries');
 const {
   executeDeleteDraftBill,
   executePruneDuplicateDrafts,
@@ -41,6 +41,7 @@ module.exports = {
   listBills,
   getBillForStaff,
   getTenantSplits,
+  listBalances,
   executeDeleteDraftBill,
   executePruneDuplicateDrafts,
   executePruneStaleDrafts,

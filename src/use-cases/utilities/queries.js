@@ -107,9 +107,135 @@ async function getTenantSplits(tenantId) {
   return rows;
 }
 
+async function listBalances(userId, role, { filter = 'owes' } = {}) {
+  const propIds = await accessiblePropertyIds(userId, role);
+  if (!propIds.length) {
+    return {
+      rows: [],
+      totals: {
+        open_amount: 0,
+        disputed_amount: 0,
+        overdue_count: 0,
+        paid_amount: 0,
+        row_count: 0,
+      },
+    };
+  }
+
+  const filterKey = String(filter || 'owes').toLowerCase();
+  const statusFilter = {
+    owes: `s.status IN ('notified', 'disputed', 'pending', 'failed')`,
+    disputed: `s.status = 'disputed'`,
+    charging: `s.status = 'charging'`,
+    failed: `s.status = 'failed'`,
+    paid: `s.status IN ('paid', 'waived')`,
+    all: `TRUE`,
+  };
+  const statusSql = statusFilter[filterKey] || statusFilter.owes;
+
+  const { rows } = await pool.query(
+    `SELECT s.id AS split_id,
+            s.tenant_id,
+            s.amount,
+            s.status AS split_status,
+            s.dispute_reason,
+            s.disputed_at,
+            ub.id AS bill_id,
+            ub.service_type,
+            ub.period_start,
+            ub.period_end,
+            ub.status AS bill_status,
+            ub.notified_at,
+            ub.dispute_deadline_at,
+            ub.due_date,
+            p.name AS property_name,
+            un.unit_number,
+            u.first_name,
+            u.last_name,
+            u.email,
+            CASE
+              WHEN ub.notified_at IS NULL THEN NULL
+              ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - ub.notified_at)) / 86400))::int
+            END AS days_open
+       FROM utility_bill_splits s
+       JOIN utility_bills ub ON ub.id = s.bill_id
+       JOIN properties p ON p.id = ub.property_id
+       JOIN leases l ON l.id = s.lease_id
+       JOIN units un ON un.id = l.unit_id
+       JOIN users u ON u.id = s.tenant_id
+      WHERE ub.property_id = ANY($1)
+        AND (${statusSql})
+      ORDER BY
+        CASE s.status
+          WHEN 'disputed' THEN 0
+          WHEN 'failed' THEN 1
+          WHEN 'notified' THEN 2
+          WHEN 'pending' THEN 3
+          WHEN 'charging' THEN 4
+          ELSE 5
+        END,
+        ub.notified_at ASC NULLS LAST,
+        u.last_name ASC`,
+    [propIds]
+  );
+
+  let openAmount = 0;
+  let disputedAmount = 0;
+  let overdueCount = 0;
+  let paidAmount = 0;
+  for (const r of rows) {
+    const amt = Number(r.amount) || 0;
+    if (['notified', 'disputed', 'pending', 'failed', 'charging'].includes(r.split_status)) {
+      openAmount += amt;
+    }
+    if (r.split_status === 'disputed') disputedAmount += amt;
+    if (
+      ['notified', 'disputed', 'failed'].includes(r.split_status)
+      && r.days_open != null
+      && r.days_open >= 7
+    ) {
+      overdueCount += 1;
+    }
+    if (r.split_status === 'paid' || r.split_status === 'waived') {
+      paidAmount += amt;
+    }
+  }
+
+  // Board header totals always reflect open book (not just current filter)
+  const { rows: [agg] } = await pool.query(
+    `SELECT
+        COALESCE(SUM(s.amount) FILTER (
+          WHERE s.status IN ('notified', 'disputed', 'pending', 'failed', 'charging')
+        ), 0)::numeric AS open_amount,
+        COALESCE(SUM(s.amount) FILTER (WHERE s.status = 'disputed'), 0)::numeric AS disputed_amount,
+        COUNT(*) FILTER (
+          WHERE s.status IN ('notified', 'disputed', 'failed')
+            AND ub.notified_at IS NOT NULL
+            AND ub.notified_at <= NOW() - INTERVAL '7 days'
+        )::int AS overdue_count
+       FROM utility_bill_splits s
+       JOIN utility_bills ub ON ub.id = s.bill_id
+      WHERE ub.property_id = ANY($1)`,
+    [propIds]
+  );
+
+  return {
+    rows,
+    totals: {
+      open_amount: Number(agg?.open_amount ?? openAmount),
+      disputed_amount: Number(agg?.disputed_amount ?? disputedAmount),
+      overdue_count: Number(agg?.overdue_count ?? overdueCount),
+      paid_amount: paidAmount,
+      row_count: rows.length,
+    },
+    filter: filterKey,
+  };
+}
+
 module.exports = {
   fetchBillWithSplits,
   listBills,
   getBillForStaff,
   getTenantSplits,
+  listBalances,
 };

@@ -28,6 +28,7 @@ function pageTitle(pathname) {
     '/tenant': 'My Home',
     '/tenant/lease': 'My Lease',
     '/tenant/payments': 'Payments',
+    '/tenant/utilities': 'Utilities',
     '/tenant/maintenance': 'Maintenance',
     '/tenant/messages': 'Messages',
     '/tenant/announcements': 'Announcements',

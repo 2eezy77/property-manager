@@ -422,14 +422,8 @@ function TenantCard({ split, bill, onAction, busy }) {
         <p className="text-xs text-purple-600 mb-3">Waived by manager</p>
       )}
 
-      {/* Actions — only show what makes sense for this state */}
+      {/* Actions — dispute resolve; ACH demoted */}
       <div className="mt-auto flex flex-wrap gap-2 pt-2">
-        {canCharge && (
-          <button onClick={() => onAction('charge', split)} disabled={busy}
-            className="text-xs font-medium px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50">
-            Charge now
-          </button>
-        )}
         {canReject && (
           <button onClick={() => onAction('reject', split)} disabled={busy}
             className="text-xs font-medium px-3 py-1.5 bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50">
@@ -442,13 +436,26 @@ function TenantCard({ split, bill, onAction, busy }) {
             Waive
           </button>
         )}
-        {split.status === 'failed' && (
-          <button onClick={() => onAction('retry', split)} disabled={busy}
-            className="text-xs font-medium px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50">
-            Retry charge
-          </button>
-        )}
       </div>
+      {(canCharge || split.status === 'failed') && (
+        <details className="mt-2 text-xs text-slate-500">
+          <summary className="cursor-pointer select-none hover:text-slate-700">Advanced ACH</summary>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {canCharge && (
+              <button onClick={() => onAction('charge', split)} disabled={busy}
+                className="text-xs font-medium px-3 py-1.5 border border-amber-200 text-amber-800 rounded-lg hover:bg-amber-50 disabled:opacity-50">
+                Charge this share
+              </button>
+            )}
+            {split.status === 'failed' && (
+              <button onClick={() => onAction('retry', split)} disabled={busy}
+                className="text-xs font-medium px-3 py-1.5 border border-amber-200 text-amber-800 rounded-lg hover:bg-amber-50 disabled:opacity-50">
+                Retry charge
+              </button>
+            )}
+          </div>
+        </details>
+      )}
 
       {showReason && <DisputeReasonView split={split} onClose={() => setShowReason(false)} />}
     </div>
@@ -479,7 +486,7 @@ function BillDetail({ billId, onChange, onClose }) {
   useEffect(() => { load(); }, [load]);
 
   async function handleNotify() {
-    if (!confirm('Notify all tenants? This starts a 48-hour dispute window before you can charge.')) return;
+    if (!confirm('Notify tenants of their shares? They will get email + in-app notice and a 48-hour dispute window. Tenants pay themselves — this does not ACH them.')) return;
     setBusy(true); setError('');
     try {
       const { data } = await api.post(`/api/utilities/bills/${billId}/notify`);
@@ -494,8 +501,8 @@ function BillDetail({ billId, onChange, onClose }) {
     const deadline = data?.bill?.dispute_deadline_at;
     const past = deadline && new Date(deadline) <= new Date();
     const msg = past
-      ? 'Charge all eligible (non-disputed) tenants via ACH now?'
-      : 'Dispute window has not closed. Charge anyway (force)?';
+      ? 'Advanced: charge all eligible (non-disputed) tenants via ACH now? Prefer reminding them to pay in the portal.'
+      : 'Dispute window has not closed. Force ACH anyway? Prefer waiting or reminding tenants.';
     if (!confirm(msg)) return;
     setBusy(true); setError('');
     try {
@@ -515,8 +522,6 @@ function BillDetail({ billId, onChange, onClose }) {
     setBusy(true); setError('');
     try {
       if (action === 'charge' || action === 'retry') {
-        // Single-split charge: just trigger the bill-level charge — server skips
-        // splits that already have payment_id, so this only fires the eligible ones.
         const { data: result } = await api.post(`/api/utilities/bills/${billId}/charge`, { force: true });
         setData({ bill: result.bill, splits: result.splits });
       } else if (action === 'waive') {
@@ -524,7 +529,7 @@ function BillDetail({ billId, onChange, onClose }) {
         const { data: result } = await api.post(`/api/utilities/splits/${split.id}/waive`);
         setData(result);
       } else if (action === 'reject') {
-        if (!confirm('Reject this dispute? The tenant will be charged.')) { setBusy(false); return; }
+        if (!confirm('Reject this dispute? Remind the tenant to pay their share in the portal.')) { setBusy(false); return; }
         const { data: result } = await api.post(`/api/utilities/splits/${split.id}/reject-dispute`);
         setData(result);
       }
@@ -668,13 +673,7 @@ function BillDetail({ billId, onChange, onClose }) {
           {canNotify && (
             <button onClick={handleNotify} disabled={busy}
               className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50">
-              Notify tenants (48h dispute window)
-            </button>
-          )}
-          {canCharge && (
-            <button onClick={handleChargeAll} disabled={busy}
-              className="px-4 py-2 bg-amber-500 text-white text-sm font-medium rounded-lg hover:bg-amber-600 disabled:opacity-50">
-              Charge all eligible
+              Notify tenants
             </button>
           )}
           {canDelete && (
@@ -691,13 +690,28 @@ function BillDetail({ billId, onChange, onClose }) {
           )}
         </div>
 
+        {canCharge && (
+          <details className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+            <summary className="cursor-pointer text-sm font-medium text-slate-600 select-none">
+              Advanced — landlord ACH (rare)
+            </summary>
+            <p className="mt-2 text-xs text-slate-500 leading-relaxed">
+              Tenants normally pay in the portal or Cash App. Use ACH only when they consented / you need a one-off debit.
+            </p>
+            <button onClick={handleChargeAll} disabled={busy}
+              className="mt-2 px-3 py-1.5 border border-amber-300 text-amber-900 text-sm font-medium rounded-lg hover:bg-amber-50 disabled:opacity-50">
+              Charge all eligible
+            </button>
+          </details>
+        )}
+
         {error && <p className="mt-3 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
       </div>
 
       {/* Tenant cards */}
       <div>
         <h3 className="text-sm font-semibold text-gray-700 mb-3">
-          Tenants on this bill <span className="text-gray-400 font-normal">({splits.length})</span>
+          Who owes what <span className="text-gray-400 font-normal">({splits.length})</span>
         </h3>
         {splits.length === 0 ? (
           <p className="text-sm text-gray-400">No active leases overlapped this period.</p>
@@ -715,40 +729,45 @@ function BillDetail({ billId, onChange, onClose }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Main page — Bills list + selected bill detail
+// Main page — Balances board + tools + bill detail
 // ─────────────────────────────────────────────────────────────────────────────
 export default function UtilitiesPage() {
   const { user } = useAuth();
-  const [bills,      setBills]      = useState([]);
-  const [loading,    setLoading]    = useState(true);
+  const [balances, setBalances] = useState({ rows: [], totals: {} });
+  const [balanceFilter, setBalanceFilter] = useState('owes');
+  const [bills, setBills] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [filter,     setFilter]     = useState('');
-  const [gmail,       setGmail]       = useState({ connected: false, gmail_address: null });
-  const [importing,   setImporting]   = useState(false);
-  const [pruning,     setPruning]     = useState(false);
+  const [showTools, setShowTools] = useState(false);
+  const [gmail, setGmail] = useState({ connected: false, gmail_address: null });
+  const [importing, setImporting] = useState(false);
   const [calculating, setCalculating] = useState(false);
   const [banner, setBanner] = useState(null);
-  const [property,    setProperty]    = useState(null);
-  /** 0 = pull Gmail, 1 = combine, 2 = calculate, 3 = workflow complete */
-  const [workflowStep, setWorkflowStep] = useState(0);
 
-  const draftCount = bills.filter((b) => b.status === 'draft').length;
-  const workflowBusy = importing || pruning || calculating;
   const canConnectGmail = user?.isPrimaryOwner || user?.role === 'super_admin';
+  const totals = balances.totals || {};
 
-  const load = useCallback(async () => {
+  const loadBalances = useCallback(async ({ soft = false } = {}) => {
     try {
-      const params = new URLSearchParams();
-      if (filter) params.set('status', filter);
-      const { data } = await api.get(`/api/utilities/bills?${params}`);
-      setBills(data.bills || []);
+      if (!soft) setLoading(true);
+      const { data } = await api.get(`/api/utilities/balances?filter=${encodeURIComponent(balanceFilter)}`);
+      setBalances(data);
     } catch (e) {
       console.error(e);
     } finally {
-      setLoading(false);
+      if (!soft) setLoading(false);
     }
-  }, [filter]);
+  }, [balanceFilter]);
+
+  const loadBills = useCallback(async () => {
+    try {
+      const { data } = await api.get('/api/utilities/bills');
+      setBills(data.bills || []);
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
 
   const loadGmail = useCallback(async () => {
     try {
@@ -759,32 +778,31 @@ export default function UtilitiesPage() {
     }
   }, []);
 
-  useEffect(() => { setLoading(true); load(); }, [load]);
-  useEffect(() => { loadGmail(); }, [loadGmail]);
+  const refreshAll = useCallback(async ({ soft = false } = {}) => {
+    await Promise.all([loadBalances({ soft }), loadBills()]);
+  }, [loadBalances, loadBills]);
 
+  useEffect(() => { loadBalances(); }, [loadBalances]);
+  useEffect(() => { loadBills(); loadGmail(); }, [loadBills, loadGmail]);
+
+  // Soft-refresh balances while tab focused (~20s)
   useEffect(() => {
-    try {
-      const saved = sessionStorage.getItem('utilities-workflow-step');
-      if (saved != null) {
-        const n = Number(saved);
-        if (n >= 0 && n <= 3) setWorkflowStep(n);
+    let timer = null;
+    const tick = () => {
+      if (document.visibilityState === 'visible') {
+        loadBalances({ soft: true });
       }
-    } catch { /* ignore */ }
-  }, []);
-
-  useEffect(() => {
-    try {
-      sessionStorage.setItem('utilities-workflow-step', String(workflowStep));
-    } catch { /* ignore */ }
-  }, [workflowStep]);
-  useEffect(() => {
-    api.get('/api/properties')
-      .then((r) => {
-        const list = r.data.properties || [];
-        setProperty(list.find((p) => /743/i.test(p.name)) || list[0] || null);
-      })
-      .catch(() => {});
-  }, []);
+    };
+    timer = setInterval(tick, 20_000);
+    const onVis = () => {
+      if (document.visibilityState === 'visible') loadBalances({ soft: true });
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [loadBalances]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -807,48 +825,36 @@ export default function UtilitiesPage() {
     }
   }
 
-  function resetWorkflow() {
-    setWorkflowStep(0);
-    try {
-      sessionStorage.removeItem('utilities-workflow-step');
-    } catch { /* ignore */ }
-  }
-
-  async function combineByMonth() {
-    if (workflowStep !== 1 || workflowBusy) return;
-    setPruning(true);
+  async function importFromGmail() {
+    if (!gmail.connected || importing) return;
+    setImporting(true);
     setBanner(null);
     try {
-      const { data } = await api.post('/api/utilities/bills/combine-monthly');
-      const parts = [];
-      if (data.merged) parts.push(`merged ${data.merged} bill group${data.merged === 1 ? '' : 's'}`);
-      if (data.removed) parts.push(`removed ${data.removed} duplicate row${data.removed === 1 ? '' : 's'}`);
-      if (data.normalized) parts.push(`aligned ${data.normalized} to calendar months`);
-      const detail = parts.length ? parts.join(', ') : 'already one bill per service per month';
+      const { data } = await api.post('/api/utilities/gmail/import', { max_messages: 25 });
+      const created = data.created?.length || 0;
       setBanner({
         type: 'text',
-        text: `Step ② complete (${detail}). Next: tap ③ Calculate tenant shares.`,
+        text: created
+          ? `Imported ${created} bill${created === 1 ? '' : 's'}. Workers also notify automatically when ready.`
+          : `No new bills (${data.skipped?.length || 0} skipped).`,
       });
-      setWorkflowStep(2);
-      setSelectedId(null);
-      await load();
+      await refreshAll();
     } catch (err) {
-      setBanner({ type: 'text', text: err.response?.data?.message || 'Combine failed' });
+      const msg = err.response?.data?.message || 'Gmail import failed';
+      setBanner({ type: 'text', text: msg });
     } finally {
-      setPruning(false);
+      setImporting(false);
     }
   }
 
   async function calculateSplits() {
-    if (workflowStep !== 2 || workflowBusy) return;
+    if (calculating) return;
     setCalculating(true);
     setBanner(null);
     try {
       const { data } = await api.post('/api/utilities/bills/recalculate-splits');
       setBanner(buildCalculateBanner(data));
-      setWorkflowStep(3);
-      setSelectedId(null);
-      await load();
+      await refreshAll();
     } catch (err) {
       setBanner({ type: 'text', text: err.response?.data?.message || 'Calculate failed' });
     } finally {
@@ -856,56 +862,12 @@ export default function UtilitiesPage() {
     }
   }
 
-  async function importFromGmail() {
-    if (workflowStep !== 0 || !gmail.connected || workflowBusy) return;
-    setImporting(true);
-    setBanner(null);
-    try {
-      const { data } = await api.post('/api/utilities/gmail/import', { max_messages: 25 });
-      const created = data.created?.length || 0;
-      const merged = data.merged?.length || 0;
-      const monthly = data.monthly;
-      const policy = data.collectible_policy;
-      const parts = [];
-      if (created) parts.push(`${created} new bill${created === 1 ? '' : 's'}`);
-      if (merged) parts.push(`${merged} merged into this month`);
-      if (monthly?.merged) parts.push(`${monthly.merged} month${monthly.merged === 1 ? '' : 's'} combined`);
-      if (policy?.settled_older) parts.push(`${policy.settled_older} older bill${policy.settled_older === 1 ? '' : 's'} settled`);
-      const detail = parts.length
-        ? parts.join(', ')
-        : `no new bills (${data.skipped?.length || 0} skipped)`;
-      setBanner({
-        type: 'text',
-        text: `Step ① complete (${detail}). Next: tap ② Combine month-to-month.`,
-      });
-      setWorkflowStep(1);
-      await load();
-    } catch (err) {
-      const msg = err.response?.data?.message || 'Gmail import failed';
-      const stale = /invalid_grant/i.test(msg);
-      setBanner({
-        type: 'text',
-        text: stale && canConnectGmail
-          ? 'Gmail authorization expired. Use Reconnect Gmail in the header, then try ① again.'
-          : stale
-            ? 'Gmail authorization expired. Ask the owner to reconnect Gmail in Utilities, then try ① again.'
-            : msg,
-      });
-    } finally {
-      setImporting(false);
-    }
-  }
-
-  const canPullGmail = gmail.connected && workflowStep === 0 && !workflowBusy;
-  const canCombine = workflowStep === 1 && !workflowBusy;
-  const canCalculate = workflowStep === 2 && !workflowBusy;
-  const workflowComplete = workflowStep >= 3;
-
+  const draftCount = bills.filter((b) => b.status === 'draft').length;
   const headerActions = (
     <>
       {gmail.connected && (
         <span className="hidden sm:inline text-xs text-slate-500" title={gmail.gmail_address || ''}>
-          Gmail connected{gmail.gmail_address ? `: ${gmail.gmail_address}` : ''}
+          Gmail{gmail.gmail_address ? `: ${gmail.gmail_address}` : ' connected'}
         </span>
       )}
       {canConnectGmail && (
@@ -914,9 +876,6 @@ export default function UtilitiesPage() {
           {gmail.connected ? 'Reconnect Gmail' : 'Connect Gmail'}
         </button>
       )}
-      {!gmail.connected && !canConnectGmail && (
-        <span className="text-xs text-slate-400">Gmail not connected</span>
-      )}
       <button type="button" onClick={() => setShowCreate(true)}
         className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700">
         Add bill
@@ -924,239 +883,178 @@ export default function UtilitiesPage() {
     </>
   );
 
+  function tenantName(row) {
+    return `${row.first_name || ''} ${row.last_name || ''}`.trim() || row.email;
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
         portal="manager"
         title="Utilities"
-        subtitle={`Split water, electric, and other shared bills across tenants at 743 A Ave · ${bills.length} on file${draftCount ? ` · ${draftCount} draft${draftCount === 1 ? '' : 's'}` : ''}`}
+        subtitle="Bill and remind — tenants pay in the portal. Workers never ACH."
         actions={headerActions}
       />
 
       <UtilityStatusBanner banner={banner} onDismiss={() => setBanner(null)} />
 
-      <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4 sm:p-5 space-y-3">
-        <div>
-          <h3 className="text-sm font-semibold text-slate-900">Update utility bills</h3>
-          <p className="mt-1 text-xs text-slate-600 leading-relaxed">
-            Complete each step in order. The next button unlocks only after the current step finishes.
-          </p>
+      {/* Totals */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+          <p className="text-xs uppercase tracking-wide text-slate-400">Open</p>
+          <p className="text-xl font-semibold tabular-nums text-slate-900">{fmtMoney(totals.open_amount)}</p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+          <p className="text-xs uppercase tracking-wide text-slate-400">Disputed</p>
+          <p className="text-xl font-semibold tabular-nums text-orange-700">{fmtMoney(totals.disputed_amount)}</p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 col-span-2 md:col-span-1">
+          <p className="text-xs uppercase tracking-wide text-slate-400">Overdue (7d+)</p>
+          <p className="text-xl font-semibold tabular-nums text-slate-900">{totals.overdue_count ?? 0}</p>
+        </div>
+      </div>
+
+      {/* Balances board */}
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">Balances</h2>
+            <p className="text-xs text-slate-500">Who owes what — auto-refreshes while this tab is open.</p>
+          </div>
+          <div className="scroll-x-touch max-w-full rounded-lg border border-gray-200">
+            <div className="flex w-max min-w-full text-sm">
+              {[
+                ['owes', 'Owes'],
+                ['disputed', 'Disputed'],
+                ['failed', 'Failed'],
+                ['charging', 'Charging'],
+                ['paid', 'Paid'],
+                ['all', 'All'],
+              ].map(([v, l]) => (
+                <button key={v} type="button" onClick={() => setBalanceFilter(v)}
+                  className={`shrink-0 px-3 py-1.5 font-medium ${balanceFilter === v ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-500">
-          <span className={workflowStep > 0 ? 'text-emerald-700' : workflowStep === 0 ? 'text-indigo-700' : ''}>
-            {workflowStep > 0 ? '✓' : '●'} ① Gmail
-          </span>
-          <span aria-hidden>→</span>
-          <span className={workflowStep > 1 ? 'text-emerald-700' : workflowStep === 1 ? 'text-indigo-700' : ''}>
-            {workflowStep > 1 ? '✓' : workflowStep === 1 ? '●' : '○'} ② Combine
-          </span>
-          <span aria-hidden>→</span>
-          <span className={workflowStep > 2 ? 'text-emerald-700' : workflowStep === 2 ? 'text-indigo-700' : ''}>
-            {workflowStep > 2 ? '✓' : workflowStep === 2 ? '●' : '○'} ③ Calculate
-          </span>
-        </div>
+        {loading ? (
+          <div className="flex items-center justify-center h-40">
+            <div className="animate-spin w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent" />
+          </div>
+        ) : !balances.rows?.length ? (
+          <div className="rounded-xl border border-dashed border-gray-300 bg-white p-10 text-center">
+            <p className="font-medium text-gray-700">No rows for this filter</p>
+            <p className="text-sm text-gray-400 mt-1">Import bills or switch filters. Draft bills appear after notify.</p>
+          </div>
+        ) : (
+          <TableScroll className="bg-white rounded-xl border border-gray-200 portal-table">
+            <table className="w-full text-sm min-w-[40rem]">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  {['Tenant', 'Unit', 'Service', 'Period', 'Amount', 'Status', 'Days open', ''].map((h) => (
+                    <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {balances.rows.map((r) => (
+                  <tr
+                    key={r.split_id}
+                    onClick={() => setSelectedId(r.bill_id)}
+                    className={`hover:bg-gray-50 cursor-pointer ${selectedId === r.bill_id ? 'bg-indigo-50' : ''}`}
+                  >
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-gray-900">{tenantName(r)}</p>
+                      <p className="text-xs text-gray-400 truncate max-w-[10rem]">{r.email}</p>
+                    </td>
+                    <td className="px-4 py-3 text-gray-600">{r.unit_number || '—'}</td>
+                    <td className="px-4 py-3 capitalize text-gray-700">
+                      <span className="mr-1.5 inline-flex align-middle text-slate-500"><ServiceGlyph type={r.service_type} size={16} /></span>
+                      {r.service_type}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{fmt(r.period_start)} – {fmt(r.period_end)}</td>
+                    <td className="px-4 py-3 font-semibold tabular-nums text-gray-900">{fmtMoney(r.amount)}</td>
+                    <td className="px-4 py-3"><Badge meta={SPLIT_STATUS_META[r.split_status]} fallback={r.split_status} /></td>
+                    <td className="px-4 py-3 tabular-nums text-gray-600">{r.days_open != null ? r.days_open : '—'}</td>
+                    <td className="px-4 py-3 text-right text-xs text-indigo-600 font-medium">Open</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableScroll>
+        )}
+      </div>
 
-        <div className="flex flex-wrap gap-2">
+      {/* Tools (secondary) */}
+      <details
+        className="rounded-xl border border-slate-200 bg-white px-4 py-3"
+        open={showTools}
+        onToggle={(e) => setShowTools(e.target.open)}
+      >
+        <summary className="cursor-pointer text-sm font-semibold text-slate-800 select-none">
+          Tools — Gmail import &amp; recalculate
+          {draftCount ? <span className="ml-2 font-normal text-slate-500">({draftCount} draft{draftCount === 1 ? '' : 's'})</span> : null}
+        </summary>
+        <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"
             onClick={importFromGmail}
-            disabled={!canPullGmail}
-            title={
-              !gmail.connected
-                ? 'Connect Gmail in the header first'
-                : workflowStep !== 0
-                  ? workflowComplete
-                    ? 'Workflow complete — start a new update'
-                    : 'Finish the earlier step first'
-                  : 'Pull utility e-bills from Gmail'
-            }
-            className={`rounded-lg border px-4 py-2.5 text-sm font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-40 ${
-              canPullGmail
-                ? 'bg-white border-indigo-200 text-indigo-800 hover:bg-indigo-50'
-                : workflowStep > 0
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                  : 'bg-slate-50 border-slate-200 text-slate-400'
-            }`}
+            disabled={!gmail.connected || importing}
+            className="rounded-lg border border-indigo-200 bg-white px-4 py-2 text-sm font-medium text-indigo-800 hover:bg-indigo-50 disabled:opacity-40"
           >
-            {importing ? 'Pulling…' : workflowStep > 0 ? '✓ ① Gmail' : '① Pull from Gmail'}
-          </button>
-          <button
-            type="button"
-            onClick={combineByMonth}
-            disabled={!canCombine}
-            title={
-              workflowStep < 1
-                ? 'Complete step ① first'
-                : workflowStep > 1
-                  ? 'Step ② already done'
-                  : 'Merge drafts into one bill per service per month'
-            }
-            className={`rounded-lg border px-4 py-2.5 text-sm font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-40 ${
-              canCombine
-                ? 'bg-white border-indigo-200 text-indigo-800 hover:bg-indigo-50'
-                : workflowStep > 1
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                  : 'bg-slate-50 border-slate-200 text-slate-400'
-            }`}
-          >
-            {pruning ? 'Combining…' : workflowStep > 1 ? '✓ ② Combined' : '② Combine month-to-month'}
+            {importing ? 'Importing…' : 'Import from Gmail'}
           </button>
           <button
             type="button"
             onClick={calculateSplits}
-            disabled={!canCalculate}
-            title={
-              workflowStep < 2
-                ? 'Complete steps ① and ② first'
-                : workflowComplete
-                  ? 'Step ③ already done'
-                  : 'Prorate by lease dates; only latest bill per service is collectible'
-            }
-            className={`rounded-lg px-4 py-2.5 text-sm font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-40 ${
-              canCalculate
-                ? 'bg-indigo-600 text-white hover:bg-indigo-700'
-                : workflowStep > 2
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-slate-200 text-slate-500'
-            }`}
+            disabled={calculating}
+            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
           >
-            {calculating ? 'Calculating…' : workflowStep > 2 ? '✓ ③ Calculated' : '③ Calculate tenant shares'}
+            {calculating ? 'Recalculating…' : 'Recalculate splits'}
           </button>
-          {workflowComplete && (
-            <button
-              type="button"
-              onClick={resetWorkflow}
-              disabled={workflowBusy}
-              className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-            >
-              Start new update
-            </button>
-          )}
         </div>
+        <p className="mt-2 text-xs text-slate-500">
+          Auto-import runs about every 20 minutes. Use these if you need a manual pull.
+        </p>
 
-        {!gmail.connected && canConnectGmail && (
-          <p className="text-xs text-amber-800">
-            Connect Gmail first (header) before step ①.
-          </p>
-        )}
-        {gmail.connected && workflowStep === 0 && !workflowBusy && (
-          <p className="text-xs text-indigo-800">Start with ① Pull from Gmail.</p>
-        )}
-        {workflowStep === 1 && !workflowBusy && (
-          <p className="text-xs text-indigo-800">
-            Step ① done — run ② Combine{draftCount > 1 ? ` (${draftCount} drafts to merge)` : ''}.
-          </p>
-        )}
-        {workflowStep === 2 && !workflowBusy && (
-          <p className="text-xs text-indigo-800">Step ② done — run ③ Calculate tenant shares.</p>
-        )}
-        {workflowComplete && (
-          <p className="text-xs text-emerald-800">
-            All steps complete. Notify tenants on draft bills, or start a new update when more e-bills arrive.
-          </p>
-        )}
-      </div>
-
-      {/* Filter tabs */}
-      <div className="scroll-x-touch max-w-full rounded-lg border border-gray-200">
-        <div className="flex w-max min-w-full text-sm">
-          {[['','All'],['draft','Draft'],['notified','Notified'],['charging','Charging'],['settled','Settled']].map(([v, l]) => (
-            <button key={v} type="button" onClick={() => setFilter(v)}
-              className={`shrink-0 px-4 py-2 font-medium ${filter === v ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
-              {l}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Bills list */}
-      {loading ? (
-        <div className="flex items-center justify-center h-48">
-          <div className="animate-spin w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent" />
-        </div>
-      ) : bills.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-gray-300 bg-white p-12 text-center">
-          <div className="mb-3 flex justify-center text-slate-300"><Zap size={40} strokeWidth={1.5} /></div>
-          <p className="font-medium text-gray-700">No utility bills yet</p>
-          <p className="text-sm text-gray-400 mt-1">Add a bill to start splitting it across your tenants.</p>
-        </div>
-      ) : (
-        <TableScroll className="bg-white rounded-xl border border-gray-200 portal-table">
-          <table className="w-full text-sm min-w-[36rem]">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                {['Service','Billing month','Amount','Due','Status','Paid',''].map(h => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {bills.map(b => (
-                <tr key={b.id} onClick={() => setSelectedId(b.id)}
-                    className={`hover:bg-gray-50 cursor-pointer ${selectedId === b.id ? 'bg-indigo-50' : ''}`}>
-                  <td className="px-4 py-3">
-                    <span className="mr-2 inline-flex align-middle text-slate-500"><ServiceGlyph type={b.service_type} size={18} /></span>
-                    <span className="capitalize text-gray-700 font-medium">{b.service_type}</span>
-                    {b.provider_name && (
-                      <span className="block text-xs text-gray-400 truncate max-w-[140px]">{b.provider_name}</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-gray-700">
-                    <span className="font-medium">{fmtBillingMonth(b.billing_month)}</span>
-                    <span className="block text-xs text-gray-400">{fmt(b.period_start)} – {fmt(b.period_end)}</span>
-                  </td>
-                  <td className="px-4 py-3 font-semibold text-gray-800 tabular-nums">{fmtMoney(b.total_amount)}</td>
-                  <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{fmt(b.due_date)}</td>
-                  <td className="px-4 py-3"><Badge meta={BILL_STATUS_META[b.status]} fallback={b.status} /></td>
-                  <td className="px-4 py-3 text-xs text-gray-500 tabular-nums">
-                    {b.paid_count}/{b.split_count}
-                    {Number(b.disputed_count) > 0 && (
-                      <span className="ml-1 text-orange-600">({b.disputed_count} disputed)</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
-                    {b.status === 'draft' && (
-                      <button type="button"
-                        className="text-xs font-medium text-red-600 hover:text-red-800"
-                        onClick={async () => {
-                          if (!confirm('Delete this draft?')) return;
-                          try {
-                            await api.delete(`/api/utilities/bills/${b.id}`);
-                            if (selectedId === b.id) setSelectedId(null);
-                            await load();
-                          } catch (err) {
-                            window.alert(err.response?.data?.message || 'Delete failed');
-                          }
-                        }}>
-                        Delete
-                      </button>
-                    )}
-                  </td>
-                </tr>
+        {bills.filter((b) => b.status === 'draft').length > 0 && (
+          <div className="mt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">Draft bills</p>
+            <ul className="space-y-1">
+              {bills.filter((b) => b.status === 'draft').slice(0, 8).map((b) => (
+                <li key={b.id}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedId(b.id)}
+                    className="text-sm text-indigo-700 hover:underline"
+                  >
+                    {SERVICE_LABEL[b.service_type] || b.service_type} · {fmtBillingMonth(b.billing_month)} · {fmtMoney(b.total_amount)}
+                  </button>
+                </li>
               ))}
-            </tbody>
-          </table>
-        </TableScroll>
-      )}
+            </ul>
+          </div>
+        )}
+      </details>
 
-      {/* Selected bill detail */}
       {selectedId && (
         <BillDetail
           billId={selectedId}
-          onChange={load}
+          onChange={() => refreshAll({ soft: true })}
           onClose={() => setSelectedId(null)}
         />
       )}
 
-      {/* Create modal */}
       {showCreate && (
         <CreateBillModal
           onClose={() => setShowCreate(false)}
           onCreated={(data) => {
             setShowCreate(false);
             setSelectedId(data.bill.id);
-            load();
+            refreshAll();
           }}
         />
       )}
