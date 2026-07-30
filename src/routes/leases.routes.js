@@ -12,6 +12,13 @@ const { sendLeaseForSignature, getSigningUrlForUser,
         getBinder, processWebhookEvent, mapBinderStatus,
         checkConnection } = require('../services/rocketlawyer.service');
 const { ensureLeaseSigningFee } = require('../services/lease-signing-pay.service');
+const {
+  createNativeLease,
+  generateAndAttachPdf,
+  sendNativeForSignature,
+  applyNativeSignature,
+  getNativeDocumentForUser,
+} = require('../services/native-lease.service');
 
 const router = express.Router();
 router.use(authenticate);
@@ -177,6 +184,102 @@ router.post('/', staffOnly, async (req, res) => {
   }
 });
 
+// ── POST /api/leases/native  — create native VA room lease draft ───────────────
+router.post('/native', staffOnly, async (req, res) => {
+  const {
+    unit_id,
+    tenant_id,
+    room_type,
+    start_date,
+    end_date,
+    house_rules,
+    monthly_rent,
+    security_deposit,
+    grace_period_days,
+    late_fee_type,
+    late_fee_amount,
+    late_fee_cap,
+    nsf_fee,
+  } = req.body;
+
+  try {
+    const lease = await createNativeLease({
+      unitId: unit_id,
+      tenantId: tenant_id,
+      roomType: room_type,
+      startDate: start_date,
+      endDate: end_date,
+      houseRules: house_rules,
+      createdBy: req.user.id,
+      overrides: {
+        monthlyRent: monthly_rent,
+        securityDeposit: security_deposit,
+        gracePeriodDays: grace_period_days,
+        lateFeeType: late_fee_type,
+        lateFeeAmount: late_fee_amount,
+        lateFeeCap: late_fee_cap,
+        nsfFee: nsf_fee,
+      },
+    });
+    res.status(201).json({ lease });
+  } catch (err) {
+    console.error('[POST /leases/native]', err);
+    res.status(err.statusCode ?? 500).json({ error: err.message, code: err.code });
+  }
+});
+
+// ── POST /api/leases/:id/native/pdf  — generate native lease PDF ───────────────
+router.post('/:id/native/pdf', staffOnly, async (req, res) => {
+  try {
+    const pdfPath = await generateAndAttachPdf(req.params.id);
+    res.json({ pdfPath, url: pdfPath });
+  } catch (err) {
+    console.error('[POST /leases/:id/native/pdf]', err);
+    res.status(err.statusCode ?? 500).json({ error: err.message, code: err.code });
+  }
+});
+
+// ── POST /api/leases/:id/native/send  — send native lease for signatures ───────
+router.post('/:id/native/send', staffOnly, async (req, res) => {
+  try {
+    const result = await sendNativeForSignature(req.params.id, req.user.id);
+    res.json(result);
+  } catch (err) {
+    console.error('[POST /leases/:id/native/send]', err);
+    res.status(err.statusCode ?? 500).json({ error: err.message, code: err.code });
+  }
+});
+
+// ── GET /api/leases/:id/native/document  — native PDF URL ──────────────────────
+router.get('/:id/native/document', anyRole, async (req, res) => {
+  try {
+    const document = await getNativeDocumentForUser(req.params.id, req.user);
+    res.json(document);
+  } catch (err) {
+    console.error('[GET /leases/:id/native/document]', err);
+    res.status(err.statusCode ?? 500).json({ error: err.message, code: err.code });
+  }
+});
+
+// ── POST /api/leases/:id/native/sign  — apply native electronic signature ──────
+router.post('/:id/native/sign', anyRole, async (req, res) => {
+  try {
+    const result = await applyNativeSignature({
+      leaseId: req.params.id,
+      userId: req.user.id,
+      role: req.user.role,
+      signedName: req.body.signedName,
+      signatureImage: req.body.signatureImage,
+      ip: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('[POST /leases/:id/native/sign]', err);
+    res.status(err.statusCode ?? 500).json({ error: err.message, code: err.code });
+  }
+});
+
 // ── GET /api/leases/:id ───────────────────────────────────────────────────────
 router.get('/:id', anyRole, async (req, res) => {
   try {
@@ -289,6 +392,9 @@ router.post('/:id/envelopes', staffOnly, async (req, res) => {
     );
     if (!leaseRows.length) return res.status(404).json({ error: 'Lease not found' });
     const lease = leaseRows[0];
+    if (lease.signing_provider === 'native') {
+      return res.status(400).json({ error: 'This lease uses native Montero signing, not Rocket Lawyer.' });
+    }
 
     const documentId = resolveRlDocumentId(lease, req.body.documentId ?? null);
     if (!documentId) {
@@ -377,7 +483,7 @@ router.post('/:id/documents', staffOnly, async (req, res) => {
     const { rows } = await pool.query(
       `SELECT l.id, l.status, un.unit_number, p.name AS property_name,
               p.address_line1 AS property_address, l.start_date, l.end_date,
-              l.monthly_rent, l.security_deposit,
+              l.monthly_rent, l.security_deposit, l.signing_provider,
               (u.first_name || ' ' || u.last_name) AS tenant_name, u.email AS tenant_email
        FROM leases l
        JOIN units un ON un.id = l.unit_id
@@ -388,6 +494,9 @@ router.post('/:id/documents', staffOnly, async (req, res) => {
     );
     if (!rows.length) return res.status(404).json({ error: 'Lease not found' });
     const lease = rows[0];
+    if (lease.signing_provider === 'native') {
+      return res.status(400).json({ error: 'This lease uses native Montero signing, not Rocket Lawyer.' });
+    }
 
     const templateId = req.body.templateId ?? process.env.RL_LEASE_TEMPLATE_ID;
     if (!templateId) {
