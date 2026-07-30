@@ -52,12 +52,13 @@ module.exports = {
   },
   UC06: {
     id: 'UC06',
-    name: 'Charge ACH',
+    name: 'Charge ACH (legacy / emergency)',
     actor: 'Owner, Property Manager',
-    goal: 'Debit non-disputed shares via Stripe ACH',
-    preconditions: ['Bill is notified or charging', 'Tenant has verified bank account'],
+    goal: 'Emergency debit of non-disputed shares via Stripe ACH — not the happy path. Tenants normally pay in the portal; Autopay is the only automatic debit.',
+    preconditions: ['Bill is notified or charging', 'Tenant has verified bank account', 'Staff intentionally using emergency API'],
     postconditions: ['Payment row created', 'Split status is charging'],
     endpoint: 'POST /api/utilities/bills/:id/charge',
+    ui: 'Not shown in Manager Utilities (portal-pay model)',
   },
   UC07: {
     id: 'UC07',

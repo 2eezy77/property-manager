@@ -646,7 +646,8 @@ export default function PaymentsPage() {
             {' — one-time rent that posts to your ledger right away (no screenshot chase).'}
           </li>
           <li>
-            Outside cashtag / Venmo / Zelle can lag or need manual matching — use this portal when you can.
+            <strong className="font-semibold">Autopay is opt-in</strong>
+            {' — we never auto-debit rent or utilities unless Autopay is enabled.'}
           </li>
         </ul>
       </section>

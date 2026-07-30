@@ -352,8 +352,7 @@ export default function TenantDashboard() {
           >
             <p className="text-sm font-semibold text-blue-950">Pay rent in the portal</p>
             <p className="mt-1 text-xs leading-relaxed text-blue-900/80">
-              Autopay waives late fees. Cash App Pay on Payments posts to your balance immediately.
-              Outside cashtag sends can lag — use Payments when you can.
+              Autopay waives late fees. Pay with bank ACH or Cash App Pay on Payments — we only auto-debit if Autopay is on.
               {balance?.securityDepositPayment
                 ? ` Security deposit still due (${fmt(balance.securityDepositPayment.amount)}).`
                 : ''}
