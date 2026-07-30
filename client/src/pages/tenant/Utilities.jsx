@@ -184,11 +184,11 @@ export default function TenantUtilities() {
       />
 
       <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-3 text-sm text-slate-700">
-        <p className="font-medium text-slate-900">How to pay</p>
+        <p className="font-medium text-slate-900">Pay in the portal</p>
         <p className="mt-1 text-xs leading-relaxed text-slate-600">
-          Pay open shares in{' '}
+          Open shares are paid under{' '}
           <Link to="/tenant/payments" className="font-medium text-indigo-700 hover:underline">Payments</Link>
-          {' '}(bank ACH or Cash App). We only auto-debit utilities if you turned on Autopay.
+          {' '}(bank ACH or Cash App Pay). We only auto-debit if you turn on Autopay.
         </p>
         {openTotal > 0 && (
           <Link
