@@ -59,6 +59,28 @@ mustContain(
   'charging status shown as Processing in UI'
 );
 
+// Cash App source labels before generic payment_method (Manager Payments)
+const paymentsSrc = read('client/src/pages/manager/Payments.jsx');
+const cashAppImportCheck = "if (p.source === 'cash_app_import') return 'Cash App (off-app)';";
+const stripeCashAppCheck = "if (p.source === 'stripe_cashapp') return 'Cash App Pay';";
+const paymentMethodBranch = 'if (p.payment_method)';
+if (!paymentsSrc.includes(cashAppImportCheck)) {
+  failures.push(`client/src/pages/manager/Payments.jsx: must contain ${JSON.stringify(cashAppImportCheck)} — Cash App off-app label by source`);
+}
+if (!paymentsSrc.includes(stripeCashAppCheck)) {
+  failures.push(`client/src/pages/manager/Payments.jsx: must contain ${JSON.stringify(stripeCashAppCheck)} — Cash App Pay label by source`);
+}
+const importIdx = paymentsSrc.indexOf(cashAppImportCheck);
+const stripeIdx = paymentsSrc.indexOf(stripeCashAppCheck);
+const methodIdx = paymentsSrc.indexOf(paymentMethodBranch);
+if (importIdx === -1 || stripeIdx === -1 || methodIdx === -1) {
+  // missing strings already reported above
+} else if (importIdx >= methodIdx || stripeIdx >= methodIdx) {
+  failures.push(
+    'client/src/pages/manager/Payments.jsx: cash_app_import and stripe_cashapp source checks must appear before if (p.payment_method)'
+  );
+}
+
 if (failures.length) {
   console.error('assert:portal-pay FAILED:\n' + failures.map((f) => `  - ${f}`).join('\n'));
   process.exit(1);

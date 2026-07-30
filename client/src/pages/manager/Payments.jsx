@@ -21,12 +21,12 @@ function fmtPeriod(ts) {
 function fmtMoney(v) { return v != null ? '$'+Number(v).toLocaleString('en-US',{minimumFractionDigits:2}) : '—'; }
 
 function paymentMethodLabel(p) {
+  if (p.source === 'cash_app_import') return 'Cash App (off-app)';
+  if (p.source === 'stripe_cashapp') return 'Cash App Pay';
   if (p.payment_method) {
     const base = METHOD_LABEL[p.payment_method] || p.payment_method;
     return p.partial_rent === 'true' ? `${base} (partial)` : base;
   }
-  if (p.source === 'cash_app_import') return 'Cash App (off-app)';
-  if (p.source === 'stripe_cashapp') return 'Cash App Pay';
   if (p.stripe_payment_intent_id) return 'Bank (ACH)';
   if (p.status === 'succeeded') return 'ACH';
   return '—';
