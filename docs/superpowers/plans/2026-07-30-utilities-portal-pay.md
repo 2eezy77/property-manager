@@ -67,10 +67,6 @@ function read(rel) {
   return fs.readFileSync(path.join(root, rel), 'utf8');
 }
 
-function assert(!cond, msg) {
-  // placeholder — real function below
-}
-
 function mustNotContain(rel, patterns, why) {
   const src = read(rel);
   for (const p of patterns) {
@@ -114,7 +110,7 @@ mustNotContain(
 // Processing label (after Task 2)
 mustContain(
   'client/src/pages/manager/Utilities.jsx',
-  ["['charging', 'Processing']", "label: 'Processing'"],
+  ["label: 'Processing'", "['charging', 'Processing']"],
   'charging status shown as Processing in UI'
 );
 
@@ -124,8 +120,6 @@ if (failures.length) {
 }
 console.log('assert:portal-pay OK');
 ```
-
-Fix the accidental `assert(!cond` stub — the file above should **not** include a broken `assert` helper; only `mustNotContain` / `mustContain`.
 
 Add to `package.json` scripts:
 
