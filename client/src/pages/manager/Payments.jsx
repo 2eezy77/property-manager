@@ -21,11 +21,12 @@ function fmtPeriod(ts) {
 function fmtMoney(v) { return v != null ? '$'+Number(v).toLocaleString('en-US',{minimumFractionDigits:2}) : '—'; }
 
 function paymentMethodLabel(p) {
+  if (p.source === 'cash_app_import') return 'Cash App (off-app)';
+  if (p.source === 'stripe_cashapp') return 'Cash App Pay';
   if (p.payment_method) {
     const base = METHOD_LABEL[p.payment_method] || p.payment_method;
     return p.partial_rent === 'true' ? `${base} (partial)` : base;
   }
-  if (p.source === 'cash_app_import' || p.source === 'stripe_cashapp') return 'Cash App';
   if (p.stripe_payment_intent_id) return 'Bank (ACH)';
   if (p.status === 'succeeded') return 'ACH';
   return '—';
@@ -243,14 +244,17 @@ export default function ManagerPayments() {
             >
               {healthLoading ? 'Checking…' : 'Payment health'}
             </button>
-            <button
-              type="button"
-              onClick={syncCashApp}
-              disabled={syncingCashApp}
-              className="rounded-xl border border-emerald-200 bg-white px-4 py-2.5 text-sm font-semibold text-emerald-800 shadow-sm transition hover:bg-emerald-50 disabled:opacity-50"
-            >
-              {syncingCashApp ? 'Syncing Cash App…' : 'Sync Cash App from Gmail'}
-            </button>
+            <div className="flex flex-col items-end gap-1">
+              <button
+                type="button"
+                onClick={syncCashApp}
+                disabled={syncingCashApp}
+                className="rounded-xl border border-emerald-200 bg-white px-4 py-2.5 text-sm font-semibold text-emerald-800 shadow-sm transition hover:bg-emerald-50 disabled:opacity-50"
+              >
+                {syncingCashApp ? 'Syncing Cash App…' : 'Sync Cash App from Gmail'}
+              </button>
+              <p className="text-xs text-slate-500">Safety net for off-app Cash App emails — prefer tenants pay in the portal.</p>
+            </div>
           </div>
         }
       />
