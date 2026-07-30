@@ -54,7 +54,9 @@
     "stripe:webhook:sync": "node scripts/update-stripe-webhook-events.js --apply",
     "stripe:connect:status": "node scripts/stripe-connect-status.js",
     "test:native-lease-defaults": "node scripts/test-native-lease-defaults.js",
+    "test:native-lease-pdf": "node scripts/test-native-lease-pdf.js",
     "test:native-lease": "node scripts/test-native-lease.js",
+    "test:native-lease:all": "npm run test:native-lease-defaults && npm run test:native-lease-pdf && npm run test:native-lease",
     "rocketlawyer:probe": "node scripts/rocketlawyer-probe.js",
     "build": "cd client && npm install && npm run build"
   },
