@@ -11,10 +11,21 @@ async function prepareTenantCharge(client, {
   bankAccountId = null,
   metadataExtra = {},
 }) {
+  if (!['rent', 'security_deposit'].includes(paymentType)) {
+    const err = new Error('UNSUPPORTED_PAYMENT_TYPE');
+    err.code = 'UNSUPPORTED_PAYMENT_TYPE';
+    throw err;
+  }
+
   const { rows: leaseRows } = await client.query(
     `SELECT id, monthly_rent, tenant_id FROM leases
-      WHERE id = $1 AND tenant_id = $2 AND status = 'active'`,
-    [leaseId, tenantId]
+      WHERE id = $1
+        AND tenant_id = $2
+        AND (
+          ($3 = 'security_deposit' AND status IN ('active', 'awaiting_deposit'))
+          OR ($3 = 'rent' AND status = 'active')
+        )`,
+    [leaseId, tenantId, paymentType]
   );
   const lease = leaseRows[0];
   if (!lease) {
@@ -135,6 +146,7 @@ async function prepareTenantCharge(client, {
 
   return {
     payment,
+    lease,
     amountDollars,
     amountCents,
     description,

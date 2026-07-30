@@ -33,6 +33,12 @@ function requireStatus(label, response, expected) {
   );
 }
 
+function isStripeAccountRestriction(response) {
+  const body = JSON.stringify(response.body || {});
+  return response.status >= 500
+    && /charges_enabled|charges enabled|account.*restricted|capabilit/i.test(body);
+}
+
 async function findSeedTenant() {
   const { rows } = await pool.query(
     `SELECT id, email
@@ -135,6 +141,19 @@ async function main() {
     assert.strictEqual(Number(deposit.amount), 900);
     assert.strictEqual(deposit.metadata?.source, 'native_lease_activation');
     reporter.ok('pending security deposit payment row created');
+
+    const cardIntentRes = await req('POST', '/api/payments/card/create-intent', {
+      leaseId,
+      paymentType: 'security_deposit',
+    }, tenantToken);
+    if (isStripeAccountRestriction(cardIntentRes)) {
+      reporter.skip('card security deposit PaymentIntent can be created while awaiting deposit', JSON.stringify(cardIntentRes.body));
+    } else {
+      requireStatus('card security deposit PaymentIntent', cardIntentRes, 200);
+      assert(cardIntentRes.body.clientSecret, 'card intent response should include clientSecret');
+      assert(cardIntentRes.body.paymentIntentId, 'card intent response should include paymentIntentId');
+      reporter.ok('card security deposit PaymentIntent can be created while awaiting deposit');
+    }
 
     const fee = await findSigningFee(leaseId);
     assert(fee, 'manager signing fee row should exist');

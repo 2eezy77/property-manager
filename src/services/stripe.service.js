@@ -497,6 +497,23 @@ async function createCashAppPaymentIntent({
   return stripe.paymentIntents.create(params);
 }
 
+async function createCardPaymentIntent({
+  amountCents,
+  customerId,
+  metadata = {},
+  description,
+}) {
+  return stripe.paymentIntents.create({
+    amount: amountCents,
+    currency: 'usd',
+    customer: customerId,
+    payment_method_types: ['card'],
+    capture_method: 'automatic',
+    description,
+    metadata,
+  });
+}
+
 async function retrievePaymentIntent(paymentIntentId) {
   return stripe.paymentIntents.retrieve(paymentIntentId);
 }
@@ -534,6 +551,7 @@ module.exports = {
   probeCashAppPayAvailable,
   probeAchPaymentIntentAvailable,
   createCashAppPaymentIntent,
+  createCardPaymentIntent,
   retrievePaymentIntent,
   cancelPaymentIntent,
 };

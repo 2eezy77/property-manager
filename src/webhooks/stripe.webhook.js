@@ -35,6 +35,7 @@ const {
   notifyPaymentReceived,
   notifyPaymentFailed,
 } = require('../services/payment-email.service');
+const { activateNativeLeaseAfterDeposit } = require('../services/native-lease-activate.service');
 
 const router = express.Router();
 const pool = require('../db/client');
@@ -42,6 +43,7 @@ const pool = require('../db/client');
 function paymentMethodFromIntent(pi) {
   if (pi.payment_method_types?.includes('cashapp')) return 'cash_app';
   if (pi.payment_method_types?.includes('us_bank_account')) return 'ach';
+  if (pi.payment_method_types?.includes('card')) return 'card';
   return null;
 }
 
@@ -542,6 +544,7 @@ async function onSucceeded(pi, eventId) {
 
   const client = await pool.connect();
   let utilityBillId = null;
+  let bundledRentPayment = null;
   try {
     await client.query('BEGIN');
 
@@ -591,8 +594,34 @@ async function onSucceeded(pi, eventId) {
           paymentId,
         ]
       );
+    } else if (payment_type === 'security_deposit') {
+      await activateNativeLeaseAfterDeposit(client, lease_id);
+
+      bundledRentPayment = await insertBundledFirstMonthRent(client, {
+        pi,
+        eventId,
+        leaseId: lease_id,
+        tenantId: tenant_id,
+      });
+      if (bundledRentPayment) {
+        await processSplits(client, bundledRentPayment.id, lease_id, bundledRentPayment.amount, pi);
+      }
+
+      await client.query(
+        `INSERT INTO notifications
+           (user_id, type, title, body, channel, related_entity_type, related_entity_id, sent_at)
+         VALUES ($1, 'rent_received',
+                 'Security Deposit Confirmed',
+                 $2,
+                 'push', 'payment', $3, NOW())`,
+        [
+          tenant_id,
+          `Your security deposit of $${parseFloat(amount).toFixed(2)} has been confirmed.`,
+          paymentId,
+        ]
+      );
     } else {
-      // Rent / late_fee / security_deposit / other — original flow
+      // Rent / late_fee / other — original flow
 
       // 2. Mark any pending late fees as paid for this lease
       await client.query(
@@ -636,6 +665,16 @@ async function onSucceeded(pi, eventId) {
       amount,
       paymentType: payment_type,
     }).catch(err => console.error('[stripe-webhook] payment email:', err.message));
+
+    if (bundledRentPayment) {
+      notifyPaymentReceived({
+        paymentId: bundledRentPayment.id,
+        tenantId: tenant_id,
+        leaseId: lease_id,
+        amount: bundledRentPayment.amount,
+        paymentType: 'rent',
+      }).catch(err => console.error('[stripe-webhook] bundled rent email:', err.message));
+    }
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -764,6 +803,56 @@ async function onDispute(dispute) {
   );
 
   console.warn(`[stripe-webhook] dispute created on charge ${chargeId}`);
+}
+
+async function insertBundledFirstMonthRent(client, { pi, eventId, leaseId, tenantId }) {
+  const amount = parseFloat(pi.metadata?.bundled_first_month_rent);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+
+  const method = paymentMethodFromIntent(pi);
+  const metadata = {
+    source: 'bundled_security_deposit',
+    payment_method: method,
+    bundled_with_payment_intent: pi.id,
+  };
+
+  const { rows } = await client.query(
+    `WITH lease_period AS (
+       SELECT date_trunc('month', start_date)::date AS period_start
+         FROM leases
+        WHERE id = $1
+     )
+     INSERT INTO payments
+       (lease_id, tenant_id, amount, currency, status, payment_type,
+        period_start, period_end, due_date, paid_at,
+        stripe_charge_id, stripe_webhook_event_id, metadata)
+     SELECT $1, $2, $3, 'USD', 'succeeded', 'rent',
+            period_start,
+            (period_start + INTERVAL '1 month - 1 day')::date,
+            period_start,
+            NOW(),
+            $4, $5, $6::jsonb
+       FROM lease_period
+      WHERE NOT EXISTS (
+        SELECT 1
+          FROM payments p
+         WHERE p.lease_id = $1
+           AND p.payment_type = 'rent'
+           AND p.period_start = lease_period.period_start
+           AND p.status = 'succeeded'
+      )
+      RETURNING id, amount`,
+    [
+      leaseId,
+      tenantId,
+      amount,
+      chargeIdFromIntent(pi),
+      eventId,
+      JSON.stringify(metadata),
+    ]
+  );
+
+  return rows[0] || null;
 }
 
 // ���─ Helper: process payment splits ────────────────────────────────────────────
