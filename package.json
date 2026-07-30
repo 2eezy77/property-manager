@@ -53,6 +53,7 @@
     "stripe:webhook-events:dry": "node scripts/update-stripe-webhook-events.js --dry-run",
     "stripe:webhook:sync": "node scripts/update-stripe-webhook-events.js --apply",
     "stripe:connect:status": "node scripts/stripe-connect-status.js",
+    "test:native-lease-defaults": "node scripts/test-native-lease-defaults.js",
     "rocketlawyer:probe": "node scripts/rocketlawyer-probe.js",
     "build": "cd client && npm install && npm run build"
   },
