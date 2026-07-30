@@ -4,6 +4,7 @@
  */
 
 const PDFDocument = require('pdfkit');
+const { PDFDocument: PdfLibDocument, StandardFonts, rgb } = require('pdf-lib');
 const fs = require('fs');
 const path = require('path');
 const {
@@ -315,157 +316,153 @@ async function generateRoomLeasePdf(data) {
 
 function imageBufferFromDataUrl(dataUrl) {
   if (!dataUrl) return null;
-  const match = String(dataUrl).match(/^data:image\/(?:png|jpe?g);base64,(.+)$/i);
+  const match = String(dataUrl).match(/^data:image\/(png|jpe?g);base64,(.+)$/i);
   if (!match) return null;
-  return Buffer.from(match[1], 'base64');
+  return { mime: match[1].toLowerCase(), buffer: Buffer.from(match[2], 'base64') };
 }
 
-function pdfString(value) {
-  return String(value ?? '')
-    .replace(/\\/g, '\\\\')
-    .replace(/\(/g, '\\(')
-    .replace(/\)/g, '\\)')
-    .replace(/\r?\n/g, ' ');
+async function embedSignatureImage(pdfDoc, imageDataUrl) {
+  const parsed = imageBufferFromDataUrl(imageDataUrl);
+  if (!parsed) return null;
+  if (parsed.mime === 'png') {
+    return pdfDoc.embedPng(parsed.buffer);
+  }
+  return pdfDoc.embedJpg(parsed.buffer);
 }
 
-function findPdfObject(pdfText, objectNumber, generationNumber = 0) {
-  const objectPattern = new RegExp(
-    `(?:^|\\n)${objectNumber}\\s+${generationNumber}\\s+obj\\s*([\\s\\S]*?)\\s*endobj`,
-  );
-  const match = pdfText.match(objectPattern);
-  return match ? match[1] : null;
-}
+async function buildSignaturePage(pdfDoc, sourcePath, signatures) {
+  const page = pdfDoc.addPage([612, 792]);
+  const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-function buildSignaturePageContent(sourcePath, signatures) {
+  const { width, height } = page.getSize();
+  const margin = 72;
+  const contentWidth = width - margin * 2;
+  const dark = rgb(0.07, 0.09, 0.15);
+  const blue = rgb(0.12, 0.25, 0.69);
+  const muted = rgb(0.29, 0.34, 0.39);
+  const lightBlue = rgb(0.82, 0.88, 0.98);
+
+  page.drawRectangle({
+    x: margin,
+    y: height - margin - 3,
+    width: contentWidth,
+    height: 3,
+    color: blue,
+  });
+
+  let y = height - margin - 24;
+  page.drawText('MONTERO RENTALS LEASE SIGNATURE PAGE', {
+    x: margin,
+    y,
+    size: 16,
+    font: helveticaBold,
+    color: dark,
+  });
+  y -= 26;
+  page.drawText(`Source document: ${path.basename(sourcePath)}`, {
+    x: margin,
+    y,
+    size: 9,
+    font: helvetica,
+    color: muted,
+  });
+  y -= 14;
+  page.drawText(PROPERTY_ADDRESS.full, {
+    x: margin,
+    y,
+    size: 9,
+    font: helvetica,
+    color: muted,
+  });
+  y -= 20;
+  page.drawRectangle({
+    x: margin,
+    y: y - 1,
+    width: contentWidth,
+    height: 1,
+    color: lightBlue,
+  });
+  y -= 28;
+
   const rows = Array.isArray(signatures) ? signatures : [];
-  const lines = [
-    { text: 'MONTERO RENTALS LEASE SIGNATURE PAGE', size: 16, x: 72, y: 720 },
-    { text: `Source document: ${path.basename(sourcePath)}`, size: 9, x: 72, y: 694 },
-    { text: PROPERTY_ADDRESS.full, size: 9, x: 72, y: 680 },
-  ];
-
   if (rows.length === 0) {
-    lines.push({ text: 'No signatures were provided.', size: 10, x: 72, y: 640 });
-  } else {
-    let y = 640;
-    rows.forEach((signature, index) => {
-      const imageProvided = imageBufferFromDataUrl(signature.imageDataUrl) ? 'yes' : 'no';
-      lines.push({ text: `${index + 1}. ${signature.role || 'Signer'}`, size: 11, x: 72, y });
-      lines.push({ text: `Name: ${signature.name || ''}`, size: 10, x: 92, y: y - 18 });
-      lines.push({ text: `Signed at: ${formatDateTime(signature.signedAt)}`, size: 10, x: 92, y: y - 34 });
-      lines.push({ text: `Signature image provided: ${imageProvided}`, size: 8, x: 92, y: y - 50 });
-      y -= 86;
+    page.drawText('No signatures were provided.', {
+      x: margin,
+      y,
+      size: 10,
+      font: helvetica,
+      color: dark,
     });
+    return;
   }
 
-  return [
-    'q',
-    '0.12 0.25 0.69 rg 72 744 468 3 re f',
-    '0.82 0.88 0.98 rg 72 646 468 1 re f',
-    ...lines.map((line) => (
-      `BT /F1 ${line.size} Tf 0.07 0.09 0.15 rg ${line.x} ${line.y} Td (${pdfString(line.text)}) Tj ET`
-    )),
-    'Q',
-  ].join('\n');
-}
+  for (let index = 0; index < rows.length; index += 1) {
+    const signature = rows[index];
 
-function appendSignaturePage(sourceBuffer, sourcePath, signatures) {
-  const pdfText = sourceBuffer.toString('latin1');
-  const rootMatch = pdfText.match(/\/Root\s+(\d+)\s+(\d+)\s+R/);
-  const startMatches = [...pdfText.matchAll(/startxref\s+(\d+)\s+%%EOF/g)];
-  if (!rootMatch || startMatches.length === 0) {
-    throw new Error('Unable to locate source PDF catalog');
+    page.drawText(`${index + 1}. ${signature.role || 'Signer'}`, {
+      x: margin,
+      y,
+      size: 11,
+      font: helveticaBold,
+      color: dark,
+    });
+    y -= 18;
+    page.drawText(`Name: ${signature.name || ''}`, {
+      x: margin + 20,
+      y,
+      size: 10,
+      font: helvetica,
+      color: dark,
+    });
+    y -= 16;
+    page.drawText(`Signed at: ${formatDateTime(signature.signedAt)}`, {
+      x: margin + 20,
+      y,
+      size: 10,
+      font: helvetica,
+      color: dark,
+    });
+    y -= 16;
+
+    if (signature.imageDataUrl) {
+      const image = await embedSignatureImage(pdfDoc, signature.imageDataUrl);
+      if (image) {
+        const maxWidth = 180;
+        const maxHeight = 48;
+        const scale = Math.min(maxWidth / image.width, maxHeight / image.height, 1);
+        const drawWidth = image.width * scale;
+        const drawHeight = image.height * scale;
+        page.drawImage(image, {
+          x: margin + 20,
+          y: y - drawHeight,
+          width: drawWidth,
+          height: drawHeight,
+        });
+        y -= drawHeight + 12;
+      } else {
+        page.drawText('Signature image: invalid or unsupported format', {
+          x: margin + 20,
+          y,
+          size: 8,
+          font: helvetica,
+          color: muted,
+        });
+        y -= 14;
+      }
+    } else {
+      page.drawText('Signature: typed / electronic acknowledgment', {
+        x: margin + 20,
+        y,
+        size: 8,
+        font: helvetica,
+        color: muted,
+      });
+      y -= 14;
+    }
+
+    y -= 20;
   }
-
-  const rootObjectNumber = Number(rootMatch[1]);
-  const rootGenerationNumber = Number(rootMatch[2]);
-  const catalogObject = findPdfObject(pdfText, rootObjectNumber, rootGenerationNumber);
-  const pagesMatch = catalogObject && catalogObject.match(/\/Pages\s+(\d+)\s+(\d+)\s+R/);
-  if (!pagesMatch) {
-    throw new Error('Unable to locate source PDF pages tree');
-  }
-
-  const pagesObjectNumber = Number(pagesMatch[1]);
-  const pagesGenerationNumber = Number(pagesMatch[2]);
-  const pagesObject = findPdfObject(pdfText, pagesObjectNumber, pagesGenerationNumber);
-  const countMatch = pagesObject && pagesObject.match(/\/Count\s+(\d+)/);
-  if (!countMatch) {
-    throw new Error('Unable to locate source PDF page count');
-  }
-
-  let maxObjectNumber = 0;
-  for (const match of pdfText.matchAll(/(?:^|\n)(\d+)\s+\d+\s+obj/g)) {
-    maxObjectNumber = Math.max(maxObjectNumber, Number(match[1]));
-  }
-
-  const firstNewObject = maxObjectNumber + 1;
-  const fontObject = firstNewObject;
-  const contentObject = firstNewObject + 1;
-  const pageObject = firstNewObject + 2;
-  const pagesRootObject = firstNewObject + 3;
-  const catalogRootObject = firstNewObject + 4;
-  const content = buildSignaturePageContent(sourcePath, signatures);
-  const oldStartXref = Number(startMatches[startMatches.length - 1][1]);
-  const oldPageCount = Number(countMatch[1]);
-  const chunks = [];
-  const offsets = [];
-  let offset = sourceBuffer.length;
-
-  function pushChunk(chunk) {
-    chunks.push(chunk);
-    offset += Buffer.byteLength(chunk, 'latin1');
-  }
-
-  function addObject(objectNumber, body) {
-    const objectText = `\n${objectNumber} 0 obj\n${body}\nendobj\n`;
-    offsets[objectNumber] = offset;
-    pushChunk(objectText);
-  }
-
-  addObject(fontObject, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
-  addObject(contentObject, `<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}\nendstream`);
-  addObject(
-    pageObject,
-    [
-      '<< /Type /Page',
-      `/Parent ${pagesRootObject} 0 R`,
-      '/MediaBox [0 0 612 792]',
-      `/Resources << /Font << /F1 ${fontObject} 0 R >> /ProcSet [/PDF /Text] >>`,
-      `/Contents ${contentObject} 0 R`,
-      '>>',
-    ].join('\n'),
-  );
-  addObject(
-    pagesRootObject,
-    [
-      '<< /Type /Pages',
-      `/Kids [${pagesObjectNumber} ${pagesGenerationNumber} R ${pageObject} 0 R]`,
-      `/Count ${oldPageCount + 1}`,
-      '>>',
-    ].join('\n'),
-  );
-  addObject(catalogRootObject, `<< /Type /Catalog /Pages ${pagesRootObject} 0 R >>`);
-
-  const xrefOffset = offset;
-  const xrefEntries = [];
-  for (let objectNumber = firstNewObject; objectNumber <= catalogRootObject; objectNumber += 1) {
-    xrefEntries.push(`${String(offsets[objectNumber]).padStart(10, '0')} 00000 n `);
-  }
-  pushChunk(
-    [
-      'xref',
-      `${firstNewObject} ${catalogRootObject - firstNewObject + 1}`,
-      ...xrefEntries,
-      'trailer',
-      `<< /Size ${catalogRootObject + 1} /Root ${catalogRootObject} 0 R /Prev ${oldStartXref} >>`,
-      'startxref',
-      String(xrefOffset),
-      '%%EOF',
-      '',
-    ].join('\n'),
-  );
-
-  return Buffer.concat([sourceBuffer, Buffer.from(chunks.join(''), 'latin1')]);
 }
 
 async function flattenSignaturesOntoPdf({ sourcePath, outputFilename, signatures }) {
@@ -482,7 +479,9 @@ async function flattenSignaturesOntoPdf({ sourcePath, outputFilename, signatures
   const filepath = path.join(DOCS_DIR, filename);
 
   const sourceBuffer = fs.readFileSync(sourcePath);
-  const signedBuffer = appendSignaturePage(sourceBuffer, sourcePath, signatures);
+  const pdfDoc = await PdfLibDocument.load(sourceBuffer);
+  await buildSignaturePage(pdfDoc, sourcePath, signatures);
+  const signedBuffer = await pdfDoc.save();
   fs.writeFileSync(filepath, signedBuffer);
 
   return leaseResult(filename, filepath);
