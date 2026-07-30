@@ -45,6 +45,7 @@ const { getRentStatusRoster } = require('../services/rent-status.service');
 const { syncCashAppFromGmail } = require('../services/cashapp-gmail.service');
 const { runPaymentsHealth } = require('../services/payments-health.service');
 const { prepareTenantCharge } = require('../services/rent-charge.service');
+const { activateNativeLeaseAfterDeposit } = require('../services/native-lease-activate.service');
 const { partnerErrorMessage } = require('../utils/plaid-errors');
 const { assertAchDebitAllowed } = require('../services/plaid-ach-guard.service');
 const {
@@ -684,6 +685,10 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
 
     if (localStatus === 'succeeded' && paymentType === 'rent') {
       await markLateFeesPaidForLease(client, leaseId);
+    }
+
+    if (localStatus === 'succeeded' && paymentType === 'security_deposit') {
+      await activateNativeLeaseAfterDeposit(client, leaseId);
     }
 
     await client.query('COMMIT');

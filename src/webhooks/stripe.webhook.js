@@ -72,7 +72,10 @@ async function shouldSkipIntentWebhook(payment, eventId) {
 async function stampPaymentMethodMetadata(client, paymentId, pi) {
   const method = paymentMethodFromIntent(pi);
   if (!method) return;
-  const source = method === 'cash_app' ? 'stripe_cashapp' : 'stripe_ach';
+  const source =
+    method === 'cash_app' ? 'stripe_cashapp'
+    : method === 'card' ? 'stripe_card'
+    : 'stripe_ach';
   await client.query(
     `UPDATE payments
         SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
