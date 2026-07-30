@@ -36,11 +36,13 @@ function documentHref(path) {
 }
 
 function pickLeaseToShow(leases) {
-  const actionableNative = leases.find((candidate) => {
+  // Prefer newest actionable native lease; otherwise newest active; else first.
+  const sorted = [...leases].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  const actionableNative = sorted.find((candidate) => {
     const step = deriveNativeLeaseStep(candidate);
     return step === 'sign_tenant' || step === 'pay_deposit';
   });
-  return actionableNative || leases.find(l => l.status === 'active') || leases[0];
+  return actionableNative || sorted.find(l => l.status === 'active') || leases[0];
 }
 
 const LEASE_STATUS = {
