@@ -320,6 +320,154 @@ function imageBufferFromDataUrl(dataUrl) {
   return Buffer.from(match[1], 'base64');
 }
 
+function pdfString(value) {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)')
+    .replace(/\r?\n/g, ' ');
+}
+
+function findPdfObject(pdfText, objectNumber, generationNumber = 0) {
+  const objectPattern = new RegExp(
+    `(?:^|\\n)${objectNumber}\\s+${generationNumber}\\s+obj\\s*([\\s\\S]*?)\\s*endobj`,
+  );
+  const match = pdfText.match(objectPattern);
+  return match ? match[1] : null;
+}
+
+function buildSignaturePageContent(sourcePath, signatures) {
+  const rows = Array.isArray(signatures) ? signatures : [];
+  const lines = [
+    { text: 'MONTERO RENTALS LEASE SIGNATURE PAGE', size: 16, x: 72, y: 720 },
+    { text: `Source document: ${path.basename(sourcePath)}`, size: 9, x: 72, y: 694 },
+    { text: PROPERTY_ADDRESS.full, size: 9, x: 72, y: 680 },
+  ];
+
+  if (rows.length === 0) {
+    lines.push({ text: 'No signatures were provided.', size: 10, x: 72, y: 640 });
+  } else {
+    let y = 640;
+    rows.forEach((signature, index) => {
+      const imageProvided = imageBufferFromDataUrl(signature.imageDataUrl) ? 'yes' : 'no';
+      lines.push({ text: `${index + 1}. ${signature.role || 'Signer'}`, size: 11, x: 72, y });
+      lines.push({ text: `Name: ${signature.name || ''}`, size: 10, x: 92, y: y - 18 });
+      lines.push({ text: `Signed at: ${formatDateTime(signature.signedAt)}`, size: 10, x: 92, y: y - 34 });
+      lines.push({ text: `Signature image provided: ${imageProvided}`, size: 8, x: 92, y: y - 50 });
+      y -= 86;
+    });
+  }
+
+  return [
+    'q',
+    '0.12 0.25 0.69 rg 72 744 468 3 re f',
+    '0.82 0.88 0.98 rg 72 646 468 1 re f',
+    ...lines.map((line) => (
+      `BT /F1 ${line.size} Tf 0.07 0.09 0.15 rg ${line.x} ${line.y} Td (${pdfString(line.text)}) Tj ET`
+    )),
+    'Q',
+  ].join('\n');
+}
+
+function appendSignaturePage(sourceBuffer, sourcePath, signatures) {
+  const pdfText = sourceBuffer.toString('latin1');
+  const rootMatch = pdfText.match(/\/Root\s+(\d+)\s+(\d+)\s+R/);
+  const startMatches = [...pdfText.matchAll(/startxref\s+(\d+)\s+%%EOF/g)];
+  if (!rootMatch || startMatches.length === 0) {
+    throw new Error('Unable to locate source PDF catalog');
+  }
+
+  const rootObjectNumber = Number(rootMatch[1]);
+  const rootGenerationNumber = Number(rootMatch[2]);
+  const catalogObject = findPdfObject(pdfText, rootObjectNumber, rootGenerationNumber);
+  const pagesMatch = catalogObject && catalogObject.match(/\/Pages\s+(\d+)\s+(\d+)\s+R/);
+  if (!pagesMatch) {
+    throw new Error('Unable to locate source PDF pages tree');
+  }
+
+  const pagesObjectNumber = Number(pagesMatch[1]);
+  const pagesGenerationNumber = Number(pagesMatch[2]);
+  const pagesObject = findPdfObject(pdfText, pagesObjectNumber, pagesGenerationNumber);
+  const countMatch = pagesObject && pagesObject.match(/\/Count\s+(\d+)/);
+  if (!countMatch) {
+    throw new Error('Unable to locate source PDF page count');
+  }
+
+  let maxObjectNumber = 0;
+  for (const match of pdfText.matchAll(/(?:^|\n)(\d+)\s+\d+\s+obj/g)) {
+    maxObjectNumber = Math.max(maxObjectNumber, Number(match[1]));
+  }
+
+  const firstNewObject = maxObjectNumber + 1;
+  const fontObject = firstNewObject;
+  const contentObject = firstNewObject + 1;
+  const pageObject = firstNewObject + 2;
+  const pagesRootObject = firstNewObject + 3;
+  const catalogRootObject = firstNewObject + 4;
+  const content = buildSignaturePageContent(sourcePath, signatures);
+  const oldStartXref = Number(startMatches[startMatches.length - 1][1]);
+  const oldPageCount = Number(countMatch[1]);
+  const chunks = [];
+  const offsets = [];
+  let offset = sourceBuffer.length;
+
+  function pushChunk(chunk) {
+    chunks.push(chunk);
+    offset += Buffer.byteLength(chunk, 'latin1');
+  }
+
+  function addObject(objectNumber, body) {
+    const objectText = `\n${objectNumber} 0 obj\n${body}\nendobj\n`;
+    offsets[objectNumber] = offset;
+    pushChunk(objectText);
+  }
+
+  addObject(fontObject, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  addObject(contentObject, `<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}\nendstream`);
+  addObject(
+    pageObject,
+    [
+      '<< /Type /Page',
+      `/Parent ${pagesRootObject} 0 R`,
+      '/MediaBox [0 0 612 792]',
+      `/Resources << /Font << /F1 ${fontObject} 0 R >> /ProcSet [/PDF /Text] >>`,
+      `/Contents ${contentObject} 0 R`,
+      '>>',
+    ].join('\n'),
+  );
+  addObject(
+    pagesRootObject,
+    [
+      '<< /Type /Pages',
+      `/Kids [${pagesObjectNumber} ${pagesGenerationNumber} R ${pageObject} 0 R]`,
+      `/Count ${oldPageCount + 1}`,
+      '>>',
+    ].join('\n'),
+  );
+  addObject(catalogRootObject, `<< /Type /Catalog /Pages ${pagesRootObject} 0 R >>`);
+
+  const xrefOffset = offset;
+  const xrefEntries = [];
+  for (let objectNumber = firstNewObject; objectNumber <= catalogRootObject; objectNumber += 1) {
+    xrefEntries.push(`${String(offsets[objectNumber]).padStart(10, '0')} 00000 n `);
+  }
+  pushChunk(
+    [
+      'xref',
+      `${firstNewObject} ${catalogRootObject - firstNewObject + 1}`,
+      ...xrefEntries,
+      'trailer',
+      `<< /Size ${catalogRootObject + 1} /Root ${catalogRootObject} 0 R /Prev ${oldStartXref} >>`,
+      'startxref',
+      String(xrefOffset),
+      '%%EOF',
+      '',
+    ].join('\n'),
+  );
+
+  return Buffer.concat([sourceBuffer, Buffer.from(chunks.join(''), 'latin1')]);
+}
+
 async function flattenSignaturesOntoPdf({ sourcePath, outputFilename, signatures }) {
   if (!sourcePath) {
     throw new Error('sourcePath is required');
@@ -332,62 +480,10 @@ async function flattenSignaturesOntoPdf({ sourcePath, outputFilename, signatures
   const sourceBase = path.basename(sourcePath, '.pdf');
   const filename = path.basename(outputFilename || `${sourceBase}-signed.pdf`);
   const filepath = path.join(DOCS_DIR, filename);
-  const rows = Array.isArray(signatures) ? signatures : [];
 
-  await writePdf(filepath, (doc) => {
-    const left = 72;
-    const width = doc.page.width - 144;
-    const blue = '#1e40af';
-    const dark = '#111827';
-    const muted = '#4b5563';
-    const line = '#d1d5db';
-
-    function pageBreak(needed = 110) {
-      if (doc.y + needed > doc.page.height - 72) doc.addPage();
-    }
-
-    doc.rect(left, 56, width, 3).fill(blue);
-    doc.font('Helvetica-Bold').fontSize(16).fillColor(dark)
-      .text('MONTERO RENTALS LEASE SIGNATURE CONFIRMATION', left, 76, { width, align: 'center' });
-    doc.font('Helvetica').fontSize(9).fillColor(muted)
-      .text(`Source document: ${path.basename(sourcePath)}`, left, 102, { width, align: 'center' });
-    doc.rect(left, 122, width, 3).fill(blue);
-    doc.y = 154;
-
-    if (rows.length === 0) {
-      doc.font('Helvetica').fontSize(10).fillColor(dark)
-        .text('No signatures were provided.', left, doc.y, { width });
-      return;
-    }
-
-    rows.forEach((signature, index) => {
-      pageBreak(140);
-      const y = doc.y;
-      doc.font('Helvetica-Bold').fontSize(10).fillColor(dark)
-        .text(`${index + 1}. ${signature.role || 'Signer'}`, left, y, { width });
-      doc.font('Helvetica').fontSize(9).fillColor(dark)
-        .text(`Name: ${signature.name || ''}`, left, y + 22, { width })
-        .text(`Signed at: ${formatDateTime(signature.signedAt)}`, left, y + 38, { width });
-      doc.rect(left, y + 72, width, 0.5).fill(line);
-
-      const imageBuffer = imageBufferFromDataUrl(signature.imageDataUrl);
-      if (imageBuffer) {
-        try {
-          doc.image(imageBuffer, left, y + 50, { fit: [220, 58] });
-          doc.y = y + 124;
-        } catch (err) {
-          doc.font('Helvetica').fontSize(8).fillColor(muted)
-            .text(`Signature image could not be embedded: ${err.message}`, left, y + 56, { width });
-          doc.y = y + 112;
-        }
-      } else {
-        doc.font('Helvetica').fontSize(8).fillColor(muted)
-          .text('Electronic signature recorded without image.', left, y + 80, { width });
-        doc.y = y + 112;
-      }
-      doc.moveDown(0.8);
-    });
-  });
+  const sourceBuffer = fs.readFileSync(sourcePath);
+  const signedBuffer = appendSignaturePage(sourceBuffer, sourcePath, signatures);
+  fs.writeFileSync(filepath, signedBuffer);
 
   return leaseResult(filename, filepath);
 }
