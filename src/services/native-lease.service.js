@@ -416,16 +416,10 @@ async function applyManagerSignature(client, { lease, envelope, userId, role, si
   );
   if (!signerRows[0]) throw httpError('Manager signer not found.', 404);
 
-  const signers = await loadEnvelopeSigners(client, envelope.id);
   const sourcePath = filesystemPathForDocument(lease.pdf_path);
   if (!sourcePath || !fs.existsSync(sourcePath)) {
     throw httpError('Native lease PDF has not been generated.', 400);
   }
-  const signedPdf = await flattenSignaturesOntoPdf({
-    sourcePath,
-    outputFilename: `lease-${lease.id}-signed.pdf`,
-    signatures: signaturePayload(signers),
-  });
 
   const { rows: paymentRows } = await client.query(
     `INSERT INTO payments
@@ -440,24 +434,23 @@ async function applyManagerSignature(client, { lease, envelope, userId, role, si
     `UPDATE leases
         SET status = 'awaiting_deposit',
             manager_signed_at = NOW(),
-            signed_pdf_path = $1,
-            document_url = $1,
             updated_at = NOW()
-      WHERE id = $2
+      WHERE id = $1
       RETURNING *`,
-    [signedPdf.relativePath, lease.id]
+    [lease.id]
   );
 
   const { rows: envelopeRows } = await client.query(
     `UPDATE signature_envelopes
         SET status = 'completed',
-            signed_document_url = $1,
             completed_at = NOW(),
             updated_at = NOW()
-      WHERE id = $2
+      WHERE id = $1
       RETURNING *`,
-    [signedPdf.relativePath, envelope.id]
+    [envelope.id]
   );
+
+  const signers = await loadEnvelopeSigners(client, envelope.id);
 
   return {
     lease: updatedRows[0],
@@ -465,7 +458,45 @@ async function applyManagerSignature(client, { lease, envelope, userId, role, si
     signers,
     depositPayment: paymentRows[0],
     feeId: null,
+    needsPdfFlatten: true,
+    sourcePdfPath: lease.pdf_path,
+    leaseId: lease.id,
+    envelopeId: envelope.id,
   };
+}
+
+async function attachFlattenedSignedPdf({ leaseId, envelopeId, sourcePdfPath, signers }) {
+  const sourcePath = filesystemPathForDocument(sourcePdfPath);
+  if (!sourcePath || !fs.existsSync(sourcePath)) {
+    throw new Error('Native lease PDF has not been generated.');
+  }
+
+  const signedPdf = await flattenSignaturesOntoPdf({
+    sourcePath,
+    outputFilename: `lease-${leaseId}-signed.pdf`,
+    signatures: signaturePayload(signers),
+  });
+
+  const { rows: leaseRows } = await pool.query(
+    `UPDATE leases
+        SET signed_pdf_path = $1,
+            document_url = $1,
+            updated_at = NOW()
+      WHERE id = $2
+      RETURNING *`,
+    [signedPdf.relativePath, leaseId]
+  );
+
+  const { rows: envelopeRows } = await pool.query(
+    `UPDATE signature_envelopes
+        SET signed_document_url = $1,
+            updated_at = NOW()
+      WHERE id = $2
+      RETURNING *`,
+    [signedPdf.relativePath, envelopeId]
+  );
+
+  return { lease: leaseRows[0], envelope: envelopeRows[0] };
 }
 
 async function applyNativeSignature({ leaseId, userId, role, signedName, signatureImage, ip, userAgent }) {
@@ -519,6 +550,28 @@ async function applyNativeSignature({ leaseId, userId, role, signedName, signatu
 
     throw httpError('No native signature is pending for this lease.', 400);
   });
+
+  if (result.needsPdfFlatten) {
+    const { leaseId: flattenLeaseId, envelopeId, sourcePdfPath, signers } = result;
+    delete result.needsPdfFlatten;
+    delete result.leaseId;
+    delete result.envelopeId;
+    delete result.sourcePdfPath;
+
+    try {
+      const attached = await attachFlattenedSignedPdf({
+        leaseId: flattenLeaseId,
+        envelopeId,
+        sourcePdfPath,
+        signers,
+      });
+      result.lease = attached.lease;
+      result.envelope = attached.envelope;
+    } catch (err) {
+      console.error('[applyNativeSignature] flattenSignaturesOntoPdf failed', err);
+      result.signedPdfError = err.message;
+    }
+  }
 
   if (result.lease.status === 'awaiting_deposit') {
     result.feeId = await ensureLeaseSigningFee(leaseId, { signedAt: result.lease.manager_signed_at });

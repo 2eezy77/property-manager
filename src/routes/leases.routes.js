@@ -224,7 +224,8 @@ router.post('/native', staffOnly, async (req, res) => {
     res.status(201).json({ lease });
   } catch (err) {
     console.error('[POST /leases/native]', err);
-    res.status(err.statusCode ?? 500).json({ error: err.message, code: err.code });
+    const status = err.code === 'INVALID_ROOM_TYPE' ? 400 : (err.statusCode ?? 500);
+    res.status(status).json({ error: err.message, code: err.code });
   }
 });
 
