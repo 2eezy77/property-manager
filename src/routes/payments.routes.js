@@ -357,15 +357,18 @@ router.delete('/bank-accounts/:id', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/balance', Guards.tenantOnly, async (req, res) => {
   try {
-    // Active lease for this tenant
+    // Active lease for rent, or awaiting-deposit native lease so tenants can finish deposit payment.
     const { rows: leaseRows } = await pool.query(
-      `SELECT l.id AS lease_id, l.monthly_rent, l.grace_period_days,
+      `SELECT l.id AS lease_id, l.status, l.monthly_rent, l.grace_period_days,
               u.unit_number, p.name AS property_name,
               p.address_line1, p.city, p.state
          FROM leases l
          JOIN units      u ON u.id = l.unit_id
          JOIN properties p ON p.id = u.property_id
-        WHERE l.tenant_id = $1 AND l.status = 'active'
+        WHERE l.tenant_id = $1
+          AND l.status IN ('active', 'awaiting_deposit')
+        ORDER BY CASE WHEN l.status = 'active' THEN 0 ELSE 1 END,
+                 l.start_date DESC
         LIMIT 1`,
       [req.user.id]
     );
@@ -413,10 +416,14 @@ router.get('/balance', Guards.tenantOnly, async (req, res) => {
     const securityDepositPayment = depositRows[0]
       ? { ...depositRows[0], amount: parseFloat(depositRows[0].amount) }
       : null;
+    const rentTotalDue = lease.status === 'active'
+      ? parseFloat(lease.monthly_rent) + parseFloat(lateFeeRows[0]?.total ?? 0)
+      : 0;
 
     res.json({
       lease: {
         id:           lease.lease_id,
+        status:       lease.status,
         unit:         `${lease.property_name} — Unit ${lease.unit_number}`,
         address:      `${lease.address_line1}, ${lease.city}, ${lease.state}`,
         monthlyRent:  parseFloat(lease.monthly_rent),
@@ -426,7 +433,7 @@ router.get('/balance', Guards.tenantOnly, async (req, res) => {
       currentPayment: paymentRows[0] ?? null,
       securityDepositPayment,
       lateFeeBalance: parseFloat(lateFeeRows[0]?.total ?? 0),
-      totalDue: parseFloat(lease.monthly_rent) + parseFloat(lateFeeRows[0]?.total ?? 0),
+      totalDue: rentTotalDue,
       cashAppPayAvailable: stripe.isCashAppPayConfigured(),
     });
   } catch (err) {

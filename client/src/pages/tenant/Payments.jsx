@@ -10,7 +10,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Landmark, CheckCircle2, XCircle } from 'lucide-react';
+import { Landmark, CheckCircle2, XCircle, CreditCard } from 'lucide-react';
 import { loadStripe } from '@stripe/stripe-js';
 import api from '@/api/axios';
 import { apiErrorMessage } from '@/utils/apiErrorMessage';
@@ -19,6 +19,7 @@ import { notifyCheckinRefresh } from '@/hooks/useCheckin';
 import { isManagerImpersonation } from '@/utils/impersonation';
 import RentHero from '@/components/ui/RentHero';
 import TableScroll from '@/components/ui/TableScroll';
+import CardPaymentForm from '@/components/payments/CardPaymentForm';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmt(amount) {
@@ -36,6 +37,7 @@ function showToast(message, variant = 'error') {
 
 const METHOD_LABEL = {
   cash_app: 'Cash App',
+  card: 'Card',
   check: 'Check',
   zelle: 'Zelle',
   venmo: 'Venmo',
@@ -49,6 +51,7 @@ function paymentSourceLabel(p) {
   if (p.payment_method) return METHOD_LABEL[p.payment_method] || p.payment_method;
   if (p.metadata?.source === 'cash_app_import' || p.metadata?.source === 'stripe_cashapp') return 'Cash App';
   if (p.metadata?.payment_method === 'cash_app') return 'Cash App';
+  if (p.metadata?.source === 'stripe_card' || p.metadata?.payment_method === 'card') return 'Card';
   if (p.institution_name) return `${p.institution_name} ····${p.account_mask || ''}`.trim();
   return 'Bank (ACH)';
 }
@@ -211,6 +214,8 @@ export default function PaymentsPage() {
   const [autopay, setAutopay] = useState(null);
   const [autopaySaving, setAutopaySaving] = useState(false);
   const [cashAppLoading, setCashAppLoading] = useState(false);
+  const [cardLoadingType, setCardLoadingType] = useState(null);
+  const [cardIntent, setCardIntent] = useState(null);
   const [stripeConfig, setStripeConfig] = useState(null);
   const [relinkAccount, setRelinkAccount] = useState(null);
   const [updateLinkToken, setUpdateLinkToken] = useState(null);
@@ -434,6 +439,7 @@ export default function PaymentsPage() {
   async function handleCashAppPay() {
     if (!balance?.lease) return;
     setCashAppLoading(true);
+    setCardIntent(null);
     setPayResult(null);
     try {
       const { data } = await api.post('/api/payments/cashapp/create-intent', {
@@ -466,6 +472,42 @@ export default function PaymentsPage() {
     } finally {
       setCashAppLoading(false);
     }
+  }
+
+  async function startCardPayment(paymentType) {
+    if (!balance?.lease) return;
+    setCardLoadingType(paymentType);
+    setCardIntent(null);
+    setPayResult(null);
+    try {
+      const { data } = await api.post('/api/payments/card/create-intent', {
+        leaseId: balance.lease.id,
+        paymentType,
+      }, { skipGlobalError: true });
+      setCardIntent({ ...data, paymentType });
+    } catch (err) {
+      setPayResult({
+        success: false,
+        message: apiErrorMessage(err, 'Card payment could not be started.'),
+      });
+    } finally {
+      setCardLoadingType(null);
+    }
+  }
+
+  async function handleCardSuccess(paymentIntent) {
+    const isDeposit = cardIntent?.paymentType === 'security_deposit';
+    setCardIntent(null);
+    setShowPayFlow(false);
+    setPayResult({
+      success: true,
+      message: paymentIntent?.status === 'processing'
+        ? `${isDeposit ? 'Security deposit' : 'Card payment'} submitted — confirmation may take a moment.`
+        : `${isDeposit ? 'Security deposit' : 'Card payment'} confirmed. We will update your balance shortly.`,
+    });
+    showToast(`${isDeposit ? 'Security deposit' : 'Card payment'} submitted.`, 'success');
+    notifyCheckinRefresh();
+    await load(1);
   }
 
   async function toggleAutopay(enabled) {
@@ -532,7 +574,7 @@ export default function PaymentsPage() {
     || balance?.cashAppPayAvailable
   );
   const noBankLinked = verifiedAccounts.length === 0;
-  const rentDue = Number(balance?.totalDue || 0) > 0;
+  const rentDue = balance?.lease?.status === 'active' && Number(balance?.totalDue || 0) > 0;
   const depositDue = !managerPreview && balance?.securityDepositPayment;
 
   return (
@@ -565,7 +607,7 @@ export default function PaymentsPage() {
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-4">
           <p className="text-sm font-semibold text-amber-900">Reconnect your bank</p>
           <p className="mt-1 text-sm text-amber-800">
-            Your bank login expired. Reconnect before paying rent or using autopay.
+            Your bank login expired. Reconnect before paying by ACH or using autopay.
           </p>
           <div className="mt-3 space-y-2">
             {needsRelinkAccounts.map((acct) => (
@@ -614,6 +656,7 @@ export default function PaymentsPage() {
         hidePayAction={managerPreview}
         onPay={managerPreview ? undefined : () => {
           setShowPayFlow(true);
+          setCardIntent(null);
           setPayResult(null);
         }}
       />
@@ -642,14 +685,14 @@ export default function PaymentsPage() {
       {depositDue && !showPayFlow && (
         <button
           type="button"
-          onClick={() => { setShowPayFlow(true); setPayResult(null); }}
+          onClick={() => { setShowPayFlow(true); setCardIntent(null); setPayResult(null); }}
           className="portal-card hover-lift flex w-full items-center justify-between gap-3 border border-violet-200 px-4 py-3 text-left ring-1 ring-violet-100"
         >
           <div>
             <p className="text-sm font-semibold text-slate-900">Security deposit due — pay in the portal</p>
             <p className="text-xs text-slate-500">
               {fmt(balance.securityDepositPayment.amount)} · due {fmtDate(balance.securityDepositPayment.due_date)}
-              {' · '}ACH after you connect a bank (Cash App Pay is rent-only)
+              {' · '}pay by card now, or ACH after you connect a bank
             </p>
           </div>
           <span className="shrink-0 text-sm font-semibold text-violet-700">Pay →</span>
@@ -660,12 +703,59 @@ export default function PaymentsPage() {
         <section aria-labelledby="pay-flow-heading" className="portal-card space-y-4 p-5">
           <div className="flex items-center justify-between">
             <h2 id="pay-flow-heading" className="text-base font-semibold text-slate-900">Choose how to pay</h2>
-            <button type="button" onClick={() => setShowPayFlow(false)} className="text-slate-400 hover:text-slate-600 text-xl leading-none" aria-label="Close">×</button>
+            <button type="button" onClick={() => { setShowPayFlow(false); setCardIntent(null); }} className="text-slate-400 hover:text-slate-600 text-xl leading-none" aria-label="Close">×</button>
           </div>
 
           <p className="text-xs text-slate-500">
-            Preferred: bank ACH (and Autopay for late-fee waiver). Cash App below is fine for one-time rent.
+            Preferred: bank ACH (and Autopay for late-fee waiver). Card is available for rent or deposits; Cash App is fine for one-time rent.
           </p>
+
+          {(rentDue || depositDue) && (
+            <div className="space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <CreditCard size={16} aria-hidden />
+                Card
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {rentDue && (
+                  <button
+                    type="button"
+                    onClick={() => startCardPayment('rent')}
+                    disabled={!!cardLoadingType}
+                    className="rounded-xl bg-indigo-600 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {cardLoadingType === 'rent' ? 'Preparing card form…' : `Pay ${fmt(balance.totalDue)} with Card`}
+                  </button>
+                )}
+                {depositDue && (
+                  <button
+                    type="button"
+                    onClick={() => startCardPayment('security_deposit')}
+                    disabled={!!cardLoadingType}
+                    className="rounded-xl border border-violet-300 bg-white py-2.5 text-sm font-semibold text-violet-900 hover:bg-violet-50 disabled:opacity-50"
+                  >
+                    {cardLoadingType === 'security_deposit'
+                      ? 'Preparing card form…'
+                      : `Pay deposit ${fmt(balance.securityDepositPayment.amount)} with Card`}
+                  </button>
+                )}
+              </div>
+              {cardIntent && (
+                <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+                  <p className="text-sm font-medium text-slate-700">Amount: {fmt(cardIntent.amount)}</p>
+                  <CardPaymentForm
+                    clientSecret={cardIntent.clientSecret}
+                    publishableKey={cardIntent.publishableKey || stripeConfig?.publishableKey}
+                    onSuccess={handleCardSuccess}
+                    onError={(err) => setPayResult({
+                      success: false,
+                      message: err.message || 'Card payment failed.',
+                    })}
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
           {cashAppAvailable && rentDue && (
             <button
@@ -680,8 +770,8 @@ export default function PaymentsPage() {
 
           {verifiedAccounts.length === 0 ? (
             <p className="text-sm text-slate-500">
-              Connect a bank below for ACH, deposits, and Autopay
-              {cashAppAvailable && rentDue ? ' — or use portal Cash App for rent above' : '.'}
+              Connect a bank below for ACH and Autopay
+              {rentDue || depositDue ? ' — or use card above.' : '.'}
             </p>
           ) : (
             <div className="space-y-2">
@@ -830,7 +920,7 @@ export default function PaymentsPage() {
             <Landmark size={28} strokeWidth={1.5} className="mx-auto mb-2 text-emerald-400" aria-hidden />
             <p className="text-sm font-medium text-slate-800">Connect a bank to unlock Autopay</p>
             <p className="mx-auto mt-1 max-w-sm text-xs text-slate-500">
-              Autopay waives late fees while it is on. Also needed for security deposits. Utilities ACH only if Autopay is enabled.
+              Autopay waives late fees while it is on. ACH uses a verified bank; card is available in the pay flow for one-time rent or deposits.
               {cashAppAvailable && rentDue ? ' Portal Cash App above still works for one-time rent.' : ''}
             </p>
             <button
@@ -884,43 +974,46 @@ export default function PaymentsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {history.map((p) => (
-                    <tr key={p.id} className="transition-colors hover:bg-slate-50">
-                      <td className="whitespace-nowrap px-4 py-3 font-medium capitalize text-slate-900">
-                        {p.payment_type.replace('_', ' ')}
-                        {p.period_start && (
-                          <span className="ml-1.5 text-xs font-normal text-slate-400">
-                            {new Date(p.period_start).toLocaleString('en-US', { month: 'short', year: 'numeric' })}
-                          </span>
-                        )}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-slate-500">
-                        {fmtDate(p.paid_at ?? p.due_date)}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-slate-500">
-                        {paymentSourceLabel(p)}
-                        {p.external_reference && (
-                          <span className="block max-w-[140px] truncate text-xs text-slate-400" title={p.external_reference}>
-                            {p.external_reference}
-                          </span>
-                        )}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
-                        {fmt(p.amount)}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3">
-                        <StatusBadge status={p.status} />
-                        {p.status === 'processing' && (
-                          <p className="mt-0.5 text-xs text-blue-600">Settling (4–5 business days)</p>
-                        )}
-                        {p.failure_reason && (
-                          <p className="mt-0.5 max-w-[160px] truncate text-xs text-red-500" title={p.failure_reason}>
-                            {p.failure_reason}
-                          </p>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {history.map((p) => {
+                    const sourceLabel = paymentSourceLabel(p);
+                    return (
+                      <tr key={p.id} className="transition-colors hover:bg-slate-50">
+                        <td className="whitespace-nowrap px-4 py-3 font-medium capitalize text-slate-900">
+                          {p.payment_type.replace('_', ' ')}
+                          {p.period_start && (
+                            <span className="ml-1.5 text-xs font-normal text-slate-400">
+                              {new Date(p.period_start).toLocaleString('en-US', { month: 'short', year: 'numeric' })}
+                            </span>
+                          )}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-slate-500">
+                          {fmtDate(p.paid_at ?? p.due_date)}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-slate-500">
+                          {sourceLabel}
+                          {p.external_reference && (
+                            <span className="block max-w-[140px] truncate text-xs text-slate-400" title={p.external_reference}>
+                              {p.external_reference}
+                            </span>
+                          )}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
+                          {fmt(p.amount)}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3">
+                          <StatusBadge status={p.status} />
+                          {p.status === 'processing' && sourceLabel === 'Bank (ACH)' && (
+                            <p className="mt-0.5 text-xs text-blue-600">Settling (4–5 business days)</p>
+                          )}
+                          {p.failure_reason && (
+                            <p className="mt-0.5 max-w-[160px] truncate text-xs text-red-500" title={p.failure_reason}>
+                              {p.failure_reason}
+                            </p>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </TableScroll>
