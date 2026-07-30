@@ -3,6 +3,45 @@
  */
 
 const rentBilling = require('./rent-billing.service');
+const stripe = require('./stripe.service');
+
+async function assertNoInFlightDeposit(client, leaseId) {
+  const { rows: inFlight } = await client.query(
+    `SELECT id FROM payments
+      WHERE lease_id = $1 AND payment_type = 'security_deposit'
+        AND status IN ('processing', 'succeeded')`,
+    [leaseId]
+  );
+  if (inFlight.length > 0) {
+    const err = new Error('A security deposit payment is already in progress or complete.');
+    err.code = 'DUPLICATE_PAYMENT';
+    throw err;
+  }
+}
+
+async function cancelReplacedDepositPaymentIntent(paymentIntentId) {
+  if (!paymentIntentId) return;
+
+  const pi = await stripe.retrievePaymentIntent(paymentIntentId);
+  if (pi.status === 'succeeded' || pi.status === 'processing') {
+    const err = new Error('A security deposit payment is already in progress or complete.');
+    err.code = 'DUPLICATE_PAYMENT';
+    throw err;
+  }
+  if (pi.status === 'canceled') return;
+
+  try {
+    await stripe.cancelPaymentIntent(paymentIntentId);
+  } catch (cancelErr) {
+    const refreshed = await stripe.retrievePaymentIntent(paymentIntentId);
+    if (refreshed.status === 'succeeded' || refreshed.status === 'processing') {
+      const err = new Error('A security deposit payment is already in progress or complete.');
+      err.code = 'DUPLICATE_PAYMENT';
+      throw err;
+    }
+    if (refreshed.status !== 'canceled') throw cancelErr;
+  }
+}
 
 async function prepareTenantCharge(client, {
   tenantId,
@@ -47,8 +86,10 @@ async function prepareTenantCharge(client, {
   let lateFeeAmount;
 
   if (paymentType === 'security_deposit') {
+    await assertNoInFlightDeposit(client, leaseId);
+
     const { rows: depRows } = await client.query(
-      `SELECT id, amount, period_start, period_end, due_date
+      `SELECT id, amount, period_start, period_end, due_date, stripe_payment_intent_id
          FROM payments
         WHERE lease_id = $1 AND payment_type = 'security_deposit'
           AND status = 'pending'
@@ -62,6 +103,8 @@ async function prepareTenantCharge(client, {
       err.code = 'NO_DEPOSIT_DUE';
       throw err;
     }
+
+    await cancelReplacedDepositPaymentIntent(depRows[0].stripe_payment_intent_id);
     amountDollars = parseFloat(depRows[0].amount);
     amountCents = Math.round(amountDollars * 100);
     description = 'Security deposit';
@@ -157,4 +200,8 @@ async function prepareTenantCharge(client, {
   };
 }
 
-module.exports = { prepareTenantCharge };
+module.exports = {
+  prepareTenantCharge,
+  assertNoInFlightDeposit,
+  cancelReplacedDepositPaymentIntent,
+};

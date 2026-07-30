@@ -153,6 +153,18 @@ async function main() {
       assert(cardIntentRes.body.clientSecret, 'card intent response should include clientSecret');
       assert(cardIntentRes.body.paymentIntentId, 'card intent response should include paymentIntentId');
       reporter.ok('card security deposit PaymentIntent can be created while awaiting deposit');
+
+      const secondIntentRes = await req('POST', '/api/payments/card/create-intent', {
+        leaseId,
+        paymentType: 'security_deposit',
+      }, tenantToken);
+      requireStatus('second card security deposit PaymentIntent (method switch)', secondIntentRes, 200);
+      assert(secondIntentRes.body.clientSecret, 'second card intent should include clientSecret');
+      assert(
+        secondIntentRes.body.paymentIntentId !== cardIntentRes.body.paymentIntentId,
+        'second create-intent should replace prior PI (cancel + new intent)'
+      );
+      reporter.ok('second deposit create-intent replaces prior open PI (cancel-then-overwrite)');
     }
 
     const fee = await findSigningFee(leaseId);

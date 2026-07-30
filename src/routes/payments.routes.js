@@ -44,7 +44,7 @@ const { markLateFeesPaidForLease, settleSuccessfulRentPayment } = require('../ut
 const { getRentStatusRoster } = require('../services/rent-status.service');
 const { syncCashAppFromGmail } = require('../services/cashapp-gmail.service');
 const { runPaymentsHealth } = require('../services/payments-health.service');
-const { prepareTenantCharge } = require('../services/rent-charge.service');
+const { prepareTenantCharge, assertNoInFlightDeposit, cancelReplacedDepositPaymentIntent } = require('../services/rent-charge.service');
 const { activateNativeLeaseAfterDeposit } = require('../services/native-lease-activate.service');
 const { partnerErrorMessage } = require('../utils/plaid-errors');
 const { assertAchDebitAllowed } = require('../services/plaid-ach-guard.service');
@@ -518,8 +518,10 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
     let lateFeeAmount;
 
     if (paymentType === 'security_deposit') {
+      await assertNoInFlightDeposit(client, leaseId);
+
       const { rows: depRows } = await client.query(
-        `SELECT id, amount, period_start, period_end, due_date
+        `SELECT id, amount, period_start, period_end, due_date, stripe_payment_intent_id
            FROM payments
           WHERE lease_id = $1 AND payment_type = 'security_deposit'
             AND status = 'pending'
@@ -535,6 +537,8 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
           message: 'No pending security deposit on file.',
         });
       }
+
+      await cancelReplacedDepositPaymentIntent(depRows[0].stripe_payment_intent_id);
       amountDollars = parseFloat(depRows[0].amount);
       amountCents = Math.round(amountDollars * 100);
       description = 'Security deposit';
@@ -723,6 +727,12 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
 
   } catch (err) {
     await client.query('ROLLBACK');
+    if (err.code === 'DUPLICATE_PAYMENT') {
+      return res.status(409).json({ error: 'DUPLICATE_PAYMENT', message: err.message });
+    }
+    if (err.code === 'NO_DEPOSIT_DUE') {
+      return res.status(404).json({ error: 'NO_DEPOSIT_DUE', message: err.message });
+    }
     console.error('[payments/charge]', err);
     res.status(500).json({ error: 'CHARGE_FAILED', message: 'Payment could not be initiated.' });
   } finally {
@@ -837,6 +847,9 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
     await client.query('ROLLBACK');
     if (err.code === 'LEASE_NOT_FOUND') {
       return res.status(404).json({ error: 'LEASE_NOT_FOUND' });
+    }
+    if (err.code === 'NO_DEPOSIT_DUE') {
+      return res.status(404).json({ error: 'NO_DEPOSIT_DUE', message: err.message });
     }
     if (err.code === 'DUPLICATE_PAYMENT') {
       return res.status(409).json({ error: 'DUPLICATE_PAYMENT', message: err.message });
