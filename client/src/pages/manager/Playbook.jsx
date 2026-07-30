@@ -66,7 +66,7 @@ const STEP_GUIDE = {
   cashapp_imports: {
     phase: 'ongoing',
     title: 'Offline payments are recorded in the ledger',
-    help: 'If someone paid via Cash App, Zelle, or check, record it under Payments so the books match what you actually received.',
+    help: 'Prefer tenants pay in the portal (ACH or Cash App Pay). If someone paid outside the app (Cash App, Zelle, check), record or sync it under Payments so the ledger matches.',
     where: { label: 'Open Payments', path: '/manager/payments' },
   },
   tenant_offboarding: {
