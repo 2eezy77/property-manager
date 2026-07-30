@@ -131,7 +131,7 @@ router.get('/', staffOnly, async (req, res) => {
     const { rows } = await pool.query(
       `SELECT l.id, l.status, l.start_date, l.end_date,
               l.monthly_rent, l.security_deposit, l.document_url, l.pdf_path,
-              l.rl_document_id, l.rl_interview_url,
+              l.rl_document_id, l.rl_interview_url, l.signing_provider, l.room_type,
               l.created_at, l.updated_at,
               un.unit_number, p.name AS property_name, p.id AS property_id,
               p.address_line1, p.city, p.state, p.zip,
