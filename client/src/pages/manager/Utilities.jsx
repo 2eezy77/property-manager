@@ -7,7 +7,7 @@
  *   UC3  Notify tenants              → BillDetail notify action
  *   UC4  Tenant disputes share       (tenant portal)
  *   UC5  Resolve dispute             → TenantCard waive / reject
- *   UC6  Charge ACH                  → BillDetail + TenantCard charge
+ *   UC6  Charge ACH                  → legacy/emergency API only (not shown in UI)
  *   UC7  Settle via webhook          (automatic — bill status badge)
  *   UC8  Connect org Gmail           → header Connect Gmail (owner only)
  *   UC9  Import from Gmail           → header Import from Gmail
@@ -47,7 +47,7 @@ const SERVICE_TYPES = [
 const BILL_STATUS_META = {
   draft:     { label: 'Draft',     color: 'bg-gray-100 text-gray-600'   },
   notified:  { label: 'Notified',  color: 'bg-blue-100 text-blue-700'   },
-  charging:  { label: 'Charging',  color: 'bg-amber-100 text-amber-700' },
+  charging:  { label: 'Processing', color: 'bg-amber-100 text-amber-700' },
   settled:   { label: 'Settled',   color: 'bg-green-100 text-green-700' },
   cancelled: { label: 'Cancelled', color: 'bg-gray-100 text-gray-500'   },
 };
@@ -56,7 +56,7 @@ const SPLIT_STATUS_META = {
   pending:   { label: 'Pending',   color: 'bg-gray-100 text-gray-600'   },
   notified:  { label: 'Notified',  color: 'bg-blue-100 text-blue-700'   },
   disputed:  { label: 'Disputed',  color: 'bg-orange-100 text-orange-700' },
-  charging:  { label: 'Charging',  color: 'bg-amber-100 text-amber-700' },
+  charging:  { label: 'Processing', color: 'bg-amber-100 text-amber-700' },
   paid:      { label: 'Paid',      color: 'bg-green-100 text-green-700' },
   failed:    { label: 'Failed',    color: 'bg-red-100 text-red-600'     },
   waived:    { label: 'Waived',    color: 'bg-purple-100 text-purple-700' },
@@ -360,8 +360,6 @@ function TenantCard({ split, bill, onAction, busy }) {
   const meta       = SPLIT_STATUS_META[split.status];
   const fullName   = `${split.first_name ?? ''} ${split.last_name ?? ''}`.trim() || split.email;
   const hrs        = hoursLeft(bill.dispute_deadline_at);
-  const billOpen   = ['notified','charging'].includes(bill.status);
-  const canCharge  = billOpen && split.status === 'notified' && split.has_verified_bank;
   const canWaive   = !['paid','waived'].includes(split.status);
   const canReject  = split.status === 'disputed';
   const [showReason, setShowReason] = useState(false);
@@ -410,7 +408,7 @@ function TenantCard({ split, bill, onAction, busy }) {
         </div>
       )}
       {split.status === 'charging' && (
-        <p className="text-xs text-blue-600 mb-3">ACH initiated — settles in 4–5 business days</p>
+        <p className="text-xs text-blue-600 mb-3">Payment processing — usually settles in a few business days</p>
       )}
       {split.status === 'paid' && split.paid_at && (
         <p className="text-xs text-green-600 mb-3">Paid {fmt(split.paid_at)}</p>
@@ -422,7 +420,7 @@ function TenantCard({ split, bill, onAction, busy }) {
         <p className="text-xs text-purple-600 mb-3">Waived by manager</p>
       )}
 
-      {/* Actions — dispute resolve; ACH demoted */}
+      {/* Actions — dispute resolve */}
       <div className="mt-auto flex flex-wrap gap-2 pt-2">
         {canReject && (
           <button onClick={() => onAction('reject', split)} disabled={busy}
@@ -437,25 +435,6 @@ function TenantCard({ split, bill, onAction, busy }) {
           </button>
         )}
       </div>
-      {(canCharge || split.status === 'failed') && (
-        <details className="mt-2 text-xs text-slate-500">
-          <summary className="cursor-pointer select-none hover:text-slate-700">Advanced ACH</summary>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {canCharge && (
-              <button onClick={() => onAction('charge', split)} disabled={busy}
-                className="text-xs font-medium px-3 py-1.5 border border-amber-200 text-amber-800 rounded-lg hover:bg-amber-50 disabled:opacity-50">
-                Charge this share
-              </button>
-            )}
-            {split.status === 'failed' && (
-              <button onClick={() => onAction('retry', split)} disabled={busy}
-                className="text-xs font-medium px-3 py-1.5 border border-amber-200 text-amber-800 rounded-lg hover:bg-amber-50 disabled:opacity-50">
-                Retry charge
-              </button>
-            )}
-          </div>
-        </details>
-      )}
 
       {showReason && <DisputeReasonView split={split} onClose={() => setShowReason(false)} />}
     </div>
@@ -497,34 +476,10 @@ function BillDetail({ billId, onChange, onClose }) {
     } finally { setBusy(false); }
   }
 
-  async function handleChargeAll() {
-    const deadline = data?.bill?.dispute_deadline_at;
-    const past = deadline && new Date(deadline) <= new Date();
-    const msg = past
-      ? 'Advanced: charge all eligible (non-disputed) tenants via ACH now? Prefer reminding them to pay in the portal.'
-      : 'Dispute window has not closed. Force ACH anyway? Prefer waiting or reminding tenants.';
-    if (!confirm(msg)) return;
-    setBusy(true); setError('');
-    try {
-      const { data: result } = await api.post(`/api/utilities/bills/${billId}/charge`, { force: !past });
-      setData({ bill: result.bill, splits: result.splits });
-      if (result.skipped?.length) {
-        alert(`Charged ${result.charged.length}, skipped ${result.skipped.length}.\n\n` +
-              result.skipped.map(s => `• ${s.reason}${s.detail ? ': ' + s.detail : ''}`).join('\n'));
-      }
-      onChange?.();
-    } catch (e) {
-      setError(e.response?.data?.message || 'Failed to charge');
-    } finally { setBusy(false); }
-  }
-
   async function handleSplitAction(action, split) {
     setBusy(true); setError('');
     try {
-      if (action === 'charge' || action === 'retry') {
-        const { data: result } = await api.post(`/api/utilities/bills/${billId}/charge`, { force: true });
-        setData({ bill: result.bill, splits: result.splits });
-      } else if (action === 'waive') {
+      if (action === 'waive') {
         if (!confirm(`Waive ${split.first_name}'s share of ${fmtMoney(split.amount)}?`)) { setBusy(false); return; }
         const { data: result } = await api.post(`/api/utilities/splits/${split.id}/waive`);
         setData(result);
@@ -559,7 +514,6 @@ function BillDetail({ billId, onChange, onClose }) {
   const todayStr = new Date().toISOString().slice(0, 10);
   const periodNotEnded = isElectric && chargeableAfter && todayStr < chargeableAfter.slice(0, 10);
   const canNotify = bill.status === 'draft' && !periodNotEnded;
-  const canCharge = ['notified','charging'].includes(bill.status);
   const canDelete = bill.status === 'draft';
 
   async function handleDelete() {
@@ -689,21 +643,6 @@ function BillDetail({ billId, onChange, onClose }) {
             </a>
           )}
         </div>
-
-        {canCharge && (
-          <details className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-            <summary className="cursor-pointer text-sm font-medium text-slate-600 select-none">
-              Advanced — landlord ACH (rare)
-            </summary>
-            <p className="mt-2 text-xs text-slate-500 leading-relaxed">
-              Tenants normally pay in the portal or Cash App. Use ACH only when they consented / you need a one-off debit.
-            </p>
-            <button onClick={handleChargeAll} disabled={busy}
-              className="mt-2 px-3 py-1.5 border border-amber-300 text-amber-900 text-sm font-medium rounded-lg hover:bg-amber-50 disabled:opacity-50">
-              Charge all eligible
-            </button>
-          </details>
-        )}
 
         {error && <p className="mt-3 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
       </div>
@@ -927,7 +866,7 @@ export default function UtilitiesPage() {
                 ['owes', 'Owes'],
                 ['disputed', 'Disputed'],
                 ['failed', 'Failed'],
-                ['charging', 'Charging'],
+                ['charging', 'Processing'],
                 ['paid', 'Paid'],
                 ['all', 'All'],
               ].map(([v, l]) => (
