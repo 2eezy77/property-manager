@@ -208,6 +208,10 @@ async function createNativeLease({
   return {
     lease,
     inviteSent: !!inviteEmail.sent,
+    inviteReason: inviteEmail.sent ? null : (inviteEmail.reason || 'send_failed'),
+    inviteMessage: inviteEmail.sent
+      ? null
+      : 'Lease created, but the invite email was not sent. Resend a password reset/setup email before asking the tenant to sign.',
     tenant: invitedTenant,
   };
 }

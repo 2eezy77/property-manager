@@ -9,6 +9,7 @@ function render({ recipientName = 'there', setPasswordUrl, loginEmail, leaseId }
     `Hi ${recipientName},`,
     '',
     'Your lease has been created in the Montero Rentals tenant portal.',
+    'After signing and paying your deposit, Stripe Identity will ask you to verify your driver\'s license and SSN/id number. The verification fee is tenant-paid.',
     '',
     `Set your password and open your lease: ${setPasswordUrl}`,
     '',
@@ -34,6 +35,11 @@ function render({ recipientName = 'there', setPasswordUrl, loginEmail, leaseId }
       paragraph([
         'Your lease has been created in the Montero Rentals tenant portal. ',
         'Set your password to review your lease and continue the move-in process.',
+      ]),
+      paragraph([
+        'After signing and paying your deposit, Stripe Identity will ask you to verify your ',
+        '<strong>driver&#39;s license</strong> and <strong>SSN/id number</strong>. ',
+        'The verification fee is tenant-paid.',
       ]),
       sectionHeading('Your login'),
       paragraph([

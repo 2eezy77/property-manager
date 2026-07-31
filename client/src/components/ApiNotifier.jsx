@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle2, XCircle, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, XCircle, X } from 'lucide-react';
 
 /**
  * Listens for global API events dispatched from axios interceptors.
@@ -51,7 +51,9 @@ export default function ApiNotifier() {
   const styles =
     toast.variant === 'success'
       ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-      : 'border-red-200 bg-red-50 text-red-800';
+      : toast.variant === 'warning'
+        ? 'border-amber-200 bg-amber-50 text-amber-900'
+        : 'border-red-200 bg-red-50 text-red-800';
 
   return (
     <div
@@ -63,7 +65,9 @@ export default function ApiNotifier() {
         <span className="mt-0.5 shrink-0" aria-hidden>
           {toast.variant === 'success'
             ? <CheckCircle2 size={18} strokeWidth={2} />
-            : <XCircle size={18} strokeWidth={2} />}
+            : toast.variant === 'warning'
+              ? <AlertTriangle size={18} strokeWidth={2} />
+              : <XCircle size={18} strokeWidth={2} />}
         </span>
         <p className="flex-1 font-medium">{toast.message}</p>
         <button

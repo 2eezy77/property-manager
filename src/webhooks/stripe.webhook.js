@@ -44,6 +44,10 @@ const {
 const router = express.Router();
 const pool = require('../db/client');
 
+function isIdentityEvent(type) {
+  return type?.startsWith('identity.verification_session.');
+}
+
 function paymentMethodFromIntent(pi) {
   if (pi.payment_method_types?.includes('cashapp')) return 'cash_app';
   if (pi.payment_method_types?.includes('us_bank_account')) return 'ach';
@@ -117,10 +121,21 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: `Webhook signature error: ${err.message}` });
   }
 
-  // Acknowledge receipt immediately — processing is async
-  res.status(200).json({ received: true });
+  if (isIdentityEvent(event.type)) {
+    try {
+      await handleEvent(event);
+      return res.status(200).json({ received: true });
+    } catch (err) {
+      console.error(`[stripe-webhook] identity processing failed for ${event.type}:`, err);
+      return res.status(500).json({
+        error: 'IDENTITY_WEBHOOK_PROCESSING_FAILED',
+        message: err.message,
+      });
+    }
+  }
 
-  // Handle async without blocking the response
+  // Non-Identity events keep the historical async acknowledgement behavior.
+  res.status(200).json({ received: true });
   handleEvent(event).catch((err) =>
     console.error(`[stripe-webhook] unhandled error for ${event.type}:`, err)
   );

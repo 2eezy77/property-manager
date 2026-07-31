@@ -4,7 +4,11 @@ const {
   computeCardCashAppFee,
   feeMetadata,
 } = require('./payment-processing-fee.service');
-const { encryptSsn, ssnLast4 } = require('./identity-pii-crypto.service');
+const {
+  assertIdentityPiiKeyConfigured,
+  encryptSsn,
+  ssnLast4,
+} = require('./identity-pii-crypto.service');
 const { activateNativeLeaseAfterDeposit } = require('./native-lease-activate.service');
 const { getOperationalStaff, sendOperationalStaffEmail } = require('./email.service');
 const identityVerificationAlert = require('./email-templates/identityVerificationAlert');
@@ -41,6 +45,14 @@ function isWithinGrace(value, now = new Date()) {
 
 function isAlertStatus(status) {
   return ['requires_input', 'canceled', 'failed'].includes(status);
+}
+
+function identityAlreadyVerifiedError() {
+  return httpError(
+    'Identity verification is already complete for this lease.',
+    409,
+    'IDENTITY_ALREADY_VERIFIED'
+  );
 }
 
 async function withTransaction(fn) {
@@ -174,6 +186,7 @@ async function createPaymentIntentForFee({ lease, tenantId, paymentId, fee }) {
 }
 
 async function createIdentityFeeIntent({ leaseId, tenantId }) {
+  assertIdentityPiiKeyConfigured();
   const fee = computeCardCashAppFee(IDENTITY_FEE_BASE_CENTS);
 
   return withTransaction(async (client) => {
@@ -182,6 +195,9 @@ async function createIdentityFeeIntent({ leaseId, tenantId }) {
     let identityRow = await lockIdentityRow(client, leaseId);
     const paidFee = await latestSucceededFee(client, leaseId, tenantId);
     identityRow = await syncPaidFeeOntoIdentity(client, identityRow, paidFee);
+    if (identityRow.status === 'verified') {
+      throw identityAlreadyVerifiedError();
+    }
     if (isWithinGrace(identityRow.fee_paid_at)) {
       throw httpError(
         'Identity fee is already paid. Continue to verification.',
@@ -272,6 +288,9 @@ async function requirePaidIdentityFee(client, leaseId, tenantId) {
   if (!identityRow) identityRow = await ensureIdentityRow(leaseId, tenantId, client);
   const paidFee = await latestSucceededFee(client, leaseId, tenantId);
   identityRow = await syncPaidFeeOntoIdentity(client, identityRow, paidFee);
+  if (identityRow.status === 'verified') {
+    throw identityAlreadyVerifiedError();
+  }
   if (!isWithinGrace(identityRow.fee_paid_at)) {
     throw httpError(
       'Pay the identity verification fee before starting verification.',
@@ -283,6 +302,7 @@ async function requirePaidIdentityFee(client, leaseId, tenantId) {
 }
 
 async function createIdentitySession({ leaseId, tenantId }) {
+  assertIdentityPiiKeyConfigured();
   const { lease, identityRow } = await withTransaction(async (client) => {
     const lease = await loadLeaseForTenant(client, leaseId, tenantId);
     await ensureIdentityRow(leaseId, tenantId, client);
@@ -342,7 +362,44 @@ function addressFromOutputs(outputs) {
 }
 
 function legalNameFromOutputs(outputs) {
-  return [outputs?.first_name, outputs?.last_name].filter(Boolean).join(' ').trim() || null;
+  const explicit = String(outputs?.name || outputs?.full_name || '').trim();
+  return explicit || [outputs?.first_name, outputs?.last_name].filter(Boolean).join(' ').trim() || null;
+}
+
+function idNumberFromOutputs(outputs) {
+  const idNumber = outputs?.id_number || outputs?.ssn || null;
+  if (!idNumber) return null;
+  if (typeof idNumber === 'object') {
+    return idNumber.value || idNumber.number || idNumber.id_number || null;
+  }
+  return idNumber;
+}
+
+function missingCollectionsProfileReason(outputs) {
+  if (!legalNameFromOutputs(outputs)) return 'Stripe Identity verified the session without legal name output.';
+  const idNumber = idNumberFromOutputs(outputs);
+  const ssnDigits = idNumber ? String(idNumber).replace(/\D/g, '') : '';
+  if (ssnDigits.length !== 9) {
+    return 'Stripe Identity verified the session without SSN/id_number output required for collections.';
+  }
+  return null;
+}
+
+async function hydrateVerifiedIdentitySession(session) {
+  if (session.status !== 'verified') return session;
+  const missingReason = missingCollectionsProfileReason(session.verified_outputs || {});
+  if (!missingReason) return session;
+  const retrieved = await stripe.retrieveIdentityVerificationSession(session.id, {
+    expand: ['verified_outputs'],
+  });
+  return {
+    ...session,
+    ...retrieved,
+    metadata: {
+      ...(session.metadata || {}),
+      ...(retrieved.metadata || {}),
+    },
+  };
 }
 
 async function rowForSession(session, client = pool) {
@@ -488,18 +545,31 @@ async function notifyIdentityFailure(identityId) {
 }
 
 async function applyIdentitySessionUpdate(session) {
+  assertIdentityPiiKeyConfigured();
+  const hydratedSession = await hydrateVerifiedIdentitySession(session);
   const updated = await withTransaction(async (client) => {
-    const row = await rowForSession(session, client);
+    const row = await rowForSession(hydratedSession, client);
     if (!row) return null;
 
-    const status = statusFromSession(session);
+    let status = statusFromSession(hydratedSession);
     if (row.status === 'verified') return row;
 
-    const outputs = session.verified_outputs || {};
+    const outputs = hydratedSession.verified_outputs || {};
+    let lastErrorCode = hydratedSession.last_error?.code || null;
+    let lastErrorReason =
+      hydratedSession.last_error?.reason || hydratedSession.last_error?.message || null;
+    if (status === 'verified') {
+      const missingReason = missingCollectionsProfileReason(outputs);
+      if (missingReason) {
+        status = 'failed';
+        lastErrorCode = 'IDENTITY_COLLECTIONS_PROFILE_MISSING';
+        lastErrorReason = missingReason;
+      }
+    }
     const address = addressFromOutputs(outputs);
-    const idNumber = outputs.id_number || outputs.ssn || null;
+    const idNumber = idNumberFromOutputs(outputs);
     const ssnDigits = idNumber ? String(idNumber).replace(/\D/g, '') : '';
-    const encrypted = ssnDigits.length === 9 ? encryptSsn(ssnDigits) : null;
+    const encrypted = status === 'verified' && ssnDigits.length === 9 ? encryptSsn(ssnDigits) : null;
 
     const { rows } = await client.query(
       `UPDATE tenant_identity_verifications
@@ -523,8 +593,8 @@ async function applyIdentitySessionUpdate(session) {
       [
         row.id,
         status,
-        session.last_error?.code || null,
-        session.last_error?.reason || session.last_error?.message || null,
+        lastErrorCode,
+        lastErrorReason,
         legalNameFromOutputs(outputs),
         dateOfBirthFromOutputs(outputs),
         address.line1 || null,

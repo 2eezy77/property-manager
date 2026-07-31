@@ -8,6 +8,9 @@ function getKey() {
   if (key.length !== 32) throw new Error('IDENTITY_PII_ENCRYPTION_KEY must be 32 bytes base64');
   return key;
 }
+function assertIdentityPiiKeyConfigured() {
+  getKey();
+}
 function encryptSsn(ssn) {
   const digits = String(ssn).replace(/\D/g, '');
   if (digits.length !== 9) throw new Error('SSN must be 9 digits');
@@ -30,4 +33,4 @@ function ssnLast4(ssn) {
   const digits = String(ssn).replace(/\D/g, '');
   return digits.slice(-4);
 }
-module.exports = { encryptSsn, decryptSsn, ssnLast4, KEY_ID };
+module.exports = { encryptSsn, decryptSsn, ssnLast4, assertIdentityPiiKeyConfigured, KEY_ID };

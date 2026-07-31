@@ -6,6 +6,8 @@
 const assert = require('assert');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
+process.env.IDENTITY_PII_ENCRYPTION_KEY =
+  process.env.IDENTITY_PII_ENCRYPTION_KEY || Buffer.alloc(32, 7).toString('base64');
 const pool = require('../src/db/client');
 const {
   createReporter,
@@ -19,9 +21,12 @@ const {
 const { computeCardCashAppFee } = require('../src/services/payment-processing-fee.service');
 const {
   applyIdentitySessionUpdate,
+  createIdentityFeeIntent,
+  createIdentitySession,
   isIdentityVerified,
   tryActivateAfterIdentity,
 } = require('../src/services/tenant-identity.service');
+const { decryptSsn, encryptSsn } = require('../src/services/identity-pii-crypto.service');
 const { activateNativeLeaseAfterDeposit } = require('../src/services/native-lease-activate.service');
 const identityVerificationAlert = require('../src/services/email-templates/identityVerificationAlert');
 const stripeWebhook = require('../src/webhooks/stripe.webhook');
@@ -200,12 +205,15 @@ async function settlePendingSecurityDepositAndActivate(leaseId) {
 }
 
 async function seedVerifiedIdentity(leaseId, tenantId, { sessionId = null } = {}) {
+  const encrypted = encryptSsn('123456789');
   const { rows } = await pool.query(
     `INSERT INTO tenant_identity_verifications
        (lease_id, tenant_id, stripe_verification_session_id, status, verified_at,
-        legal_name, date_of_birth, address_line1, address_city, address_state, address_postal)
+        legal_name, date_of_birth, address_line1, address_city, address_state, address_postal,
+        ssn_ciphertext, ssn_last4, encryption_key_id)
      VALUES ($1, $2, $3, 'verified', NOW(),
-             'Invited Tenant', '1990-01-02', '123 Test St', 'Norfolk', 'VA', '23510')
+             'Invited Tenant', '1990-01-02', '123 Test St', 'Norfolk', 'VA', '23510',
+             $4, '6789', $5)
      ON CONFLICT (lease_id) DO UPDATE
        SET tenant_id = EXCLUDED.tenant_id,
            stripe_verification_session_id = COALESCE(
@@ -220,9 +228,12 @@ async function seedVerifiedIdentity(leaseId, tenantId, { sessionId = null } = {}
            address_city = EXCLUDED.address_city,
            address_state = EXCLUDED.address_state,
            address_postal = EXCLUDED.address_postal,
+           ssn_ciphertext = EXCLUDED.ssn_ciphertext,
+           ssn_last4 = EXCLUDED.ssn_last4,
+           encryption_key_id = EXCLUDED.encryption_key_id,
            updated_at = NOW()
      RETURNING *`,
-    [leaseId, tenantId, sessionId]
+    [leaseId, tenantId, sessionId, encrypted.ciphertext, encrypted.keyId]
   );
   return rows[0];
 }
@@ -387,6 +398,258 @@ async function runVerifiedIdentityTerminalCheck(reporter) {
   }
 }
 
+async function runIdentityCollectionsPiiChecks(reporter) {
+  const originalConnect = pool.connect;
+  const originalQuery = pool.query;
+  const stripeService = require('../src/services/stripe.service');
+  const originalRetrieve = stripeService.retrieveIdentityVerificationSession;
+  const baseRow = {
+    id: 'identity-pii-test',
+    lease_id: 'lease-pii-test',
+    tenant_id: 'tenant-pii-test',
+    stripe_verification_session_id: 'vs_pii_test',
+    status: 'processing',
+  };
+  const client = {
+    updates: [],
+    async query(sql, params) {
+      const normalized = sql.replace(/\s+/g, ' ').trim().toLowerCase();
+      if (normalized === 'begin' || normalized === 'commit' || normalized === 'rollback') {
+        return { rows: [] };
+      }
+      if (normalized.startsWith('select') && normalized.includes('from tenant_identity_verifications')) {
+        return { rows: [{ ...baseRow }] };
+      }
+      if (normalized.startsWith('update tenant_identity_verifications')) {
+        this.updates.push(params);
+        return {
+          rows: [{
+            ...baseRow,
+            status: params[1],
+            verified_at: params[1] === 'verified' ? new Date() : null,
+            last_error_code: params[2],
+            last_error_reason: params[3],
+            legal_name: params[4] || null,
+            ssn_ciphertext: params[11] || null,
+            ssn_last4: params[12] || null,
+            encryption_key_id: params[13] || null,
+          }],
+        };
+      }
+      if (normalized.startsWith('select') && normalized.includes('from leases')) {
+        return { rows: [] };
+      }
+      throw new Error(`Unexpected identity PII query: ${sql}`);
+    },
+    release() {},
+  };
+
+  pool.connect = async () => client;
+  pool.query = async () => ({ rows: [] });
+  stripeService.retrieveIdentityVerificationSession = async (id, { expand } = {}) => ({
+    id,
+    status: 'verified',
+    verified_outputs: {
+      first_name: 'Invited',
+      last_name: 'Tenant',
+      dob: { year: 1990, month: 1, day: 2 },
+      address: { line1: '123 Test St', city: 'Norfolk', state: 'VA', postal_code: '23510' },
+    },
+    metadata: {},
+    expand,
+  });
+  try {
+    const missingSsn = await applyIdentitySessionUpdate({
+      id: 'vs_pii_test',
+      status: 'verified',
+      verified_outputs: {
+        first_name: 'Invited',
+        last_name: 'Tenant',
+        dob: { year: 1990, month: 1, day: 2 },
+        address: { line1: '123 Test St', city: 'Norfolk', state: 'VA', postal_code: '23510' },
+      },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.notStrictEqual(missingSsn.status, 'verified', 'verified session without SSN must fail closed');
+    assert.strictEqual(missingSsn.ssn_ciphertext, null);
+    assert.match(missingSsn.last_error_reason || '', /SSN|id_number/i);
+    reporter.ok('verified identity without SSN/id_number fails closed');
+
+    const complete = await applyIdentitySessionUpdate({
+      id: 'vs_pii_test',
+      status: 'verified',
+      verified_outputs: {
+        first_name: 'Invited',
+        last_name: 'Tenant',
+        id_number: '123-45-6789',
+      },
+    });
+    assert.strictEqual(complete.status, 'verified');
+    assert.strictEqual(complete.ssn_last4, '6789');
+    assert.strictEqual(decryptSsn(complete.ssn_ciphertext), '123456789');
+    reporter.ok('verified identity persists encrypted SSN/id_number collections profile');
+  } finally {
+    pool.connect = originalConnect;
+    pool.query = originalQuery;
+    stripeService.retrieveIdentityVerificationSession = originalRetrieve;
+  }
+}
+
+async function runIdentityKeyRequiredCheck(reporter) {
+  const originalConnect = pool.connect;
+  const originalKey = process.env.IDENTITY_PII_ENCRYPTION_KEY;
+  delete process.env.IDENTITY_PII_ENCRYPTION_KEY;
+  pool.connect = async () => {
+    throw new Error('identity key validation should happen before database work');
+  };
+  try {
+    await assert.rejects(
+      () => createIdentityFeeIntent({ leaseId: 'lease-key-test', tenantId: 'tenant-key-test' }),
+      (err) => err.code === 'IDENTITY_KEY_MISSING'
+    );
+    reporter.ok('identity fee/session paths require PII encryption key before work starts');
+  } finally {
+    process.env.IDENTITY_PII_ENCRYPTION_KEY = originalKey;
+    pool.connect = originalConnect;
+  }
+}
+
+async function runIdentityTerminalFeeSessionChecks(reporter) {
+  const originalConnect = pool.connect;
+  const originalStripe = {
+    getOrCreateCustomer: require('../src/services/stripe.service').getOrCreateCustomer,
+    createCardPaymentIntent: require('../src/services/stripe.service').createCardPaymentIntent,
+    createIdentityVerificationSession: require('../src/services/stripe.service').createIdentityVerificationSession,
+  };
+  const stripeService = require('../src/services/stripe.service');
+  let stripeCallCount = 0;
+  stripeService.getOrCreateCustomer = async () => {
+    stripeCallCount += 1;
+    return 'cus_terminal';
+  };
+  stripeService.createCardPaymentIntent = async () => {
+    stripeCallCount += 1;
+    return { id: 'pi_terminal', client_secret: 'secret' };
+  };
+  stripeService.createIdentityVerificationSession = async () => {
+    stripeCallCount += 1;
+    return { id: 'vs_terminal_new', url: 'https://identity.test/session' };
+  };
+
+  const client = {
+    async query(sql, params) {
+      const normalized = sql.replace(/\s+/g, ' ').trim().toLowerCase();
+      if (normalized === 'begin' || normalized === 'commit' || normalized === 'rollback') {
+        return { rows: [] };
+      }
+      if (normalized.startsWith('select') && normalized.includes('from leases')) {
+        return {
+          rows: [{
+            id: params[0],
+            tenant_id: 'tenant-terminal-api-test',
+            signing_provider: 'native',
+            tenant_email: 'verified@example.com',
+          }],
+        };
+      }
+      if (normalized.startsWith('insert into tenant_identity_verifications')) {
+        return {
+          rows: [{
+            id: 'identity-terminal-api-test',
+            lease_id: params[0],
+            tenant_id: params[1],
+            status: 'verified',
+            fee_paid_at: new Date(),
+          }],
+        };
+      }
+      if (normalized.startsWith('select') && normalized.includes('from tenant_identity_verifications')) {
+        return {
+          rows: [{
+            id: 'identity-terminal-api-test',
+            lease_id: params[0],
+            tenant_id: 'tenant-terminal-api-test',
+            status: 'verified',
+            fee_paid_at: new Date(),
+          }],
+        };
+      }
+      if (normalized.startsWith('select') && normalized.includes('from payments')) return { rows: [] };
+      throw new Error(`Unexpected terminal API query: ${sql}`);
+    },
+    release() {},
+  };
+
+  pool.connect = async () => client;
+  try {
+    await assert.rejects(
+      () => createIdentityFeeIntent({ leaseId: 'lease-terminal-api-test', tenantId: 'tenant-terminal-api-test' }),
+      (err) => err.statusCode === 409 && err.code === 'IDENTITY_ALREADY_VERIFIED'
+    );
+    await assert.rejects(
+      () => createIdentitySession({ leaseId: 'lease-terminal-api-test', tenantId: 'tenant-terminal-api-test' }),
+      (err) => err.statusCode === 409 && err.code === 'IDENTITY_ALREADY_VERIFIED'
+    );
+    assert.strictEqual(stripeCallCount, 0, 'verified identity should not create fee or session Stripe calls');
+    reporter.ok('verified identity is terminal for fee and hosted session APIs');
+  } finally {
+    pool.connect = originalConnect;
+    stripeService.getOrCreateCustomer = originalStripe.getOrCreateCustomer;
+    stripeService.createCardPaymentIntent = originalStripe.createCardPaymentIntent;
+    stripeService.createIdentityVerificationSession = originalStripe.createIdentityVerificationSession;
+  }
+}
+
+async function runStripeIdentityApiContractChecks(reporter) {
+  const stripeModulePath = require.resolve('stripe');
+  const servicePath = require.resolve('../src/services/stripe.service');
+  const originalStripeCache = require.cache[stripeModulePath];
+  const originalServiceCache = require.cache[servicePath];
+  const calls = {};
+  function MockStripe() {
+    return {
+      identity: {
+        verificationSessions: {
+          create: async (params) => {
+            calls.create = params;
+            return { id: 'vs_contract' };
+          },
+          retrieve: async (id, params) => {
+            calls.retrieve = { id, params };
+            return { id };
+          },
+        },
+      },
+    };
+  }
+  try {
+    delete require.cache[servicePath];
+    require.cache[stripeModulePath] = {
+      id: stripeModulePath,
+      filename: stripeModulePath,
+      loaded: true,
+      exports: MockStripe,
+    };
+    const isolatedStripe = require('../src/services/stripe.service');
+    await isolatedStripe.createIdentityVerificationSession({
+      returnUrl: 'https://example.test/return',
+      metadata: { email: 'tenant@example.com' },
+    });
+    await isolatedStripe.retrieveIdentityVerificationSession('vs_contract');
+
+    assert.deepStrictEqual(calls.create.options.document.allowed_types, ['driving_license']);
+    assert.strictEqual(calls.create.options.document.require_id_number, true);
+    assert.strictEqual(calls.create.options.document.require_matching_selfie, true);
+    assert.deepStrictEqual(calls.retrieve.params.expand, ['verified_outputs']);
+    reporter.ok('Stripe Identity session requests driver license plus id_number outputs');
+  } finally {
+    delete require.cache[servicePath];
+    if (originalServiceCache) require.cache[servicePath] = originalServiceCache;
+    if (originalStripeCache) require.cache[stripeModulePath] = originalStripeCache;
+    else delete require.cache[stripeModulePath];
+  }
+}
+
 function createChargeSucceededClient({ identityStatus }) {
   const state = {
     lease: {
@@ -527,6 +790,10 @@ async function main() {
   const reporter = createReporter();
 
   await section('Native activation gate', async () => {
+    await runStripeIdentityApiContractChecks(reporter);
+    await runIdentityKeyRequiredCheck(reporter);
+    await runIdentityCollectionsPiiChecks(reporter);
+    await runIdentityTerminalFeeSessionChecks(reporter);
     await runActivationGateChecks(reporter);
     await runVerifiedIdentityTerminalCheck(reporter);
     await runChargeSucceededDepositGateChecks(reporter);
@@ -665,6 +932,7 @@ async function main() {
         verified_outputs: {
           first_name: 'Invited',
           last_name: 'Tenant',
+          id_number: '123-45-6789',
           dob: { year: 1990, month: 1, day: 2 },
           address: {
             line1: '123 Test St',
@@ -675,6 +943,14 @@ async function main() {
         },
       });
       assert.strictEqual(await isIdentityVerified(leaseId), true);
+      const { rows: [identityRow] } = await pool.query(
+        `SELECT ssn_ciphertext, ssn_last4
+           FROM tenant_identity_verifications
+          WHERE lease_id = $1`,
+        [leaseId]
+      );
+      assert(identityRow?.ssn_ciphertext, 'verified identity should persist encrypted SSN');
+      assert.strictEqual(identityRow.ssn_last4, '6789');
       reporter.ok('identity session update marks the lease identity verified');
     } else {
       await seedVerifiedIdentity(leaseId, tenant.id);

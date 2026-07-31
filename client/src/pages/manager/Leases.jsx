@@ -11,6 +11,9 @@ import { deriveNativeLeaseStep } from '@/utils/nativeLeaseHelpers';
 function fmt(ts) { return ts ? new Date(ts).toLocaleDateString([],{month:'short',day:'numeric',year:'numeric'}) : '—'; }
 function fmtMoney(v) { return v != null ? '$'+Number(v).toLocaleString('en-US',{minimumFractionDigits:2}) : '—'; }
 function daysUntil(ts) { if (!ts) return null; return Math.ceil((new Date(ts)-new Date())/86400000); }
+function showToast(message, variant = 'error') {
+  window.dispatchEvent(new CustomEvent('api:toast', { detail: { message, variant } }));
+}
 
 const STATUS_META = {
   draft:              { label:'Draft',              color:'bg-gray-100 text-gray-500'   },
@@ -320,6 +323,13 @@ function CreateLeaseModal({ onClose, onCreated }) {
         late_fee_amount:   form.late_fee_amount ? parseFloat(form.late_fee_amount) : null,
       };
       const { data } = await api.post(nativePath ? '/api/leases/native' : '/api/leases', payload);
+      if (nativePath && tenantMode === 'invite' && data.inviteSent === false) {
+        showToast(
+          data.inviteMessage
+            || 'Lease created, but the invite email was not sent. Resend a password reset/setup email before asking the tenant to sign.',
+          'warning'
+        );
+      }
       const property = properties.find(p => String(p.id) === String(form.property_id));
       const unit = units.find(u => String(u.id) === String(form.unit_id));
       const tenant = data.tenant || tenants.find(t => String(t.id) === String(form.tenant_id));

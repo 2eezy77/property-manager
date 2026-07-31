@@ -522,7 +522,11 @@ async function createIdentityVerificationSession({ returnUrl, metadata = {} }) {
   return stripe.identity.verificationSessions.create({
     type: 'document',
     options: {
-      document: { require_matching_selfie: true },
+      document: {
+        allowed_types: ['driving_license'],
+        require_id_number: true,
+        require_matching_selfie: true,
+      },
     },
     provided_details: metadata.email ? { email: metadata.email } : undefined,
     metadata,
