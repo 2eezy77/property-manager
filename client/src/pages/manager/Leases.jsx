@@ -19,6 +19,7 @@ const STATUS_META = {
   pending_tenant_signature:  { label:'Tenant Signature',  color:'bg-yellow-100 text-yellow-700' },
   pending_manager_signature: { label:'Manager Signature', color:'bg-amber-100 text-amber-700'  },
   awaiting_deposit:   { label:'Awaiting Deposit',   color:'bg-blue-100 text-blue-700'    },
+  awaiting_identity:  { label:'Awaiting Identity',  color:'bg-purple-100 text-purple-700' },
   active:             { label:'Active',             color:'bg-green-100 text-green-700'  },
   expired:            { label:'Expired',            color:'bg-red-100 text-red-600'      },
   terminated:         { label:'Terminated',         color:'bg-gray-100 text-gray-500'    },
@@ -56,6 +57,11 @@ const NATIVE_STEP_META = {
     short: 'Deposit',
     color: 'bg-blue-100 text-blue-800',
   },
+  verify_identity: {
+    label: 'Awaiting identity verification',
+    short: 'Identity',
+    color: 'bg-purple-100 text-purple-800',
+  },
   active: {
     label: 'Active',
     short: 'Active',
@@ -78,6 +84,7 @@ const NATIVE_FLOW_STEPS = [
   { key: 'sign_tenant', label: 'Tenant signs', desc: 'Tenant reviews and signs first' },
   { key: 'sign_manager', label: 'Manager signs', desc: 'Manager countersigns the lease' },
   { key: 'pay_deposit', label: 'Deposit', desc: 'Tenant pays security deposit' },
+  { key: 'verify_identity', label: 'Identity', desc: 'Tenant completes identity verification' },
   { key: 'active', label: 'Active', desc: 'Lease is fully active' },
 ];
 
@@ -87,9 +94,10 @@ function nativeFlowStepIndex(stepKey) {
     sign_tenant: 1,
     sign_manager: 2,
     pay_deposit: 3,
-    active: 4,
-    expired: 4,
-    terminated: 4,
+    verify_identity: 4,
+    active: 5,
+    expired: 5,
+    terminated: 5,
   };
   return map[stepKey] ?? 0;
 }
@@ -112,6 +120,8 @@ function nativeStepForLease(lease) {
       return 'sign_manager';
     case 'awaiting_deposit':
       return 'pay_deposit';
+    case 'awaiting_identity':
+      return 'verify_identity';
     case 'active':
     case 'expired':
     case 'terminated':
@@ -195,15 +205,35 @@ function Badge({ meta }) {
   return meta ? <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${meta.color}`}>{meta.label}</span> : null;
 }
 
+const IDENTITY_STATUS_META = {
+  not_started:    { label: 'Identity not started', color: 'bg-gray-100 text-gray-600' },
+  requires_input: { label: 'Identity needs input', color: 'bg-amber-100 text-amber-800' },
+  processing:     { label: 'Identity processing',  color: 'bg-blue-100 text-blue-800' },
+  verified:       { label: 'Identity verified',    color: 'bg-green-100 text-green-700' },
+  canceled:       { label: 'Identity canceled',    color: 'bg-gray-100 text-gray-600' },
+  failed:         { label: 'Identity failed',      color: 'bg-red-100 text-red-700' },
+};
+
+function identityStatusForLease(lease) {
+  return lease?.identity_status || lease?.identity?.status || null;
+}
+
+function IdentityBadge({ lease }) {
+  const status = identityStatusForLease(lease);
+  return status ? <Badge meta={IDENTITY_STATUS_META[status] || { label: `Identity ${status}`, color: 'bg-gray-100 text-gray-600' }} /> : null;
+}
+
 // ── Create Lease Modal ────────────────────────────────────────────────────────
 function CreateLeaseModal({ onClose, onCreated }) {
   const [properties, setProperties] = useState([]);
   const [units,      setUnits]      = useState([]);
   const [tenants,    setTenants]    = useState([]);
+  const [tenantMode, setTenantMode] = useState('existing');
   const [form, setForm] = useState({
     lease_path: 'native',
     room_type: 'regular',
     property_id: '', unit_id: '', tenant_id: '',
+    invite_email: '', invite_first_name: '', invite_last_name: '', invite_phone: '',
     start_date: '', end_date: '',
     monthly_rent: NATIVE_ROOM_DEFAULTS.regular.monthly_rent,
     security_deposit: NATIVE_ROOM_DEFAULTS.regular.security_deposit,
@@ -214,7 +244,7 @@ function CreateLeaseModal({ onClose, onCreated }) {
 
   useEffect(() => {
     api.get('/api/properties').then(r => setProperties(r.data.properties || [])).catch(() => {});
-    api.get('/api/tenants').then(r => setTenants(r.data.tenants || [])).catch(() => {});
+    api.get('/api/tenants?for_lease_create=1').then(r => setTenants(r.data.tenants || [])).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -243,6 +273,7 @@ function CreateLeaseModal({ onClose, onCreated }) {
       applyNativeDefaults(form.room_type);
       return;
     }
+    setTenantMode('existing');
     set('lease_path', path);
   }
 
@@ -261,9 +292,24 @@ function CreateLeaseModal({ onClose, onCreated }) {
     setSubmitting(true); setError('');
     try {
       const nativePath = form.lease_path === 'native';
+      if (nativePath && tenantMode === 'invite' && !form.invite_phone.trim()) {
+        setError('Invite phone required');
+        setSubmitting(false);
+        return;
+      }
+
       const payload = {
         unit_id:           form.unit_id,
-        tenant_id:         form.tenant_id,
+        ...(nativePath && tenantMode === 'invite'
+          ? {
+              invite: {
+                email: form.invite_email.trim(),
+                first_name: form.invite_first_name.trim(),
+                last_name: form.invite_last_name.trim(),
+                phone: form.invite_phone.trim(),
+              },
+            }
+          : { tenant_id: form.tenant_id }),
         ...(nativePath ? { room_type: form.room_type } : {}),
         start_date:        form.start_date,
         end_date:          form.end_date,
@@ -276,12 +322,12 @@ function CreateLeaseModal({ onClose, onCreated }) {
       const { data } = await api.post(nativePath ? '/api/leases/native' : '/api/leases', payload);
       const property = properties.find(p => String(p.id) === String(form.property_id));
       const unit = units.find(u => String(u.id) === String(form.unit_id));
-      const tenant = tenants.find(t => String(t.id) === String(form.tenant_id));
+      const tenant = data.tenant || tenants.find(t => String(t.id) === String(form.tenant_id));
       onCreated({
         ...data.lease,
         property_name: property?.name,
         unit_number: unit?.unit_number,
-        tenant_name: tenant ? `${tenant.first_name} ${tenant.last_name}` : undefined,
+        tenant_name: tenant ? `${tenant.first_name || ''} ${tenant.last_name || ''}`.trim() : undefined,
         tenant_email: tenant?.email,
       });
     } catch(err) {
@@ -293,6 +339,7 @@ function CreateLeaseModal({ onClose, onCreated }) {
 
   const inputCls = "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400";
   const labelCls = "block text-xs font-medium text-gray-500 mb-1";
+  const nativePath = form.lease_path === 'native';
 
   return (
     <div className="modal-overlay overflow-auto">
@@ -315,7 +362,7 @@ function CreateLeaseModal({ onClose, onCreated }) {
             )}
           </div>
 
-          {form.lease_path === 'native' && (
+          {nativePath && (
             <div>
               <label className={labelCls}>Room Type *</label>
               <select className={inputCls} value={form.room_type} onChange={e => handleRoomTypeChange(e.target.value)} required>
@@ -346,10 +393,63 @@ function CreateLeaseModal({ onClose, onCreated }) {
           {/* Tenant */}
           <div>
             <label className={labelCls}>Tenant *</label>
-            <select className={inputCls} value={form.tenant_id} onChange={e => set('tenant_id', e.target.value)} required>
-              <option value="">Select tenant…</option>
-              {tenants.map(t => <option key={t.id} value={t.id}>{t.first_name} {t.last_name} — {t.email}</option>)}
-            </select>
+            {nativePath && (
+              <div className="mb-3 flex rounded-lg border border-gray-200 overflow-hidden text-sm w-fit">
+                {[
+                  ['existing', 'Existing'],
+                  ['invite', 'Invite new'],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setTenantMode(value)}
+                    className={`px-3 py-1.5 font-medium transition-colors ${tenantMode === value ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {tenantMode === 'existing' || !nativePath ? (
+              <select className={inputCls} value={form.tenant_id} onChange={e => set('tenant_id', e.target.value)} required>
+                <option value="">Select tenant…</option>
+                {tenants.map(t => <option key={t.id} value={t.id}>{t.first_name} {t.last_name} — {t.email}</option>)}
+              </select>
+            ) : (
+              <div className="space-y-3">
+                <input
+                  type="email"
+                  className={inputCls}
+                  value={form.invite_email}
+                  onChange={e => set('invite_email', e.target.value)}
+                  required
+                  placeholder="Email *"
+                />
+                <div className="grid grid-cols-2 gap-3">
+                  <input
+                    className={inputCls}
+                    value={form.invite_first_name}
+                    onChange={e => set('invite_first_name', e.target.value)}
+                    required
+                    placeholder="First name *"
+                  />
+                  <input
+                    className={inputCls}
+                    value={form.invite_last_name}
+                    onChange={e => set('invite_last_name', e.target.value)}
+                    placeholder="Last name"
+                  />
+                </div>
+                <input
+                  type="tel"
+                  className={inputCls}
+                  value={form.invite_phone}
+                  onChange={e => set('invite_phone', e.target.value)}
+                  required
+                  placeholder="Phone * (phone required)"
+                />
+              </div>
+            )}
           </div>
 
           {/* Dates */}
@@ -651,6 +751,7 @@ function LeaseDetailPanel({ lease: initialLease, onClose, rlReady }) {
               <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${stepMeta.color}`}>
                 {stepMeta.label}
               </span>
+              <IdentityBadge lease={lease} />
               {(() => { const d=daysUntil(lease.end_date); return d!=null&&d>0&&d<=60 ? <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">{d}d to expiry</span> : null; })()}
             </div>
 
@@ -926,10 +1027,10 @@ export default function LeasesPage() {
         </div>
       ) : (
         <TableScroll className="bg-white rounded-xl border border-gray-200">
-          <table className="w-full min-w-[40rem] text-sm">
+          <table className="w-full min-w-[46rem] text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                {['Property / Unit','Tenant','Status','Rent','Start','End','Signing'].map(h => (
+                {['Property / Unit','Tenant','Status','Identity','Rent','Start','End','Signing'].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -961,6 +1062,7 @@ export default function LeasesPage() {
                       <br/><span className="text-xs text-gray-400">{l.tenant_email}</span>
                     </td>
                     <td className="px-4 py-3"><Badge meta={STATUS_META[l.status]} /></td>
+                    <td className="px-4 py-3"><IdentityBadge lease={l} /></td>
                     <td className="px-4 py-3 text-gray-600">{fmtMoney(l.monthly_rent)}</td>
                     <td className="px-4 py-3 text-gray-400 text-xs">{fmt(l.start_date)}</td>
                     <td className="px-4 py-3 text-xs">

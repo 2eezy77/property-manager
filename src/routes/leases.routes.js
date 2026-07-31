@@ -144,6 +144,7 @@ router.get('/', staffOnly, async (req, res) => {
               l.monthly_rent, l.security_deposit, l.document_url, l.pdf_path,
               l.rl_document_id, l.rl_interview_url, l.signing_provider, l.room_type,
               l.created_at, l.updated_at,
+              tiv.status AS identity_status,
               un.unit_number, p.name AS property_name, p.id AS property_id,
               p.address_line1, p.city, p.state, p.zip,
               (u.first_name || ' ' || u.last_name) AS tenant_name, u.email AS tenant_email,
@@ -152,6 +153,7 @@ router.get('/', staffOnly, async (req, res) => {
        JOIN units un ON un.id = l.unit_id
        JOIN properties p ON p.id = un.property_id
        JOIN users u ON u.id = l.tenant_id
+       LEFT JOIN tenant_identity_verifications tiv ON tiv.lease_id = l.id
        LEFT JOIN LATERAL (
          SELECT status FROM signature_envelopes WHERE lease_id = l.id
          ORDER BY created_at DESC LIMIT 1
@@ -353,11 +355,13 @@ router.get('/:id', anyRole, async (req, res) => {
     const { rows } = await pool.query(
       `SELECT l.*, un.unit_number, p.name AS property_name,
               p.address_line1, p.city, p.state, p.zip,
+              tiv.status AS identity_status,
               (u.first_name || ' ' || u.last_name) AS tenant_name, u.email AS tenant_email
        FROM leases l
        JOIN units un ON un.id = l.unit_id
        JOIN properties p ON p.id = un.property_id
        JOIN users u ON u.id = l.tenant_id
+       LEFT JOIN tenant_identity_verifications tiv ON tiv.lease_id = l.id
        WHERE l.id = $1`,
       [req.params.id]
     );
