@@ -36,9 +36,17 @@ const {
   notifyPaymentFailed,
 } = require('../services/payment-email.service');
 const { activateNativeLeaseAfterDeposit } = require('../services/native-lease-activate.service');
+const {
+  applyIdentitySessionUpdate,
+  syncIdentityFeePaymentSucceeded,
+} = require('../services/tenant-identity.service');
 
 const router = express.Router();
 const pool = require('../db/client');
+
+function isIdentityEvent(type) {
+  return type?.startsWith('identity.verification_session.');
+}
 
 function paymentMethodFromIntent(pi) {
   if (pi.payment_method_types?.includes('cashapp')) return 'cash_app';
@@ -49,6 +57,21 @@ function paymentMethodFromIntent(pi) {
 
 function chargeIdFromIntent(pi) {
   return typeof pi.latest_charge === 'string' ? pi.latest_charge : pi.latest_charge?.id ?? null;
+}
+
+function paymentIntentLikeFromCharge(charge) {
+  const type = charge.payment_method_details?.type;
+  const payment_method_types =
+    type === 'cashapp' ? ['cashapp']
+    : type === 'card' ? ['card']
+    : type === 'us_bank_account' ? ['us_bank_account']
+    : [];
+  return {
+    id: charge.payment_intent || charge.id,
+    latest_charge: charge.id,
+    metadata: charge.metadata || {},
+    payment_method_types,
+  };
 }
 
 /** Skip duplicate webhook deliveries; never re-settle an already-succeeded payment. */
@@ -98,10 +121,21 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: `Webhook signature error: ${err.message}` });
   }
 
-  // Acknowledge receipt immediately — processing is async
-  res.status(200).json({ received: true });
+  if (isIdentityEvent(event.type)) {
+    try {
+      await handleEvent(event);
+      return res.status(200).json({ received: true });
+    } catch (err) {
+      console.error(`[stripe-webhook] identity processing failed for ${event.type}:`, err);
+      return res.status(500).json({
+        error: 'IDENTITY_WEBHOOK_PROCESSING_FAILED',
+        message: err.message,
+      });
+    }
+  }
 
-  // Handle async without blocking the response
+  // Non-Identity events keep the historical async acknowledgement behavior.
+  res.status(200).json({ received: true });
   handleEvent(event).catch((err) =>
     console.error(`[stripe-webhook] unhandled error for ${event.type}:`, err)
   );
@@ -138,6 +172,14 @@ async function handleEvent(event) {
       break;
     case 'payment_intent.canceled':
       await onCanceled(object, event.id);
+      break;
+
+    // ── Stripe Identity ───────────────────────────────────────────────────────
+    case 'identity.verification_session.verified':
+    case 'identity.verification_session.processing':
+    case 'identity.verification_session.requires_input':
+    case 'identity.verification_session.canceled':
+      await onIdentityVerificationSession(object);
       break;
 
     case 'account.updated':
@@ -266,6 +308,15 @@ async function updateLeaseSigningFeeByPaymentIntent(pi, { status, chargeId }) {
   return false;
 }
 
+async function onIdentityVerificationSession(session) {
+  const row = await applyIdentitySessionUpdate(session);
+  if (!row) {
+    console.warn(`[stripe-webhook] identity session ignored: ${session.id}`);
+    return;
+  }
+  console.log(`[stripe-webhook] identity session ${row.status}: ${session.id}`);
+}
+
 async function updateLeaseSigningFeeByCharge(charge, { status }) {
   if (status !== 'paid') return false;
   const { rows } = await pool.query(
@@ -295,6 +346,43 @@ async function updateLeaseSigningFeeByCharge(charge, { status }) {
   );
   console.log(`[stripe-webhook] lease signing fee paid: ${rows[0].id} charge ${charge.id}`);
   return true;
+}
+
+async function settleSecurityDepositSuccess(client, {
+  paymentId,
+  leaseId,
+  tenantId,
+  amount,
+  pi,
+  eventId,
+}) {
+  await activateNativeLeaseAfterDeposit(client, leaseId);
+
+  const bundledRentPayment = await insertBundledFirstMonthRent(client, {
+    pi,
+    eventId,
+    leaseId,
+    tenantId,
+  });
+  if (bundledRentPayment) {
+    await processSplits(client, bundledRentPayment.id, leaseId, bundledRentPayment.amount, pi);
+  }
+
+  await client.query(
+    `INSERT INTO notifications
+       (user_id, type, title, body, channel, related_entity_type, related_entity_id, sent_at)
+     VALUES ($1, 'rent_received',
+             'Security Deposit Confirmed',
+             $2,
+             'push', 'payment', $3, NOW())`,
+    [
+      tenantId,
+      `Your security deposit of $${parseFloat(amount).toFixed(2)} has been confirmed.`,
+      paymentId,
+    ]
+  );
+
+  return bundledRentPayment;
 }
 
 // ── charge.pending ────────────────────────────────────────────────────────────
@@ -329,6 +417,7 @@ async function onChargeSucceeded(charge, eventId) {
   // body but match by stripe_charge_id.
   const client = await pool.connect();
   let utilityBillId = null;
+  let bundledRentPayment = null;
   try {
     await client.query('BEGIN');
 
@@ -340,6 +429,7 @@ async function onChargeSucceeded(charge, eventId) {
               paid_at                  = COALESCE(paid_at, NOW()),
               updated_at               = NOW()
         WHERE stripe_charge_id         = $1
+          AND status                  <> 'succeeded'
        RETURNING id, lease_id, tenant_id, amount, payment_type`,
       [charge.id, eventId]
     );
@@ -351,7 +441,37 @@ async function onChargeSucceeded(charge, eventId) {
 
     const { id: paymentId, lease_id, tenant_id, amount, payment_type } = rows[0];
 
-    if (payment_type === 'utility') {
+    if (payment_type === 'security_deposit') {
+      bundledRentPayment = await settleSecurityDepositSuccess(client, {
+        paymentId,
+        leaseId: lease_id,
+        tenantId: tenant_id,
+        amount,
+        pi: paymentIntentLikeFromCharge(charge),
+        eventId,
+      });
+    } else if (payment_type === 'identity_verification_fee') {
+      await syncIdentityFeePaymentSucceeded(client, {
+        id: paymentId,
+        lease_id,
+        tenant_id,
+        stripe_payment_intent_id: charge.payment_intent || null,
+        paid_at: new Date(),
+      });
+
+      await client.query(
+        `INSERT INTO notifications
+           (user_id, type, title, body, channel, related_entity_type, related_entity_id, sent_at)
+         VALUES ($1, 'identity_fee_paid',
+                 'Identity Fee Confirmed',
+                 $2, 'push', 'payment', $3, NOW())`,
+        [
+          tenant_id,
+          `Your identity verification fee of $${parseFloat(amount).toFixed(2)} has been confirmed.`,
+          paymentId,
+        ]
+      );
+    } else if (payment_type === 'utility') {
       const { rows: splitRows } = await client.query(
         `UPDATE utility_bill_splits
             SET status     = 'paid',
@@ -395,13 +515,25 @@ async function onChargeSucceeded(charge, eventId) {
     if (utilityBillId) await maybeSettleBill(pool, utilityBillId);
     console.log(`[stripe-webhook] charge succeeded: ${charge.id} ($${amount}) [${payment_type}]`);
 
-    notifyPaymentReceived({
-      paymentId,
-      tenantId: tenant_id,
-      leaseId: lease_id,
-      amount,
-      paymentType: payment_type,
-    }).catch(err => console.error('[stripe-webhook] payment email:', err.message));
+    if (payment_type !== 'identity_verification_fee') {
+      notifyPaymentReceived({
+        paymentId,
+        tenantId: tenant_id,
+        leaseId: lease_id,
+        amount,
+        paymentType: payment_type,
+      }).catch(err => console.error('[stripe-webhook] payment email:', err.message));
+    }
+
+    if (bundledRentPayment) {
+      notifyPaymentReceived({
+        paymentId: bundledRentPayment.id,
+        tenantId: tenant_id,
+        leaseId: lease_id,
+        amount: bundledRentPayment.amount,
+        paymentType: 'rent',
+      }).catch(err => console.error('[stripe-webhook] bundled rent email:', err.message));
+    }
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -598,28 +730,33 @@ async function onSucceeded(pi, eventId) {
         ]
       );
     } else if (payment_type === 'security_deposit') {
-      await activateNativeLeaseAfterDeposit(client, lease_id);
-
-      bundledRentPayment = await insertBundledFirstMonthRent(client, {
-        pi,
-        eventId,
+      bundledRentPayment = await settleSecurityDepositSuccess(client, {
+        paymentId,
         leaseId: lease_id,
         tenantId: tenant_id,
+        amount,
+        pi,
+        eventId,
       });
-      if (bundledRentPayment) {
-        await processSplits(client, bundledRentPayment.id, lease_id, bundledRentPayment.amount, pi);
-      }
+    } else if (payment_type === 'identity_verification_fee') {
+      await syncIdentityFeePaymentSucceeded(client, {
+        id: paymentId,
+        lease_id,
+        tenant_id,
+        stripe_payment_intent_id: pi.id,
+        paid_at: new Date(),
+      });
 
       await client.query(
         `INSERT INTO notifications
            (user_id, type, title, body, channel, related_entity_type, related_entity_id, sent_at)
-         VALUES ($1, 'rent_received',
-                 'Security Deposit Confirmed',
+         VALUES ($1, 'identity_fee_paid',
+                 'Identity Fee Confirmed',
                  $2,
                  'push', 'payment', $3, NOW())`,
         [
           tenant_id,
-          `Your security deposit of $${parseFloat(amount).toFixed(2)} has been confirmed.`,
+          `Your identity verification fee of $${parseFloat(amount).toFixed(2)} has been confirmed.`,
           paymentId,
         ]
       );
@@ -661,13 +798,15 @@ async function onSucceeded(pi, eventId) {
     }
     console.log(`[stripe-webhook] payment succeeded: ${pi.id} ($${amount}) [${payment_type}]`);
 
-    notifyPaymentReceived({
-      paymentId,
-      tenantId: tenant_id,
-      leaseId: lease_id,
-      amount,
-      paymentType: payment_type,
-    }).catch(err => console.error('[stripe-webhook] payment email:', err.message));
+    if (payment_type !== 'identity_verification_fee') {
+      notifyPaymentReceived({
+        paymentId,
+        tenantId: tenant_id,
+        leaseId: lease_id,
+        amount,
+        paymentType: payment_type,
+      }).catch(err => console.error('[stripe-webhook] payment email:', err.message));
+    }
 
     if (bundledRentPayment) {
       notifyPaymentReceived({
@@ -892,3 +1031,4 @@ async function processSplits(client, paymentId, leaseId, totalAmount, pi) {
 }
 
 module.exports = router;
+module.exports.__test = { onChargeSucceeded };

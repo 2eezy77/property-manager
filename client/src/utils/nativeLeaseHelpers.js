@@ -9,6 +9,8 @@ export function deriveNativeLeaseStep(lease) {
       return 'sign_manager';
     case 'awaiting_deposit':
       return 'pay_deposit';
+    case 'awaiting_identity':
+      return 'verify_identity';
     case 'active':
       return 'active';
     default:

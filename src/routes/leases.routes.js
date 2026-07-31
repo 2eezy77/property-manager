@@ -19,6 +19,10 @@ const {
   applyNativeSignature,
   getNativeDocumentForUser,
 } = require('../services/native-lease.service');
+const {
+  createIdentityFeeIntent,
+  createIdentitySession,
+} = require('../services/tenant-identity.service');
 
 const router = express.Router();
 router.use(authenticate);
@@ -29,6 +33,13 @@ function resolveRlDocumentId(lease, bodyDocumentId) {
   const url = lease.document_url || '';
   if (url.startsWith('rl-doc-')) return url.slice('rl-doc-'.length);
   return null;
+}
+
+function isStripeIdentityUnavailable(err) {
+  if (!err.raw && !String(err.type || '').startsWith('Stripe')) return false;
+  return /identity|verification|not enabled|restricted|capabilit|permission|access/i.test(
+    `${err.code || ''} ${err.type || ''} ${err.message || ''} ${err.raw?.message || ''}`
+  );
 }
 
 // ── GET /api/leases/my  — tenant's leases ────────────────────────────────────
@@ -133,6 +144,7 @@ router.get('/', staffOnly, async (req, res) => {
               l.monthly_rent, l.security_deposit, l.document_url, l.pdf_path,
               l.rl_document_id, l.rl_interview_url, l.signing_provider, l.room_type,
               l.created_at, l.updated_at,
+              tiv.status AS identity_status,
               un.unit_number, p.name AS property_name, p.id AS property_id,
               p.address_line1, p.city, p.state, p.zip,
               (u.first_name || ' ' || u.last_name) AS tenant_name, u.email AS tenant_email,
@@ -141,6 +153,7 @@ router.get('/', staffOnly, async (req, res) => {
        JOIN units un ON un.id = l.unit_id
        JOIN properties p ON p.id = un.property_id
        JOIN users u ON u.id = l.tenant_id
+       LEFT JOIN tenant_identity_verifications tiv ON tiv.lease_id = l.id
        LEFT JOIN LATERAL (
          SELECT status FROM signature_envelopes WHERE lease_id = l.id
          ORDER BY created_at DESC LIMIT 1
@@ -200,12 +213,14 @@ router.post('/native', staffOnly, async (req, res) => {
     late_fee_amount,
     late_fee_cap,
     nsf_fee,
+    invite,
   } = req.body;
 
   try {
     const lease = await createNativeLease({
       unitId: unit_id,
       tenantId: tenant_id,
+      invite,
       roomType: room_type,
       startDate: start_date,
       endDate: end_date,
@@ -221,6 +236,9 @@ router.post('/native', staffOnly, async (req, res) => {
         nsfFee: nsf_fee,
       },
     });
+    if (lease?.lease) {
+      return res.status(201).json(lease);
+    }
     res.status(201).json({ lease });
   } catch (err) {
     console.error('[POST /leases/native]', err);
@@ -281,17 +299,69 @@ router.post('/:id/native/sign', anyRole, async (req, res) => {
   }
 });
 
+// ── POST /api/leases/:id/identity/fee  — tenant-paid Stripe Identity fee ───────
+router.post('/:id/identity/fee', tenantOnly, async (req, res) => {
+  try {
+    const result = await createIdentityFeeIntent({
+      leaseId: req.params.id,
+      tenantId: req.user.id,
+    });
+    res.json(result);
+  } catch (err) {
+    if (isStripeIdentityUnavailable(err)) {
+      return res.status(503).json({
+        error: 'STRIPE_IDENTITY_UNAVAILABLE',
+        code: 'STRIPE_IDENTITY_UNAVAILABLE',
+        message: err.message,
+      });
+    }
+    console.error('[POST /leases/:id/identity/fee]', err);
+    res.status(err.statusCode ?? 500).json({
+      error: err.code || err.message,
+      code: err.code,
+      message: err.message,
+    });
+  }
+});
+
+// ── POST /api/leases/:id/identity/session  — hosted Stripe Identity URL ────────
+router.post('/:id/identity/session', tenantOnly, async (req, res) => {
+  try {
+    const result = await createIdentitySession({
+      leaseId: req.params.id,
+      tenantId: req.user.id,
+    });
+    res.json(result);
+  } catch (err) {
+    if (isStripeIdentityUnavailable(err)) {
+      return res.status(503).json({
+        error: 'STRIPE_IDENTITY_UNAVAILABLE',
+        code: 'STRIPE_IDENTITY_UNAVAILABLE',
+        message: err.message,
+      });
+    }
+    console.error('[POST /leases/:id/identity/session]', err);
+    res.status(err.statusCode ?? 500).json({
+      error: err.code || err.message,
+      code: err.code,
+      message: err.message,
+    });
+  }
+});
+
 // ── GET /api/leases/:id ───────────────────────────────────────────────────────
 router.get('/:id', anyRole, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT l.*, un.unit_number, p.name AS property_name,
               p.address_line1, p.city, p.state, p.zip,
+              tiv.status AS identity_status,
               (u.first_name || ' ' || u.last_name) AS tenant_name, u.email AS tenant_email
        FROM leases l
        JOIN units un ON un.id = l.unit_id
        JOIN properties p ON p.id = un.property_id
        JOIN users u ON u.id = l.tenant_id
+       LEFT JOIN tenant_identity_verifications tiv ON tiv.lease_id = l.id
        WHERE l.id = $1`,
       [req.params.id]
     );

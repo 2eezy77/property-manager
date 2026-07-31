@@ -351,10 +351,14 @@ const REQUIRED_WEBHOOK_EVENTS = [
   'payment_intent.canceled',
 ];
 
-/** Connect payroll + dispute notifications — sync via npm run stripe:webhook:sync */
+/** Connect payroll, dispute, and Identity verification — sync via npm run stripe:webhook:sync */
 const EXTRA_WEBHOOK_EVENTS = [
   'charge.dispute.created',
   'account.updated',
+  'identity.verification_session.verified',
+  'identity.verification_session.requires_input',
+  'identity.verification_session.canceled',
+  'identity.verification_session.processing',
 ];
 
 const ALL_WEBHOOK_EVENTS = [...REQUIRED_WEBHOOK_EVENTS, ...EXTRA_WEBHOOK_EVENTS];
@@ -514,6 +518,26 @@ async function createCardPaymentIntent({
   });
 }
 
+async function createIdentityVerificationSession({ returnUrl, metadata = {} }) {
+  return stripe.identity.verificationSessions.create({
+    type: 'document',
+    options: {
+      document: {
+        allowed_types: ['driving_license'],
+        require_id_number: true,
+        require_matching_selfie: true,
+      },
+    },
+    provided_details: metadata.email ? { email: metadata.email } : undefined,
+    metadata,
+    return_url: returnUrl,
+  });
+}
+
+async function retrieveIdentityVerificationSession(id, { expand = ['verified_outputs'] } = {}) {
+  return stripe.identity.verificationSessions.retrieve(id, { expand });
+}
+
 async function retrievePaymentIntent(paymentIntentId) {
   return stripe.paymentIntents.retrieve(paymentIntentId);
 }
@@ -552,6 +576,8 @@ module.exports = {
   probeAchPaymentIntentAvailable,
   createCashAppPaymentIntent,
   createCardPaymentIntent,
+  createIdentityVerificationSession,
+  retrieveIdentityVerificationSession,
   retrievePaymentIntent,
   cancelPaymentIntent,
 };

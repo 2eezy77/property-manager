@@ -41,6 +41,7 @@ Open `.env` and fill in every `REPLACE_ME` value:
 | `JWT_ACCESS_SECRET` | Run: `node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"` |
 | `JWT_REFRESH_SECRET` | Run the same command again (must be different) |
 | `ENCRYPTION_KEY` | Run: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
+| `IDENTITY_PII_ENCRYPTION_KEY` | Run: `openssl rand -base64 32` |
 | `PLAID_CLIENT_ID` | [dashboard.plaid.com](https://dashboard.plaid.com) → Team Settings → Keys |
 | `PLAID_SECRET` | Same page, copy the **Sandbox** secret |
 | `STRIPE_SECRET_KEY` | [dashboard.stripe.com](https://dashboard.stripe.com) → Developers → API keys → Secret key |

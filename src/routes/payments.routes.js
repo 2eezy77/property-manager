@@ -364,7 +364,7 @@ router.delete('/bank-accounts/:id', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/balance', Guards.tenantOnly, async (req, res) => {
   try {
-    // Active lease for rent, or awaiting-deposit native lease so tenants can finish deposit payment.
+    // Active lease for rent, or signed native lease still finishing deposit/identity activation.
     const { rows: leaseRows } = await pool.query(
       `SELECT l.id AS lease_id, l.status, l.monthly_rent, l.grace_period_days,
               u.unit_number, p.name AS property_name,
@@ -373,7 +373,7 @@ router.get('/balance', Guards.tenantOnly, async (req, res) => {
          JOIN units      u ON u.id = l.unit_id
          JOIN properties p ON p.id = u.property_id
         WHERE l.tenant_id = $1
-          AND l.status IN ('active', 'awaiting_deposit')
+          AND l.status IN ('active', 'awaiting_deposit', 'awaiting_identity')
         ORDER BY CASE WHEN l.status = 'active' THEN 0 ELSE 1 END,
                  l.start_date DESC
         LIMIT 1`,
@@ -546,7 +546,7 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
         WHERE id = $1
           AND tenant_id = $2
           AND (
-            ($3 = 'security_deposit' AND status IN ('active', 'awaiting_deposit'))
+            ($3 = 'security_deposit' AND status IN ('active', 'awaiting_deposit', 'awaiting_identity'))
             OR ($3 = 'rent' AND status = 'active')
           )`,
       [leaseId, req.user.id, paymentType]

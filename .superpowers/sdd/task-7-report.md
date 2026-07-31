@@ -1,4 +1,4 @@
-# Task 7 Report: Card on ongoing tenant Payments + Autopay guard
+# Task 7 Report: Wire full QA script + env docs
 
 ## STATUS
 
@@ -6,17 +6,15 @@ Complete.
 
 ## COMMITS
 
-- `feat(payments): card Payment Element for tenant rent and deposit`
+- `test(identity): invite + activation gate QA and env docs`
 
 ## TEST
 
-- RED: `node scripts/test-payments-card-ui.js` failed before implementation on missing `CardPaymentForm` import in `Payments.jsx`.
-- GREEN: `node scripts/test-payments-card-ui.js` passed.
-- Syntax: `node --check src/routes/payments.routes.js && node --check scripts/test-payments-card-ui.js` passed.
-- Build: `npm run build --prefix client` passed; Vite emitted the existing chunk-size warning.
-- Smoke: `set -a; . ./.env.local; set +a; npm run test:native-lease` passed 12/12, including card security deposit PaymentIntent creation while the lease is `awaiting_deposit`.
+- `npm run test:identity-crypto` passed (`OK identity crypto`).
+- `npm run test:lease-invite-identity` passed 24/24, including invite create, tenant password setup, native signing, identity fee/session, verified-before-deposit activation, and deposit-before-identity `awaiting_identity` then activation.
+- `npm run test:identity:all` passed, verifying the new aggregate package script.
+- `npm run test:native-lease:all` passed, including `test-native-lease` 15/15 with verified identity seeded before deposit activation.
 
 ## CONCERNS
 
-- No interactive browser executor is available in this subagent context, so UI verification is by focused source regression plus Vite build rather than a recorded browser walkthrough.
-- Card confirmation still depends on normal Stripe confirmation/webhook settlement to update final ledger status after the Payment Element succeeds.
+- Stripe Identity hosted-session assertions depend on Stripe Identity being available; the QA script skips only the live hosted-session portions if Stripe reports Identity/account restrictions, while still simulating verified identity for the activation gate.

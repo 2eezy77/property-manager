@@ -5,6 +5,7 @@
 
 const assert = require('assert');
 const pool = require('../src/db/client');
+const { activateNativeLeaseAfterDeposit } = require('../src/services/native-lease-activate.service');
 const {
   createReporter,
   req,
@@ -74,6 +75,57 @@ async function findSigningFee(leaseId) {
     [leaseId]
   );
   return rows[0] || null;
+}
+
+async function seedVerifiedIdentity(leaseId, tenantId) {
+  const { rows } = await pool.query(
+    `INSERT INTO tenant_identity_verifications
+       (lease_id, tenant_id, status, verified_at, legal_name)
+     VALUES ($1, $2, 'verified', NOW(), 'Local Tenant')
+     ON CONFLICT (lease_id) DO UPDATE
+       SET tenant_id = EXCLUDED.tenant_id,
+           status = 'verified',
+           verified_at = COALESCE(tenant_identity_verifications.verified_at, NOW()),
+           legal_name = EXCLUDED.legal_name,
+           updated_at = NOW()
+     RETURNING *`,
+    [leaseId, tenantId]
+  );
+  return rows[0];
+}
+
+async function settlePendingDepositAndActivate(leaseId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [payment] } = await client.query(
+      `UPDATE payments
+          SET status = 'succeeded',
+              paid_at = COALESCE(paid_at, NOW()),
+              updated_at = NOW()
+        WHERE id = (
+          SELECT id
+            FROM payments
+           WHERE lease_id = $1
+             AND payment_type = 'security_deposit'
+             AND status IN ('pending', 'processing')
+           ORDER BY created_at DESC
+           LIMIT 1
+           FOR UPDATE
+        )
+        RETURNING id`,
+      [leaseId]
+    );
+    assert(payment, 'pending security deposit payment should exist before activation');
+    const activation = await activateNativeLeaseAfterDeposit(client, leaseId);
+    await client.query('COMMIT');
+    return activation;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function main() {
@@ -181,6 +233,11 @@ async function main() {
     requireStatus('Rocket Lawyer native gate', gateRes, 400);
     assert.match(gateRes.body.error, /native Montero signing/i);
     reporter.ok('Rocket Lawyer document creation is blocked for native lease');
+
+    await seedVerifiedIdentity(leaseId, tenant.id);
+    const activation = await settlePendingDepositAndActivate(leaseId);
+    assert.strictEqual(activation.status, 'active');
+    reporter.ok('verified tenant identity allows security deposit settlement to activate lease');
   });
 
   reporter.printSummary('NATIVE LEASE API');
