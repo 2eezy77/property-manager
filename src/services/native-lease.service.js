@@ -9,6 +9,10 @@ const {
   flattenSignaturesOntoPdf,
 } = require('./lease-pdf.service');
 const { ensureLeaseSigningFee } = require('./lease-signing-pay.service');
+const {
+  inviteTenantForLease,
+  sendLeaseInviteEmail,
+} = require('./tenant-invite.service');
 
 const DOCS_DIR = path.resolve(__dirname, '../../documents');
 
@@ -106,6 +110,7 @@ async function loadLeaseForPdf(client, leaseId) {
 async function createNativeLease({
   unitId,
   tenantId,
+  invite,
   roomType,
   startDate,
   endDate,
@@ -114,7 +119,12 @@ async function createNativeLease({
   createdBy,
 }) {
   required(unitId, 'unitId is required');
-  required(tenantId, 'tenantId is required');
+  if (tenantId && invite) {
+    throw httpError('Provide either tenantId or invite, not both.', 400, 'TENANT_OR_INVITE_REQUIRED');
+  }
+  if (!tenantId && !invite) {
+    required(tenantId, 'tenantId is required');
+  }
   required(roomType, 'roomType is required');
   required(startDate, 'startDate is required');
   required(endDate, 'endDate is required');
@@ -131,7 +141,33 @@ async function createNativeLease({
   const documentUrl = overrideValue(overrides, 'documentUrl', 'document_url');
   const nsfFee = overrideValue(overrides, 'nsfFee', 'nsf_fee');
 
-  return withTransaction(async (client) => {
+  let invitedTenant = null;
+  const lease = await withTransaction(async (client) => {
+    let effectiveTenantId = tenantId;
+    if (invite) {
+      const { rows: orgRows } = await client.query(
+        `SELECT p.org_id
+           FROM units un
+           JOIN properties p ON p.id = un.property_id
+          WHERE un.id = $1
+          LIMIT 1`,
+        [unitId]
+      );
+      const orgId = orgRows[0]?.org_id;
+      if (!orgId) throw httpError('Unit organization not found.', 400, 'ORG_REQUIRED');
+
+      const inviteResult = await inviteTenantForLease({
+        orgId,
+        email: invite.email,
+        firstName: invite.first_name ?? invite.firstName,
+        lastName: invite.last_name ?? invite.lastName,
+        phone: invite.phone,
+        db: client,
+      });
+      invitedTenant = inviteResult.tenant;
+      effectiveTenantId = invitedTenant.id;
+    }
+
     const { rows } = await client.query(
       `INSERT INTO leases
          (unit_id, tenant_id, status, start_date, end_date, monthly_rent,
@@ -142,7 +178,7 @@ async function createNativeLease({
        RETURNING *`,
       [
         unitId,
-        tenantId,
+        effectiveTenantId,
         startDate,
         endDate,
         coalesceMoney(monthlyRent, defaults.monthlyRent),
@@ -160,6 +196,20 @@ async function createNativeLease({
     );
     return rows[0];
   });
+
+  if (!invitedTenant) return lease;
+
+  const inviteEmail = await sendLeaseInviteEmail({
+    user: invitedTenant,
+    orgId: invitedTenant.org_id,
+    leaseId: lease.id,
+  });
+
+  return {
+    lease,
+    inviteSent: !!inviteEmail.sent,
+    tenant: invitedTenant,
+  };
 }
 
 async function generateAndAttachPdf(leaseId) {

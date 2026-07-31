@@ -46,6 +46,24 @@ async function accessiblePropertyIds(userId, userRole) {
   return rows.map(r => r.id);
 }
 
+async function resolveOrgIdForUser(userId) {
+  const { rows } = await pool.query(
+    `SELECT COALESCE(
+              (SELECT org_id FROM users WHERE id = $1 AND org_id IS NOT NULL),
+              (
+                SELECT p.org_id
+                  FROM property_assignments pa
+                  JOIN properties p ON p.id = pa.property_id
+                 WHERE pa.user_id = $1
+                 ORDER BY p.created_at ASC
+                 LIMIT 1
+              )
+            ) AS org_id`,
+    [userId]
+  );
+  return rows[0]?.org_id || null;
+}
+
 const LEASE_OFFBOARD_SELECT = `
   l.id AS offboard_lease_id,
   l.offboarding_started_at,
@@ -214,14 +232,77 @@ router.get('/onboarding', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const propIds = await accessiblePropertyIds(req.user.id, req.user.role);
-    if (!propIds.length) return res.json({ tenants: [] });
 
-    const { status, property_id } = req.query;
+    const { status, property_id, for_lease_create } = req.query;
+    const forLeaseCreate = for_lease_create === '1' || for_lease_create === 'true';
+    const orgId = forLeaseCreate ? await resolveOrgIdForUser(req.user.id) : null;
+    if (!propIds.length && !orgId) return res.json({ tenants: [] });
+
     let conditions = ['un.property_id = ANY($1)'];
     let params = [propIds];
 
     if (status)      { params.push(status);      conditions.push(`l.status = $${params.length}`); }
     if (property_id) { params.push(property_id); conditions.push(`un.property_id = $${params.length}`); }
+
+    if (forLeaseCreate && orgId) {
+      params.push(orgId);
+      const orgParam = `$${params.length}`;
+      const propertyFilterAllowsLeaseLess =
+        !property_id || propIds.map(String).includes(String(property_id));
+      const includeLeaseLess = !status && propertyFilterAllowsLeaseLess;
+
+      const { rows } = await pool.query(
+        `SELECT *
+           FROM (
+             SELECT DISTINCT
+                    u.id, u.first_name, u.last_name, u.email, u.phone,
+                    u.is_active, u.created_at,
+                    l.id AS lease_id, l.status::text AS lease_status,
+                    l.start_date, l.end_date, l.monthly_rent,
+                    ${LEASE_OFFBOARD_SELECT},
+                    un.unit_number, p.name AS property_name, p.id AS property_id,
+                    (SELECT SUM(amount) FROM payments
+                     WHERE tenant_id = u.id AND status IN ('failed','pending')
+                       AND payment_type = 'rent') AS outstanding_balance,
+                    ${TENANT_ONBOARDING_SELECT}
+             FROM users u
+             JOIN leases l ON l.tenant_id = u.id
+             JOIN units un ON un.id = l.unit_id
+             JOIN properties p ON p.id = un.property_id
+             WHERE u.role = 'tenant' AND ${conditions.join(' AND ')}
+             ${includeLeaseLess ? `
+             UNION ALL
+             SELECT
+                    u.id, u.first_name, u.last_name, u.email, u.phone,
+                    u.is_active, u.created_at,
+                    NULL::uuid AS lease_id, NULL::text AS lease_status,
+                    NULL::date AS start_date, NULL::date AS end_date, NULL::numeric AS monthly_rent,
+                    NULL::uuid AS offboard_lease_id,
+                    NULL::timestamptz AS offboarding_started_at,
+                    NULL::timestamptz AS offboard_forwarding_confirmed_at,
+                    NULL::timestamptz AS offboard_keys_returned_at,
+                    NULL::timestamptz AS offboard_final_charges_ack_at,
+                    NULL::timestamptz AS offboard_moveout_confirmed_at,
+                    NULL::timestamptz AS offboard_vivint_revoked_at,
+                    NULL::timestamptz AS offboard_bank_unlinked_at,
+                    NULL::timestamptz AS offboard_utilities_settled_at,
+                    NULL::timestamptz AS offboard_portal_disabled_at,
+                    NULL::text AS unit_number, NULL::text AS property_name, NULL::uuid AS property_id,
+                    (SELECT SUM(amount) FROM payments
+                     WHERE tenant_id = u.id AND status IN ('failed','pending')
+                       AND payment_type = 'rent') AS outstanding_balance,
+                    ${TENANT_ONBOARDING_SELECT}
+             FROM users u
+             WHERE u.role = 'tenant'
+               AND u.org_id = ${orgParam}
+               AND u.is_active = TRUE
+               AND NOT EXISTS (SELECT 1 FROM leases l2 WHERE l2.tenant_id = u.id)` : ''}
+           ) tenant_rows
+          ORDER BY last_name NULLS LAST, first_name NULLS LAST, email`,
+        params
+      );
+      return res.json({ tenants: rows.map(attachCheckin) });
+    }
 
     const { rows } = await pool.query(
       `SELECT DISTINCT

@@ -200,12 +200,14 @@ router.post('/native', staffOnly, async (req, res) => {
     late_fee_amount,
     late_fee_cap,
     nsf_fee,
+    invite,
   } = req.body;
 
   try {
     const lease = await createNativeLease({
       unitId: unit_id,
       tenantId: tenant_id,
+      invite,
       roomType: room_type,
       startDate: start_date,
       endDate: end_date,
@@ -221,6 +223,9 @@ router.post('/native', staffOnly, async (req, res) => {
         nsfFee: nsf_fee,
       },
     });
+    if (lease?.lease) {
+      return res.status(201).json(lease);
+    }
     res.status(201).json({ lease });
   } catch (err) {
     console.error('[POST /leases/native]', err);
