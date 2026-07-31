@@ -23,7 +23,10 @@ const { computeCardCashAppFee } = require('../src/services/payment-processing-fe
 const {
   applyIdentitySessionUpdate,
   isIdentityVerified,
+  tryActivateAfterIdentity,
 } = require('../src/services/tenant-identity.service');
+const { activateNativeLeaseAfterDeposit } = require('../src/services/native-lease-activate.service');
+const identityVerificationAlert = require('../src/services/email-templates/identityVerificationAlert');
 
 const STAFF_EMAIL = process.env.NATIVE_LEASE_STAFF_EMAIL || 'manager@example.com';
 const UNIT_ID = process.env.NATIVE_LEASE_UNIT_ID || '70ecac50-b98d-4243-96a9-5da48a1f7192';
@@ -91,6 +94,99 @@ async function setTenantPassword(userId) {
   );
 }
 
+function createActivationClient({ status = 'awaiting_deposit', identityStatus = null } = {}) {
+  const state = {
+    lease: {
+      id: 'lease-activation-test',
+      status,
+      signing_provider: 'native',
+      deposit_paid_at: null,
+    },
+    identity: identityStatus ? { status: identityStatus } : null,
+  };
+
+  return {
+    state,
+    async query(sql, params) {
+      assert.deepStrictEqual(params, ['lease-activation-test']);
+      const normalized = sql.replace(/\s+/g, ' ').trim().toLowerCase();
+
+      if (normalized.startsWith('select') && normalized.includes('from leases')) {
+        return { rows: [state.lease] };
+      }
+
+      if (normalized.startsWith('select') && normalized.includes('from tenant_identity_verifications')) {
+        return { rows: state.identity ? [state.identity] : [] };
+      }
+
+      if (normalized.startsWith('update leases') && normalized.includes("status = 'awaiting_identity'")) {
+        if (state.lease.signing_provider !== 'native') return { rows: [] };
+        state.lease.status = 'awaiting_identity';
+        state.lease.deposit_paid_at = state.lease.deposit_paid_at || new Date();
+        return { rows: [{ id: state.lease.id, status: state.lease.status }] };
+      }
+
+      if (normalized.startsWith('update leases') && normalized.includes("status = 'active'")) {
+        if (state.lease.signing_provider !== 'native') return { rows: [] };
+        if (state.lease.status !== 'awaiting_deposit' && state.lease.status !== 'awaiting_identity') {
+          return { rows: [] };
+        }
+        state.lease.status = 'active';
+        state.lease.deposit_paid_at = state.lease.deposit_paid_at || new Date();
+        return { rows: [{ id: state.lease.id, status: state.lease.status }] };
+      }
+
+      throw new Error(`Unexpected activation query: ${sql}`);
+    },
+  };
+}
+
+async function runActivationGateChecks(reporter) {
+  const noIdentity = createActivationClient({ identityStatus: null });
+  const noIdentityResult = await activateNativeLeaseAfterDeposit(noIdentity, 'lease-activation-test');
+  assert.strictEqual(noIdentityResult.status, 'awaiting_identity');
+  assert.strictEqual(noIdentity.state.lease.status, 'awaiting_identity');
+  assert(noIdentity.state.lease.deposit_paid_at, 'deposit timestamp should be set while awaiting identity');
+  reporter.ok('deposit success without verified identity moves native lease to awaiting_identity');
+
+  const unverified = createActivationClient({ identityStatus: 'requires_input' });
+  const unverifiedResult = await activateNativeLeaseAfterDeposit(unverified, 'lease-activation-test');
+  assert.strictEqual(unverifiedResult.status, 'awaiting_identity');
+  reporter.ok('deposit success with incomplete identity keeps native lease awaiting_identity');
+
+  const verified = createActivationClient({ identityStatus: 'verified' });
+  const verifiedResult = await activateNativeLeaseAfterDeposit(verified, 'lease-activation-test');
+  assert.strictEqual(verifiedResult.status, 'active');
+  assert(verified.state.lease.deposit_paid_at, 'active transition should set deposit timestamp');
+  reporter.ok('deposit success with verified identity activates native lease');
+
+  const identityFirst = createActivationClient({ status: 'awaiting_deposit', identityStatus: 'verified' });
+  const identityFirstResult = await tryActivateAfterIdentity(identityFirst, 'lease-activation-test');
+  assert.strictEqual(identityFirstResult, null);
+  assert.strictEqual(identityFirst.state.lease.status, 'awaiting_deposit');
+  reporter.ok('identity verified before deposit leaves native lease awaiting_deposit');
+
+  const awaitingIdentity = createActivationClient({ status: 'awaiting_identity', identityStatus: 'verified' });
+  const awaitingIdentityResult = await tryActivateAfterIdentity(awaitingIdentity, 'lease-activation-test');
+  assert.strictEqual(awaitingIdentityResult.status, 'active');
+  assert.strictEqual(awaitingIdentity.state.lease.status, 'active');
+  reporter.ok('identity verified after deposit activates native lease');
+}
+
+function runIdentityAlertTemplateChecks(reporter) {
+  const { html, text } = identityVerificationAlert.render({
+    tenantName: 'Invited Tenant',
+    tenantEmail: 'tenant@example.com',
+    status: 'requires_input',
+    reason: 'SSN 123-45-6789 could not be verified',
+    unitLabel: 'Unit 1',
+    propertyName: '743 A Ave',
+  });
+  assert(!html.includes('123-45-6789'), 'HTML alert should redact SSN-like strings');
+  assert(!text.includes('123-45-6789'), 'text alert should redact SSN-like strings');
+  reporter.ok('identity failure staff alert redacts SSN-like strings');
+}
+
 async function seedLeaseLessTenant(orgId) {
   const email = uniqueInviteEmail();
   const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
@@ -106,6 +202,15 @@ async function seedLeaseLessTenant(orgId) {
 
 async function main() {
   const reporter = createReporter();
+
+  await section('Native activation gate', async () => {
+    await runActivationGateChecks(reporter);
+    runIdentityAlertTemplateChecks(reporter);
+  });
+  if (process.env.LEASE_INVITE_IDENTITY_ACTIVATION_ONLY === '1') {
+    reporter.printSummary('LEASE INVITE IDENTITY ACTIVATION');
+    return;
+  }
 
   await section('Lease create tenant invite', async () => {
     const staffToken = await login(STAFF_EMAIL, MANAGER_PW || PW);

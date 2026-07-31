@@ -61,7 +61,7 @@ async function prepareTenantCharge(client, {
       WHERE id = $1
         AND tenant_id = $2
         AND (
-          ($3 = 'security_deposit' AND status IN ('active', 'awaiting_deposit'))
+          ($3 = 'security_deposit' AND status IN ('active', 'awaiting_deposit', 'awaiting_identity'))
           OR ($3 = 'rent' AND status = 'active')
         )`,
     [leaseId, tenantId, paymentType]

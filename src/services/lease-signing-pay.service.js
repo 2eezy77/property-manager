@@ -23,7 +23,7 @@ const MANAGER_EMAIL = 'konstantinhazlett@yahoo.com';
 const LEASE_SIGNING_AMOUNT_CENTS = 35000;
 const RENT_MONTHS_REQUIRED = 3;
 
-const SIGNED_LEASE_STATUSES = new Set(['awaiting_deposit', 'active', 'terminated', 'expired']);
+const SIGNED_LEASE_STATUSES = new Set(['awaiting_deposit', 'awaiting_identity', 'active', 'terminated', 'expired']);
 const ENDED_LEASE_STATUSES = new Set(['terminated', 'expired']);
 
 async function resolveOrgManager(orgId) {

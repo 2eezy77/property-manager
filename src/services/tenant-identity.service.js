@@ -5,6 +5,9 @@ const {
   feeMetadata,
 } = require('./payment-processing-fee.service');
 const { encryptSsn, ssnLast4 } = require('./identity-pii-crypto.service');
+const { activateNativeLeaseAfterDeposit } = require('./native-lease-activate.service');
+const { getOperationalStaff, sendOperationalStaffEmail } = require('./email.service');
+const identityVerificationAlert = require('./email-templates/identityVerificationAlert');
 
 const IDENTITY_FEE_BASE_CENTS = 150;
 const IDENTITY_FEE_GRACE_HOURS = 72;
@@ -34,6 +37,10 @@ function isWithinGrace(value, now = new Date()) {
   const paidAt = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(paidAt.getTime())) return false;
   return now.getTime() - paidAt.getTime() <= IDENTITY_FEE_GRACE_MS;
+}
+
+function isAlertStatus(status) {
+  return ['requires_input', 'canceled', 'failed'].includes(status);
 }
 
 async function withTransaction(fn) {
@@ -318,6 +325,7 @@ async function isIdentityVerified(leaseId) {
 function statusFromSession(session) {
   if (session.status === 'verified') return 'verified';
   if (session.status === 'processing') return 'processing';
+  if (session.status === 'requires_input') return 'requires_input';
   if (session.status === 'canceled') return 'canceled';
   if (session.last_error) return 'failed';
   return 'requires_input';
@@ -337,8 +345,8 @@ function legalNameFromOutputs(outputs) {
   return [outputs?.first_name, outputs?.last_name].filter(Boolean).join(' ').trim() || null;
 }
 
-async function rowForSession(session) {
-  const { rows } = await pool.query(
+async function rowForSession(session, client = pool) {
+  const { rows } = await client.query(
     `SELECT *
        FROM tenant_identity_verifications
       WHERE stripe_verification_session_id = $1`,
@@ -349,8 +357,8 @@ async function rowForSession(session) {
   const leaseId = session.metadata?.lease_id;
   const tenantId = session.metadata?.tenant_id;
   if (!UUID_RE.test(leaseId || '') || !UUID_RE.test(tenantId || '')) return null;
-  const row = await ensureIdentityRow(leaseId, tenantId);
-  await pool.query(
+  const row = await ensureIdentityRow(leaseId, tenantId, client);
+  await client.query(
     `UPDATE tenant_identity_verifications
         SET stripe_verification_session_id = $1,
             updated_at = NOW()
@@ -360,54 +368,186 @@ async function rowForSession(session) {
   return { ...row, stripe_verification_session_id: session.id };
 }
 
-async function applyIdentitySessionUpdate(session) {
-  const row = await rowForSession(session);
-  if (!row) return null;
-
-  const outputs = session.verified_outputs || {};
-  const address = addressFromOutputs(outputs);
-  const idNumber = outputs.id_number || outputs.ssn || null;
-  const ssnDigits = idNumber ? String(idNumber).replace(/\D/g, '') : '';
-  const encrypted = ssnDigits.length === 9 ? encryptSsn(ssnDigits) : null;
-  const status = statusFromSession(session);
-
-  const { rows } = await pool.query(
-    `UPDATE tenant_identity_verifications
-        SET status = $2::varchar,
-            verified_at = CASE WHEN $2::varchar = 'verified' THEN COALESCE(verified_at, NOW()) ELSE verified_at END,
-            last_error_code = $3,
-            last_error_reason = $4,
-            legal_name = COALESCE($5, legal_name),
-            date_of_birth = COALESCE($6::date, date_of_birth),
-            address_line1 = COALESCE($7, address_line1),
-            address_line2 = COALESCE($8, address_line2),
-            address_city = COALESCE($9, address_city),
-            address_state = COALESCE($10, address_state),
-            address_postal = COALESCE($11, address_postal),
-            ssn_ciphertext = COALESCE($12, ssn_ciphertext),
-            ssn_last4 = COALESCE($13, ssn_last4),
-            encryption_key_id = COALESCE($14, encryption_key_id),
-            updated_at = NOW()
+async function tryActivateAfterIdentity(client, leaseId) {
+  const { rows: [lease] } = await client.query(
+    `SELECT id, status, signing_provider, deposit_paid_at
+       FROM leases
       WHERE id = $1
+      FOR UPDATE`,
+    [leaseId]
+  );
+  if (!lease || lease.signing_provider !== 'native') return null;
+  if (lease.status !== 'awaiting_identity' && !lease.deposit_paid_at) return null;
+  return activateNativeLeaseAfterDeposit(client, leaseId);
+}
+
+async function syncIdentityFeePaymentSucceeded(client, payment) {
+  if (!payment?.id) return null;
+  const paidAt = payment.paid_at || new Date();
+  const { rows } = await client.query(
+    `UPDATE tenant_identity_verifications
+        SET fee_payment_id = COALESCE(fee_payment_id, $1),
+            stripe_fee_payment_intent_id = COALESCE(stripe_fee_payment_intent_id, $2),
+            fee_paid_at = COALESCE(fee_paid_at, $3),
+            updated_at = NOW()
+      WHERE lease_id = $4
+        AND tenant_id = $5
       RETURNING *`,
     [
-      row.id,
-      status,
-      session.last_error?.code || null,
-      session.last_error?.reason || session.last_error?.message || null,
-      legalNameFromOutputs(outputs),
-      dateOfBirthFromOutputs(outputs),
-      address.line1 || null,
-      address.line2 || null,
-      address.city || null,
-      address.state || null,
-      address.postal_code || address.postal || null,
-      encrypted?.ciphertext || null,
-      encrypted ? ssnLast4(ssnDigits) : null,
-      encrypted?.keyId || null,
+      payment.id,
+      payment.stripe_payment_intent_id || null,
+      paidAt,
+      payment.lease_id,
+      payment.tenant_id,
     ]
   );
   return rows[0] || null;
+}
+
+async function identityFailureContext(identityId) {
+  const { rows } = await pool.query(
+    `SELECT tiv.id, tiv.lease_id, tiv.tenant_id, tiv.status,
+            tiv.last_error_code, tiv.last_error_reason, tiv.updated_at,
+            TRIM(CONCAT(u.first_name, ' ', u.last_name)) AS tenant_name,
+            u.email AS tenant_email,
+            un.unit_number,
+            p.name AS property_name,
+            p.org_id
+       FROM tenant_identity_verifications tiv
+       JOIN leases l ON l.id = tiv.lease_id
+       JOIN users u ON u.id = tiv.tenant_id
+       LEFT JOIN units un ON un.id = l.unit_id
+       LEFT JOIN properties p ON p.id = un.property_id
+      WHERE tiv.id = $1`,
+    [identityId]
+  );
+  return rows[0] || null;
+}
+
+async function alreadySentIdentityAlert(identityId) {
+  const { rows } = await pool.query(
+    `SELECT 1
+       FROM notifications
+      WHERE type = 'tenant_identity_verification_alert'
+        AND channel = 'email'
+        AND related_entity_id = $1
+      LIMIT 1`,
+    [identityId]
+  );
+  return rows.length > 0;
+}
+
+async function recordIdentityAlertNotifications({ staff, subject, text, identityId, externalId }) {
+  for (const person of staff) {
+    await pool.query(
+      `INSERT INTO notifications
+         (user_id, type, title, body, channel, related_entity_type, related_entity_id, sent_at, external_id)
+       VALUES ($1, 'tenant_identity_verification_alert', $2, $3, 'email',
+               'tenant_identity_verification', $4, NOW(), $5)`,
+      [person.id, subject, text, identityId, externalId || null]
+    );
+  }
+}
+
+async function notifyIdentityFailure(identityId) {
+  const ctx = await identityFailureContext(identityId);
+  if (!ctx?.org_id || !isAlertStatus(ctx.status)) return { sent: false, skipped: 'not_alertable' };
+  if (await alreadySentIdentityAlert(identityId)) return { sent: false, skipped: 'already_sent' };
+
+  const tenantName = ctx.tenant_name || ctx.tenant_email || 'Tenant';
+  const unitLabel = ctx.unit_number ? `Unit ${ctx.unit_number}` : 'assigned unit';
+  const subject = `[Action needed] Identity verification ${ctx.status.replace(/_/g, ' ')} - ${tenantName}`;
+  const { html, text } = identityVerificationAlert.render({
+    tenantName,
+    tenantEmail: ctx.tenant_email,
+    status: ctx.status,
+    reason: ctx.last_error_reason || ctx.last_error_code || null,
+    unitLabel,
+    propertyName: ctx.property_name || '743 A Ave',
+  });
+
+  const { all: staff } = await getOperationalStaff(pool, ctx.org_id);
+  if (!staff.length) return { sent: false, skipped: 'no_staff' };
+
+  const result = await sendOperationalStaffEmail(pool, {
+    orgId: ctx.org_id,
+    subject,
+    text,
+    html,
+  });
+  if (result.sent) {
+    await recordIdentityAlertNotifications({
+      staff,
+      subject,
+      text,
+      identityId,
+      externalId: result.id,
+    });
+  }
+  return result;
+}
+
+async function applyIdentitySessionUpdate(session) {
+  const updated = await withTransaction(async (client) => {
+    const row = await rowForSession(session, client);
+    if (!row) return null;
+
+    const outputs = session.verified_outputs || {};
+    const address = addressFromOutputs(outputs);
+    const idNumber = outputs.id_number || outputs.ssn || null;
+    const ssnDigits = idNumber ? String(idNumber).replace(/\D/g, '') : '';
+    const encrypted = ssnDigits.length === 9 ? encryptSsn(ssnDigits) : null;
+    const status = statusFromSession(session);
+
+    const { rows } = await client.query(
+      `UPDATE tenant_identity_verifications
+          SET status = $2::varchar,
+              verified_at = CASE WHEN $2::varchar = 'verified' THEN COALESCE(verified_at, NOW()) ELSE verified_at END,
+              last_error_code = $3,
+              last_error_reason = $4,
+              legal_name = COALESCE($5, legal_name),
+              date_of_birth = COALESCE($6::date, date_of_birth),
+              address_line1 = COALESCE($7, address_line1),
+              address_line2 = COALESCE($8, address_line2),
+              address_city = COALESCE($9, address_city),
+              address_state = COALESCE($10, address_state),
+              address_postal = COALESCE($11, address_postal),
+              ssn_ciphertext = COALESCE($12, ssn_ciphertext),
+              ssn_last4 = COALESCE($13, ssn_last4),
+              encryption_key_id = COALESCE($14, encryption_key_id),
+              updated_at = NOW()
+        WHERE id = $1
+        RETURNING *`,
+      [
+        row.id,
+        status,
+        session.last_error?.code || null,
+        session.last_error?.reason || session.last_error?.message || null,
+        legalNameFromOutputs(outputs),
+        dateOfBirthFromOutputs(outputs),
+        address.line1 || null,
+        address.line2 || null,
+        address.city || null,
+        address.state || null,
+        address.postal_code || address.postal || null,
+        encrypted?.ciphertext || null,
+        encrypted ? ssnLast4(ssnDigits) : null,
+        encrypted?.keyId || null,
+      ]
+    );
+    const identity = rows[0] || null;
+    if (identity?.status === 'verified') {
+      await tryActivateAfterIdentity(client, identity.lease_id);
+    }
+    return identity;
+  });
+
+  if (updated && isAlertStatus(updated.status)) {
+    notifyIdentityFailure(updated.id).catch((err) => {
+      console.error('[tenant-identity] failure alert:', err.message);
+    });
+  }
+  return updated;
 }
 
 module.exports = {
@@ -418,4 +558,7 @@ module.exports = {
   createIdentitySession,
   isIdentityVerified,
   applyIdentitySessionUpdate,
+  tryActivateAfterIdentity,
+  notifyIdentityFailure,
+  syncIdentityFeePaymentSucceeded,
 };
