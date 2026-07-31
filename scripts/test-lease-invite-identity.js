@@ -8,6 +8,7 @@
 
 const assert = require('assert');
 const crypto = require('crypto');
+const bcrypt = require('bcrypt');
 const pool = require('../src/db/client');
 const {
   createReporter,
@@ -51,12 +52,56 @@ async function loadTenant(email) {
   return rows[0] || null;
 }
 
+async function loadStaffOrgId(email) {
+  const { rows } = await pool.query(
+    `SELECT COALESCE(
+              u.org_id,
+              (
+                SELECT p.org_id
+                  FROM property_assignments pa
+                  JOIN properties p ON p.id = pa.property_id
+                 WHERE pa.user_id = u.id
+                 ORDER BY p.created_at ASC
+                 LIMIT 1
+              )
+            ) AS org_id
+       FROM users u
+      WHERE LOWER(u.email) = LOWER($1)
+      LIMIT 1`,
+    [email]
+  );
+  return rows[0]?.org_id || null;
+}
+
+async function seedLeaseLessTenant(orgId) {
+  const email = uniqueInviteEmail();
+  const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
+  const { rows } = await pool.query(
+    `INSERT INTO users
+       (email, password_hash, role, first_name, last_name, phone, org_id, email_verified_at)
+     VALUES ($1, $2, 'tenant', $3, $4, $5, $6, NULL)
+     RETURNING id, email, org_id`,
+    [email, passwordHash, 'Leaseless', 'Picker', '757-555-0100', orgId]
+  );
+  return rows[0];
+}
+
 async function main() {
   const reporter = createReporter();
 
   await section('Lease create tenant invite', async () => {
     const staffToken = await login(STAFF_EMAIL, MANAGER_PW || PW);
     reporter.ok('staff can log in');
+
+    const orgId = await loadStaffOrgId(STAFF_EMAIL);
+    assert(orgId, 'staff user should resolve to an org_id');
+    const leaseLessTenant = await seedLeaseLessTenant(orgId);
+    const leaseLessPickerRes = await req('GET', '/api/tenants?for_lease_create=1', null, staffToken);
+    requireStatus('lease-less tenant picker list', leaseLessPickerRes, 200);
+    const leaseLessMatch = leaseLessPickerRes.body.tenants.find((t) => t.id === leaseLessTenant.id);
+    assert(leaseLessMatch, 'lease-less org tenant should appear in for_lease_create picker');
+    assert.strictEqual(leaseLessMatch.lease_id, null, 'lease-less tenant should have null lease_id');
+    reporter.ok('lease-create tenant picker includes org tenant without lease (UNION branch)');
 
     const missingPhoneRes = await req('POST', '/api/leases/native', {
       unit_id: UNIT_ID,

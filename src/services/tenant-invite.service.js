@@ -126,30 +126,42 @@ async function sendLeaseInviteEmail({ user, orgId, leaseId, ip }) {
        VALUES ($1, $2, $3, $4)`,
       [user.id, tokenHash, expiresAt, ip ?? null]
     );
+
+    let result;
+    try {
+      result = await sendEmail({
+        orgId,
+        to: user.email,
+        subject,
+        text,
+        html,
+      });
+    } catch (err) {
+      console.error('[tenant-invite] send failed:', err.message, {
+        email: user.email,
+        code: err.code,
+        leaseId,
+      });
+      await client.query('ROLLBACK');
+      return { sent: false, reason: err.code || 'send_failed' };
+    }
+
+    if (!result.sent) {
+      console.error('[tenant-invite] send skipped:', result.skipped, {
+        email: user.email,
+        leaseId,
+      });
+      await client.query('ROLLBACK');
+      return { sent: false, reason: result.skipped || 'not_sent' };
+    }
+
     await client.query('COMMIT');
+    return { sent: true, ...result };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
   } finally {
     client.release();
-  }
-
-  try {
-    const result = await sendEmail({
-      orgId,
-      to: user.email,
-      subject,
-      text,
-      html,
-    });
-    return { sent: !!result.sent, ...result };
-  } catch (err) {
-    console.error('[tenant-invite] send failed:', err.message, {
-      email: user.email,
-      code: err.code,
-      leaseId,
-    });
-    return { sent: false, reason: err.code || 'send_failed' };
   }
 }
 
