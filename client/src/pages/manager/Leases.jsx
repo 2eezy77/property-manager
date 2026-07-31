@@ -252,10 +252,13 @@ function CreateLeaseModal({ onClose, onCreated }) {
 
   useEffect(() => {
     if (!form.property_id) { setUnits([]); return; }
+    // Native VA room leases share a house/unit — allow occupied units for that path.
+    // Legacy whole-unit leases still only list vacant units.
+    const allowOccupied = form.lease_path === 'native';
     api.get(`/api/properties/${form.property_id}`)
-      .then(r => setUnits((r.data.units || []).filter(u => !u.is_occupied)))
+      .then(r => setUnits((r.data.units || []).filter(u => allowOccupied || !u.is_occupied)))
       .catch(() => {});
-  }, [form.property_id]);
+  }, [form.property_id, form.lease_path]);
 
   function set(key, val) { setForm(f => ({ ...f, [key]: val })); }
 
@@ -395,7 +398,11 @@ function CreateLeaseModal({ onClose, onCreated }) {
               <label className={labelCls}>Unit *</label>
               <select className={inputCls} value={form.unit_id} onChange={e => set('unit_id', e.target.value)} required disabled={!form.property_id}>
                 <option value="">Select unit…</option>
-                {units.map(u => <option key={u.id} value={u.id}>Unit {u.unit_number}{u.bedrooms ? ` · ${u.bedrooms}BR` : ''}</option>)}
+                {units.map(u => (
+                  <option key={u.id} value={u.id}>
+                    Unit {u.unit_number}{u.bedrooms ? ` · ${u.bedrooms}BR` : ''}{u.is_occupied ? ' · occupied (shared OK for native rooms)' : ''}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
