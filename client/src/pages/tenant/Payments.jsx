@@ -158,6 +158,10 @@ function PayConfirmModal({ account, balance, onConfirm, onCancel, loading }) {
               </div>
             )}
             <div className="flex justify-between px-4 py-3">
+              <span className="text-sm text-emerald-700">Processing fee</span>
+              <span className="text-sm font-medium text-emerald-700">$0.00 (ACH)</span>
+            </div>
+            <div className="flex justify-between px-4 py-3">
               <span className="text-sm font-medium text-gray-700">Total</span>
               <span className="text-sm font-semibold text-gray-900">{fmt(total)}</span>
             </div>
@@ -175,7 +179,7 @@ function PayConfirmModal({ account, balance, onConfirm, onCancel, loading }) {
 
           <p className="mt-4 text-xs text-gray-400 leading-relaxed">
             By confirming, you authorise a one-time ACH debit from your account.
-            ACH transfers cannot be recalled once submitted.
+            ACH has no processing fee. Transfers cannot be recalled once submitted.
           </p>
         </div>
 
