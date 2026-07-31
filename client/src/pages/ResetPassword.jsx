@@ -7,10 +7,22 @@ import { Eye, EyeOff, AlertTriangle } from 'lucide-react';
 import api from '@/api/axios';
 import AuthPageShell from '@/components/AuthPageShell';
 
+function safeNextPath(value) {
+  if (!value || !value.startsWith('/') || value.startsWith('//')) return null;
+  try {
+    const nextUrl = new URL(value, window.location.origin);
+    if (nextUrl.origin !== window.location.origin) return null;
+    return `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
+  } catch {
+    return null;
+  }
+}
+
 export default function ResetPassword() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const token = searchParams.get('token') || '';
+  const nextPath = safeNextPath(searchParams.get('next'));
 
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -59,7 +71,7 @@ export default function ResetPassword() {
           sessionStorage.setItem('auth_prefill_email', data.email);
         }
       } catch { /* ignore */ }
-      navigate('/login', { replace: true });
+      navigate(nextPath || '/login', { replace: true });
     } catch (err) {
       setError(err.response?.data?.message ?? 'Could not reset password. Request a new link.');
     } finally {

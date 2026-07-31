@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Clock, CheckCircle2, XCircle, FileText, AlertTriangle, MailOpen, PenLine } from 'lucide-react';
+import { Clock, CheckCircle2, XCircle, FileText, AlertTriangle, MailOpen, PenLine, CreditCard } from 'lucide-react';
 import api from '@/api/axios';
 import { notifyCheckinRefresh } from '@/hooks/useCheckin';
 import NativeSignPad from '@/components/leases/NativeSignPad';
 import FinishLeasePay from '@/components/leases/FinishLeasePay';
+import CardPaymentForm from '@/components/payments/CardPaymentForm';
+import { apiErrorMessage } from '@/utils/apiErrorMessage';
 import {
   deriveSigningStep, SIGNING_STEP_META, flowStepIndex, FLOW_STEPS,
   rlErrorMessage,
@@ -20,6 +22,18 @@ function fmt(ts) {
 function fmtMoney(v) {
   if (v == null) return '—';
   return '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 });
+}
+
+const IDENTITY_BASE_FEE = 1.50;
+
+function estimateProcessingTotal(baseAmount) {
+  const baseCents = Math.round(Number(baseAmount || 0) * 100);
+  const processingCents = Math.round(baseCents * 0.029) + 30;
+  return {
+    baseAmount: baseCents / 100,
+    processingFee: processingCents / 100,
+    totalAmount: (baseCents + processingCents) / 100,
+  };
 }
 
 function daysUntil(ts) {
@@ -40,7 +54,7 @@ function pickLeaseToShow(leases) {
   const sorted = [...leases].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
   const actionableNative = sorted.find((candidate) => {
     const step = deriveNativeLeaseStep(candidate);
-    return step === 'sign_tenant' || step === 'pay_deposit';
+    return step === 'sign_tenant' || step === 'pay_deposit' || step === 'verify_identity';
   });
   return actionableNative || sorted.find(l => l.status === 'active') || leases[0];
 }
@@ -52,6 +66,7 @@ const LEASE_STATUS = {
   pending_tenant_signature: { label: 'Tenant Signature', color: 'bg-yellow-100 text-yellow-700' },
   pending_manager_signature: { label: 'Manager Signature', color: 'bg-indigo-100 text-indigo-700' },
   awaiting_deposit:   { label: 'Awaiting Deposit', color: 'bg-blue-100 text-blue-700' },
+  awaiting_identity:  { label: 'Awaiting Identity', color: 'bg-purple-100 text-purple-700' },
   active:             { label: 'Active',        color: 'bg-green-100 text-green-700' },
   expired:            { label: 'Expired',       color: 'bg-red-100 text-red-600' },
   terminated:         { label: 'Terminated',    color: 'bg-gray-100 text-gray-500' },
@@ -62,6 +77,7 @@ const NATIVE_STEP_META = {
   sign_tenant:  { label: 'Sign lease',      color: 'bg-yellow-100 text-yellow-700' },
   sign_manager: { label: 'Manager signing', color: 'bg-indigo-100 text-indigo-700' },
   pay_deposit:  { label: 'Pay deposit',     color: 'bg-blue-100 text-blue-700' },
+  verify_identity: { label: 'Verify identity', color: 'bg-purple-100 text-purple-700' },
   active:       { label: 'Active',          color: 'bg-green-100 text-green-700' },
 };
 
@@ -69,6 +85,7 @@ const NATIVE_FLOW_STEPS = [
   { key: 'sign_tenant', label: 'Tenant signs' },
   { key: 'sign_manager', label: 'Manager signs' },
   { key: 'pay_deposit', label: 'Pay deposit' },
+  { key: 'verify_identity', label: 'Verify identity' },
   { key: 'active', label: 'Active' },
 ];
 
@@ -201,7 +218,7 @@ function NativeLeaseProgress({ stepKey }) {
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4">
       <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Your lease progress</p>
-      <ol className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <ol className="grid grid-cols-2 sm:grid-cols-5 gap-2">
         {NATIVE_FLOW_STEPS.map((step, i) => {
           const done = allDone || (activeIdx >= 0 && i < activeIdx);
           const current = !allDone && i === activeIdx;
@@ -296,6 +313,147 @@ function NativeDocumentCard({ url }) {
   );
 }
 
+function IdentityVerificationCard({ lease, onRefresh }) {
+  const [feeIntent, setFeeIntent] = useState(null);
+  const [feeLoading, setFeeLoading] = useState(false);
+  const [sessionLoading, setSessionLoading] = useState(false);
+  const [message, setMessage] = useState(null);
+  const feeEstimate = estimateProcessingTotal(IDENTITY_BASE_FEE);
+
+  async function startIdentitySession(retriesRemaining = 2) {
+    setSessionLoading(true);
+    setMessage(null);
+    try {
+      const { data } = await api.post(`/api/leases/${lease.id}/identity/session`, {}, { skipGlobalError: true });
+      if (!data?.url) throw new Error('Identity verification session was not returned.');
+      window.location = data.url;
+    } catch (err) {
+      const code = err.response?.data?.code || err.response?.data?.error;
+      if ((err.response?.status === 402 || code === 'IDENTITY_FEE_REQUIRED') && retriesRemaining > 0) {
+        setMessage({ success: true, text: 'Payment confirmed. Preparing verification...' });
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        return startIdentitySession(retriesRemaining - 1);
+      }
+      setMessage({
+        success: false,
+        text: apiErrorMessage(err, 'Could not start identity verification. Please try again.'),
+      });
+    } finally {
+      setSessionLoading(false);
+    }
+    return null;
+  }
+
+  async function startFeePayment() {
+    setFeeLoading(true);
+    setMessage(null);
+    setFeeIntent(null);
+    try {
+      const { data } = await api.post(`/api/leases/${lease.id}/identity/fee`, {}, { skipGlobalError: true });
+      setFeeIntent(data);
+    } catch (err) {
+      const code = err.response?.data?.code || err.response?.data?.error;
+      if (err.response?.status === 409 || code === 'IDENTITY_FEE_ALREADY_PAID') {
+        await startIdentitySession();
+        return;
+      }
+      setMessage({
+        success: false,
+        text: apiErrorMessage(err, 'Could not prepare the identity verification fee.'),
+      });
+    } finally {
+      setFeeLoading(false);
+    }
+  }
+
+  async function handleFeeSuccess(paymentIntent) {
+    setFeeIntent(null);
+    setMessage({
+      success: true,
+      text: paymentIntent?.status === 'processing'
+        ? 'Verification fee submitted. We will open identity verification once Stripe confirms it.'
+        : 'Verification fee paid. Opening identity verification...',
+    });
+    await startIdentitySession();
+  }
+
+  return (
+    <section className="rounded-xl border border-purple-200 bg-purple-50/70 p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-purple-700">Identity verification</p>
+          <h2 className="mt-1 text-lg font-semibold text-slate-900">Verify your identity</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Complete Stripe Identity verification so we can finish activating your lease.
+          </p>
+        </div>
+        <CreditCard size={22} className="shrink-0 text-purple-500" />
+      </div>
+
+      <div className="mt-4 rounded-lg border border-purple-100 bg-white px-3 py-3 text-sm text-slate-700">
+        <p className="font-medium text-slate-900">Fee disclosure</p>
+        <p className="mt-1">
+          Stripe Identity costs {fmtMoney(feeEstimate.baseAmount)} plus an estimated {fmtMoney(feeEstimate.processingFee)}
+          {' '}card processing fee. Estimated total: {fmtMoney(feeEstimate.totalAmount)}.
+        </p>
+      </div>
+
+      {lease.identity_status && lease.identity_status !== 'verified' && (
+        <p className="mt-3 rounded-lg border border-purple-100 bg-white px-3 py-2 text-xs text-purple-700">
+          Current identity status: {String(lease.identity_status).replace(/_/g, ' ')}.
+        </p>
+      )}
+
+      {message && (
+        <p className={`mt-4 rounded-lg px-3 py-2 text-sm ${
+          message.success ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
+        }`}>
+          {message.text}
+        </p>
+      )}
+
+      {!feeIntent ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={startFeePayment}
+            disabled={feeLoading || sessionLoading}
+            className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-purple-700 disabled:opacity-50"
+          >
+            {feeLoading || sessionLoading
+              ? 'Preparing verification...'
+              : `Pay verification fee (${fmtMoney(feeEstimate.totalAmount)})`}
+          </button>
+          <button
+            type="button"
+            onClick={() => onRefresh?.()}
+            className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-purple-700 ring-1 ring-purple-200 transition-colors hover:bg-purple-50"
+          >
+            Refresh status
+          </button>
+        </div>
+      ) : (
+        <div className="mt-4 space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+          <p className="text-sm font-medium text-slate-700">
+            Amount: {fmtMoney(feeIntent.amount)}
+            {feeIntent.processingFee != null && (
+              <span className="ml-1 text-xs font-normal text-slate-500">
+                (incl. {fmtMoney(feeIntent.processingFee)} processing fee)
+              </span>
+            )}
+          </p>
+          <CardPaymentForm
+            clientSecret={feeIntent.clientSecret}
+            publishableKey={feeIntent.publishableKey}
+            onSuccess={handleFeeSuccess}
+            onError={(err) => setMessage({ success: false, text: err.message || 'Verification fee payment failed.' })}
+          />
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ─── EmptyState ──────────────────────────────────────────────────────────────
 
 function EmptyState() {
@@ -319,9 +477,10 @@ export default function LeasePage() {
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState('');
   const [showAll, setShowAll]     = useState(false);
+  const [identityNotice, setIdentityNotice] = useState(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     setError('');
     try {
       // Get most recent lease
@@ -331,8 +490,8 @@ export default function LeasePage() {
         setLease(null);
         setEnvelopes([]);
         setNativeDocUrl('');
-        setLoading(false);
-        return;
+        if (!silent) setLoading(false);
+        return null;
       }
 
       // Prefer native leases that need tenant action, then active, then most recent.
@@ -355,15 +514,45 @@ export default function LeasePage() {
       } else {
         setNativeDocUrl('');
       }
+      return detail;
     } catch (err) {
       setError('Could not load lease information.');
       console.error('[lease]', err);
+      return null;
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const isIdentityReturn = params.get('identity_return') === '1' || params.get('identity') === 'return';
+    if (!isIdentityReturn) return undefined;
+
+    let cancelled = false;
+    const delays = [0, 3000, 8000];
+    setIdentityNotice({ success: true, text: 'Checking identity verification status...' });
+    const timers = delays.map((delay) => setTimeout(async () => {
+      const detail = await load({ silent: true });
+      if (cancelled) return;
+      const status = detail?.lease?.identity_status;
+      if (status === 'verified') {
+        setIdentityNotice({ success: true, text: 'Identity verified. Your lease status is being updated.' });
+      } else if (status === 'processing') {
+        setIdentityNotice({ success: true, text: 'Identity verification is processing. We will update your lease when Stripe finishes review.' });
+      } else {
+        setIdentityNotice({ success: false, text: 'Identity verification was not completed yet. You can try again below.' });
+      }
+    }, delay));
+
+    window.history.replaceState({}, '', '/tenant/lease');
+    return () => {
+      cancelled = true;
+      timers.forEach(clearTimeout);
+    };
+  }, [load]);
 
   useEffect(() => {
     api.patch('/api/users/me/checkin', { step: 'lease_viewed' })
@@ -405,6 +594,9 @@ export default function LeasePage() {
     ['pending_signature', 'pending'].includes(lease.status)
     || signingStep === 'awaiting_tenant_sign'
   );
+  const canVerifyIdentity = isNativeLease
+    && ['pay_deposit', 'verify_identity'].includes(nativeStep)
+    && lease.identity_status !== 'verified';
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
@@ -439,6 +631,16 @@ export default function LeasePage() {
               Your lease ends on {fmt(lease.end_date)}. Contact your property manager about renewal.
             </p>
           </div>
+        </div>
+      )}
+
+      {identityNotice && (
+        <div className={`rounded-xl border p-4 text-sm ${
+          identityNotice.success
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+            : 'border-amber-200 bg-amber-50 text-amber-800'
+        }`}>
+          {identityNotice.text}
         </div>
       )}
 
@@ -501,8 +703,12 @@ export default function LeasePage() {
             </div>
           )}
 
-          {nativeStep === 'pay_deposit' && (
+          {['pay_deposit', 'verify_identity'].includes(nativeStep) && (
             <FinishLeasePay lease={lease} onPaid={load} />
+          )}
+
+          {canVerifyIdentity && (
+            <IdentityVerificationCard lease={lease} onRefresh={load} />
           )}
 
           {nativeStep === 'active' && lease.deposit_paid_at && (

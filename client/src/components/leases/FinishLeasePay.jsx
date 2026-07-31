@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { CreditCard, Landmark, Smartphone } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, CreditCard, Landmark, Smartphone } from 'lucide-react';
 import { loadStripe } from '@stripe/stripe-js';
 import api from '@/api/axios';
 import { apiErrorMessage } from '@/utils/apiErrorMessage';
@@ -276,6 +276,25 @@ export default function FinishLeasePay({ lease, onPaid }) {
   const cardBaseTotal = Number(lease.security_deposit || 0) + (includeFirstMonth ? Number(lease.monthly_rent || 0) : 0);
   const cardEstimate = estimateCardCashAppTotal(cardBaseTotal);
   const cashAppEstimate = estimateCardCashAppTotal(lease.security_deposit);
+  const awaitingIdentity = lease.status === 'awaiting_identity';
+  const identityVerified = lease.identity_status === 'verified';
+  const showIdentityWarning = !identityVerified;
+
+  if (awaitingIdentity) {
+    return (
+      <section className="rounded-xl border border-purple-200 bg-purple-50/70 p-5">
+        <div className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3">
+          <CheckCircle2 size={20} className="mt-0.5 shrink-0 text-emerald-600" />
+          <div>
+            <p className="text-sm font-semibold text-emerald-900">Security deposit received</p>
+            <p className="mt-0.5 text-sm text-emerald-700">
+              Your lease deposit is paid; activation pending identity verification.
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-5">
@@ -297,6 +316,15 @@ export default function FinishLeasePay({ lease, onPaid }) {
         <li className="rounded-lg bg-indigo-100 px-2 py-2 text-indigo-800">Pay deposit</li>
         <li className="rounded-lg bg-white px-2 py-2 text-slate-400">Active</li>
       </ol>
+
+      {showIdentityWarning && (
+        <div className="mt-5 flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-500" />
+          <p className="text-sm text-amber-800">
+            Heads up: activation pending identity verification after your deposit posts. You can verify identity from this lease page.
+          </p>
+        </div>
+      )}
 
       <div className="mt-5 flex flex-wrap gap-2">
         <button type="button" onClick={() => setMethod('card')} className={methodButtonClass('card')}>
