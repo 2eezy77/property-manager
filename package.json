@@ -63,7 +63,8 @@
     "build": "cd client && npm install && npm run build",
     "assert:portal-pay": "node scripts/assert-portal-pay-guards.js",
     "test:processing-fee": "node scripts/test-processing-fee.js",
-    "test:balance-paid": "node scripts/test-balance-paid-month.js"
+    "test:balance-paid": "node scripts/test-balance-paid-month.js",
+    "test:identity-crypto": "node scripts/test-identity-crypto.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.27.0",
