@@ -2,10 +2,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Clock, CheckCircle2, XCircle, FileText, AlertTriangle, MailOpen, PenLine } from 'lucide-react';
 import api from '@/api/axios';
 import { notifyCheckinRefresh } from '@/hooks/useCheckin';
+import NativeSignPad from '@/components/leases/NativeSignPad';
+import FinishLeasePay from '@/components/leases/FinishLeasePay';
 import {
   deriveSigningStep, SIGNING_STEP_META, flowStepIndex, FLOW_STEPS,
   rlErrorMessage,
 } from '@/utils/rlLeaseHelpers';
+import { deriveNativeLeaseStep } from '@/utils/nativeLeaseHelpers';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -25,14 +28,49 @@ function daysUntil(ts) {
   return Math.ceil(diff / 86400000);
 }
 
+function documentHref(path) {
+  if (!path) return null;
+  if (/^https?:\/\//i.test(path) || path.startsWith('/')) return path;
+  if (path.startsWith('documents/')) return `/${path}`;
+  return `/documents/${path.replace(/^\/+/, '')}`;
+}
+
+function pickLeaseToShow(leases) {
+  // Prefer newest actionable native lease; otherwise newest active; else first.
+  const sorted = [...leases].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  const actionableNative = sorted.find((candidate) => {
+    const step = deriveNativeLeaseStep(candidate);
+    return step === 'sign_tenant' || step === 'pay_deposit';
+  });
+  return actionableNative || sorted.find(l => l.status === 'active') || leases[0];
+}
+
 const LEASE_STATUS = {
   draft:              { label: 'Draft',         color: 'bg-gray-100 text-gray-500' },
   pending:            { label: 'Pending Sign',  color: 'bg-yellow-100 text-yellow-700' },
   pending_signature:  { label: 'Sign Required', color: 'bg-yellow-100 text-yellow-700' },
+  pending_tenant_signature: { label: 'Tenant Signature', color: 'bg-yellow-100 text-yellow-700' },
+  pending_manager_signature: { label: 'Manager Signature', color: 'bg-indigo-100 text-indigo-700' },
+  awaiting_deposit:   { label: 'Awaiting Deposit', color: 'bg-blue-100 text-blue-700' },
   active:             { label: 'Active',        color: 'bg-green-100 text-green-700' },
   expired:            { label: 'Expired',       color: 'bg-red-100 text-red-600' },
   terminated:         { label: 'Terminated',    color: 'bg-gray-100 text-gray-500' },
 };
+
+const NATIVE_STEP_META = {
+  draft:        { label: 'Preparing lease', color: 'bg-gray-100 text-gray-600' },
+  sign_tenant:  { label: 'Sign lease',      color: 'bg-yellow-100 text-yellow-700' },
+  sign_manager: { label: 'Manager signing', color: 'bg-indigo-100 text-indigo-700' },
+  pay_deposit:  { label: 'Pay deposit',     color: 'bg-blue-100 text-blue-700' },
+  active:       { label: 'Active',          color: 'bg-green-100 text-green-700' },
+};
+
+const NATIVE_FLOW_STEPS = [
+  { key: 'sign_tenant', label: 'Tenant signs' },
+  { key: 'sign_manager', label: 'Manager signs' },
+  { key: 'pay_deposit', label: 'Pay deposit' },
+  { key: 'active', label: 'Active' },
+];
 
 const SIGNER_STATUS = {
   pending:   { label: 'Awaiting signature', icon: <Clock size={18} className="text-slate-400" />,        },
@@ -156,6 +194,108 @@ function TenantSigningProgress({ stepKey }) {
   );
 }
 
+function NativeLeaseProgress({ stepKey }) {
+  const activeIdx = NATIVE_FLOW_STEPS.findIndex(step => step.key === stepKey);
+  const allDone = stepKey === 'active';
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4">
+      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Your lease progress</p>
+      <ol className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {NATIVE_FLOW_STEPS.map((step, i) => {
+          const done = allDone || (activeIdx >= 0 && i < activeIdx);
+          const current = !allDone && i === activeIdx;
+          return (
+            <li key={step.key} className={`rounded-lg px-2 py-2 text-center text-xs ${
+              done ? 'bg-green-50 text-green-800' : current ? 'bg-indigo-50 text-indigo-800 font-semibold' : 'bg-gray-50 text-gray-400'
+            }`}>
+              <span className="block font-medium">{step.label}</span>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+function NativeSignatureStatus({ envelope }) {
+  if (!envelope) return null;
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-5">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <p className="flex items-center gap-1.5 text-sm font-semibold text-gray-800">
+            <PenLine size={16} className="text-indigo-600" /> Native e-signature
+          </p>
+          <p className="mt-0.5 text-xs text-gray-500">
+            Sent {fmt(envelope.sent_at)}
+            {envelope.completed_at && ` · Completed ${fmt(envelope.completed_at)}`}
+          </p>
+        </div>
+        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+          envelope.status === 'completed' ? 'bg-green-100 text-green-700' : 'bg-indigo-100 text-indigo-700'
+        }`}>
+          {envelope.status || 'pending'}
+        </span>
+      </div>
+      <div className="space-y-2">
+        {(envelope.signers || []).sort((a, b) => a.routing_order - b.routing_order).map((signer) => {
+          const meta = SIGNER_STATUS[signer.status] || SIGNER_STATUS.pending;
+          return (
+            <div key={signer.id} className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="flex items-center">{meta.icon}</span>
+                <div>
+                  <p className="text-sm font-medium text-gray-800">{signer.name}</p>
+                  <p className="text-xs text-gray-400">{signer.signer_role}</p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-xs font-medium text-gray-600">{meta.label}</p>
+                {signer.signed_at && <p className="text-xs text-gray-400">{fmt(signer.signed_at)}</p>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function NativeDocumentCard({ url }) {
+  if (!url) return null;
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+      <div className="flex items-center justify-between gap-3 border-b border-gray-100 p-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-50 text-red-500">
+            <FileText size={20} />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-gray-800">Lease Agreement</p>
+            <p className="text-xs text-gray-400">Native lease PDF</p>
+          </div>
+        </div>
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200"
+        >
+          Open PDF
+        </a>
+      </div>
+      <iframe
+        title="Lease agreement PDF"
+        src={url}
+        className="h-[520px] w-full bg-gray-50"
+      />
+    </div>
+  );
+}
+
 // ─── EmptyState ──────────────────────────────────────────────────────────────
 
 function EmptyState() {
@@ -175,6 +315,7 @@ function EmptyState() {
 export default function LeasePage() {
   const [lease, setLease]         = useState(null);
   const [envelopes, setEnvelopes] = useState([]);
+  const [nativeDocUrl, setNativeDocUrl] = useState('');
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState('');
   const [showAll, setShowAll]     = useState(false);
@@ -186,16 +327,34 @@ export default function LeasePage() {
       // Get most recent lease
       const { data: listData } = await api.get('/api/leases/my');
       const leases = listData.leases || [];
-      if (!leases.length) { setLoading(false); return; }
+      if (!leases.length) {
+        setLease(null);
+        setEnvelopes([]);
+        setNativeDocUrl('');
+        setLoading(false);
+        return;
+      }
 
-      // Prefer active, then most recent
-      const active = leases.find(l => l.status === 'active') || leases[0];
+      // Prefer native leases that need tenant action, then active, then most recent.
+      const active = pickLeaseToShow(leases);
       setLease(active);
 
       // Load full detail + envelopes
       const { data: detail } = await api.get(`/api/leases/${active.id}`);
       setLease(detail.lease);
       setEnvelopes(detail.envelopes || []);
+
+      if (detail.lease?.signing_provider === 'native') {
+        const fallbackUrl = documentHref(detail.lease.signed_pdf_path || detail.lease.pdf_path || detail.lease.document_url);
+        try {
+          const { data: doc } = await api.get(`/api/leases/${active.id}/native/document`);
+          setNativeDocUrl(documentHref(doc.url) || fallbackUrl || '');
+        } catch {
+          setNativeDocUrl(fallbackUrl || '');
+        }
+      } else {
+        setNativeDocUrl('');
+      }
     } catch (err) {
       setError('Could not load lease information.');
       console.error('[lease]', err);
@@ -236,10 +395,16 @@ export default function LeasePage() {
   const daysToStart  = daysUntil(lease.start_date);
   const expiringSoon = daysToEnd != null && daysToEnd > 0 && daysToEnd <= 60;
   const latestEnv    = envelopes[0] ?? null;
-  const signingStep  = deriveSigningStep({ lease, docStatus: null, latestEnvelope: latestEnv });
-  const stepMeta     = SIGNING_STEP_META[signingStep] ?? SIGNING_STEP_META.needs_interview;
-  const needsSign    = ['pending_signature', 'pending'].includes(lease.status)
-    || signingStep === 'awaiting_tenant_sign';
+  const isNativeLease = lease.signing_provider === 'native';
+  const nativeStep   = deriveNativeLeaseStep(lease);
+  const signingStep  = isNativeLease ? null : deriveSigningStep({ lease, docStatus: null, latestEnvelope: latestEnv });
+  const stepMeta     = isNativeLease
+    ? (NATIVE_STEP_META[nativeStep] ?? NATIVE_STEP_META.draft)
+    : (SIGNING_STEP_META[signingStep] ?? SIGNING_STEP_META.needs_interview);
+  const needsSign    = !isNativeLease && (
+    ['pending_signature', 'pending'].includes(lease.status)
+    || signingStep === 'awaiting_tenant_sign'
+  );
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
@@ -278,12 +443,15 @@ export default function LeasePage() {
       )}
 
       {/* Signing progress */}
-      {lease.status !== 'active' && (
+      {!isNativeLease && lease.status !== 'active' && (
         <TenantSigningProgress stepKey={signingStep} />
+      )}
+      {isNativeLease && lease.status !== 'active' && (
+        <NativeLeaseProgress stepKey={nativeStep} />
       )}
 
       {/* Pending signature notice */}
-      {needsSign && !latestEnv && (
+      {!isNativeLease && needsSign && !latestEnv && (
         <div className="rounded-xl bg-blue-50 border border-blue-200 p-4 flex items-start gap-3">
           <MailOpen size={20} className="shrink-0 text-blue-500" />
           <div>
@@ -295,7 +463,7 @@ export default function LeasePage() {
         </div>
       )}
 
-      {needsSign && latestEnv && signingStep === 'awaiting_tenant_sign' && (
+      {!isNativeLease && needsSign && latestEnv && signingStep === 'awaiting_tenant_sign' && (
         <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 flex items-start gap-3">
           <PenLine size={20} className="shrink-0 text-amber-500" />
           <div>
@@ -308,8 +476,47 @@ export default function LeasePage() {
       )}
 
       {/* E-signature status */}
-      {latestEnv && (
+      {!isNativeLease && latestEnv && (
         <SigningStatus envelope={latestEnv} leaseId={lease.id} />
+      )}
+
+      {isNativeLease && (
+        <>
+          <NativeDocumentCard url={nativeDocUrl} />
+          <NativeSignatureStatus envelope={latestEnv} />
+
+          {nativeStep === 'sign_tenant' && (
+            <NativeSignPad leaseId={lease.id} signerLabel="Tenant" onSigned={load} />
+          )}
+
+          {nativeStep === 'sign_manager' && (
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 flex items-start gap-3">
+              <Clock size={20} className="shrink-0 text-indigo-500" />
+              <div>
+                <p className="text-sm font-semibold text-indigo-900">Waiting on manager signature</p>
+                <p className="mt-0.5 text-xs text-indigo-700">
+                  Your signature is complete. The lease will move to deposit payment once the manager signs.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {nativeStep === 'pay_deposit' && (
+            <FinishLeasePay lease={lease} onPaid={load} />
+          )}
+
+          {nativeStep === 'active' && lease.deposit_paid_at && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 flex items-start gap-3">
+              <CheckCircle2 size={20} className="shrink-0 text-emerald-600" />
+              <div>
+                <p className="text-sm font-semibold text-emerald-900">Lease active</p>
+                <p className="mt-0.5 text-xs text-emerald-700">
+                  Security deposit paid {fmt(lease.deposit_paid_at)}.
+                </p>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Lease details card */}
@@ -338,7 +545,7 @@ export default function LeasePage() {
       </div>
 
       {/* Document download */}
-      {lease.document_url?.startsWith('http') && (
+      {!isNativeLease && lease.document_url?.startsWith('http') && (
         <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg bg-red-50 flex items-center justify-center">

@@ -1,416 +1,494 @@
 /**
  * lease-pdf.service.js
- * Generates a Virginia Residential Lease Agreement PDF matching the
- * Rocket Lawyer format used at 743 A Ave, Norfolk VA 23504.
- * Compliant with VRLTA (Chapter 12, Title 55.1, Code of Virginia).
+ * Generates Montero Rentals Virginia room lease PDFs for 743 A Ave.
  */
 
 const PDFDocument = require('pdfkit');
-const fs          = require('fs');
-const path        = require('path');
+const { PDFDocument: PdfLibDocument, StandardFonts, rgb } = require('pdf-lib');
+const fs = require('fs');
+const path = require('path');
+const {
+  LEASE_PARTIES,
+  PROPERTY_ADDRESS,
+  defaultTermsForRoomType,
+} = require('./native-lease.constants');
 
 const DOCS_DIR = path.resolve(__dirname, '../../documents');
-if (!fs.existsSync(DOCS_DIR)) fs.mkdirSync(DOCS_DIR, { recursive: true });
 
-function fmt(n) {
-  return Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const DEFAULT_FURNISHINGS = [
+  'Bed frame and mattress, if supplied for the room',
+  'Shared kitchen appliances',
+  'Shared laundry appliances',
+  'Shared living room furnishings',
+  'Window coverings and installed fixtures',
+];
+
+const DEFAULT_DAMAGE_CHARGES = [
+  { item: 'Lost key or lock replacement', amount: 125 },
+  { item: 'Room repainting beyond normal wear', amount: 350 },
+  { item: 'Mattress replacement', amount: 450 },
+  { item: 'Shared appliance damage', amount: 800 },
+  { item: 'Excess cleaning', amount: 250 },
+];
+
+function ensureDocumentsDir() {
+  fs.mkdirSync(DOCS_DIR, { recursive: true });
 }
-function fmtDate(d) {
-  if (!d) return '_______________';
-  return new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-}
-function fmtDateShort(d) {
-  if (!d) return '_______________';
-  return new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' });
+
+function safeFilePart(value) {
+  return String(value || Date.now()).replace(/[^a-zA-Z0-9._-]/g, '-');
 }
 
-async function generateLeasePdf(data) {
-  const filename = `lease-${data.leaseId}.pdf`;
-  const filepath  = path.join(DOCS_DIR, filename);
+function currency(value) {
+  return Number(value || 0).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
 
-  const nsfFee       = data.nsfFee != null ? data.nsfFee : 50;
-  const earlyTermDays = data.earlyTermDays != null ? data.earlyTermDays : 30;
-  const furnishings  = data.furnishings || [
-    'Sofa', 'Bed', 'Kitchen Table', 'Dining Table', 'Television',
-    'Refrigerator', 'Samsung TV', 'Washer & Dryer', 'Dishwasher'
-  ];
-  const damageCharges = data.damageCharges || [
-    { item: 'Samsung TV',       amount: 1000 },
-    { item: 'Refrigerator',     amount: 1200 },
-    { item: 'Washer & Dryer',   amount: 1500 },
-    { item: 'Dish Washer',      amount: 800  },
-  ];
+function formatDate(value) {
+  if (!value) return '_______________';
+  if (value instanceof Date) {
+    return value.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      timeZone: 'UTC',
+    });
+  }
+  const parts = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const date = parts
+    ? new Date(Date.UTC(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3])))
+    : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    timeZone: 'UTC',
+  });
+}
 
+function formatDateTime(value) {
+  if (!value) return '_______________';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+}
+
+function titleCase(value) {
+  return String(value || '')
+    .replace(/[-_]/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function leaseResult(filename, filepath) {
+  return {
+    filename,
+    filepath,
+    relativePath: `/documents/${filename}`,
+  };
+}
+
+function normalizeLeaseData(data) {
+  const roomDefaults = defaultTermsForRoomType(data.roomType || 'regular');
+  return {
+    ...roomDefaults,
+    ...data,
+    leaseId: data.leaseId || `draft-${Date.now()}`,
+    roomType: String(data.roomType || roomDefaults.roomType).toLowerCase(),
+    monthlyRent: data.monthlyRent ?? roomDefaults.monthlyRent,
+    securityDeposit: data.securityDeposit ?? roomDefaults.securityDeposit,
+    gracePeriodDays: data.gracePeriodDays ?? roomDefaults.gracePeriodDays,
+    lateFeeAmount: data.lateFeeAmount ?? roomDefaults.lateFeeAmount,
+    nsfFee: data.nsfFee ?? roomDefaults.nsfFee,
+    houseRules: {
+      smoking: false,
+      pets: false,
+      quietHours: '10pm-8am',
+      guestNights: 7,
+      ...(data.houseRules || {}),
+    },
+    furnishings: data.furnishings || DEFAULT_FURNISHINGS,
+    damageCharges: data.damageCharges || DEFAULT_DAMAGE_CHARGES,
+  };
+}
+
+async function writePdf(filepath, draw) {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 72, size: 'LETTER', bufferPages: true });
+    const doc = new PDFDocument({ size: 'LETTER', margin: 72, bufferPages: true });
     const stream = fs.createWriteStream(filepath);
-    doc.pipe(stream);
-    stream.on('finish', () => resolve(filename));
+
+    stream.on('finish', resolve);
     stream.on('error', reject);
+    doc.on('error', reject);
 
-    const W    = doc.page.width - 144;
-    const L    = 72;
-    const GRAY  = '#555555';
-    const DARK  = '#111111';
-    const BLUE  = '#1e40af';
-    const LBLUE = '#dbeafe';
-    const LINE  = '#cccccc';
-
-    function checkPageBreak(needed) {
-      if (!needed) needed = 120;
-      if (doc.y + needed > doc.page.height - 100) doc.addPage();
-    }
-
-    function section(num, title) {
-      checkPageBreak(60);
-      doc.moveDown(0.6);
-      const y = doc.y;
-      doc.rect(L, y, W, 20).fill(LBLUE);
-      doc.font('Helvetica-Bold').fontSize(10).fillColor(BLUE)
-         .text('§' + num + '  ' + title.toUpperCase(), L + 8, y + 5, { width: W - 16 });
-      doc.moveDown(1.1);
-      doc.font('Helvetica').fontSize(9.5).fillColor(DARK);
-    }
-
-    function row(label, value, indent) {
-      indent = indent || 0;
-      const y = doc.y;
-      doc.font('Helvetica-Bold').fontSize(9).fillColor(GRAY)
-         .text(label, L + indent, y, { width: 170, continued: false });
-      doc.font('Helvetica').fontSize(9).fillColor(DARK)
-         .text(String(value != null ? value : '--'), L + indent + 175, y, { width: W - 175 - indent });
-      doc.moveDown(0.35);
-    }
-
-    function para(text, opts) {
-      if (!opts) opts = {};
-      doc.font('Helvetica').fontSize(9.5).fillColor(DARK)
-         .text(text, L, doc.y, Object.assign({ width: W, align: 'justify' }, opts));
-      doc.moveDown(0.5);
-    }
-
-    function bullet(text) {
-      doc.font('Helvetica').fontSize(9.5).fillColor(DARK)
-         .text('• ' + text, L + 12, doc.y, { width: W - 12, align: 'left' });
-      doc.moveDown(0.3);
-    }
-
-    // COVER HEADER
-    doc.rect(L, 56, W, 3).fill(BLUE);
-    doc.font('Helvetica-Bold').fontSize(16).fillColor(DARK)
-       .text('VIRGINIA RESIDENTIAL LEASE AGREEMENT', L, 70, { align: 'center', width: W });
-    doc.font('Helvetica').fontSize(9).fillColor(GRAY)
-       .text(
-         'Pursuant to Chapter 12, Title 55.1, Code of Virginia (VRLTA)  ·  ' +
-         'Generated ' + new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' }),
-         L, 92, { align: 'center', width: W }
-       );
-    doc.rect(L, 108, W, 3).fill(BLUE);
-    doc.moveDown(2);
-
-    // RECEIPT OF DEPOSIT BOX
-    if (data.securityDeposit > 0) {
-      const bY = doc.y;
-      doc.rect(L, bY, W, 56).stroke(BLUE);
-      doc.font('Helvetica-Bold').fontSize(9).fillColor(BLUE)
-         .text('RECEIPT OF SECURITY DEPOSIT', L + 10, bY + 8, { width: W - 20, align: 'center' });
-      doc.font('Helvetica').fontSize(9).fillColor(DARK)
-         .text(
-           'Landlord acknowledges receipt of $' + fmt(data.securityDeposit) + ' as a security deposit from Tenant. ' +
-           'This deposit will be held and returned within 45 days after termination, per §55.1-1226, VRLTA.',
-           L + 10, bY + 22, { width: W - 20 }
-         );
-      doc.y = bY + 64;
-      doc.moveDown(0.5);
-    }
-
-    // S1 PARTIES
-    section(1, 'Parties');
-    para('This Virginia Residential Lease Agreement ("Agreement") is entered into on ' + fmtDate(data.startDate) + ', by and between:');
-    row('Landlord:', data.landlordName || '_______________');
-    if (data.coLandlordName) row('Co-Landlord:', data.coLandlordName);
-    row('Landlord Address:', data.landlordAddress || '_______________');
-    doc.moveDown(0.2);
-    row('Tenant:', data.tenantName || '_______________');
-    if (data.tenantEmail) row('Tenant Email:', data.tenantEmail);
-    if (data.tenantPhone) row('Tenant Phone:', data.tenantPhone);
-    doc.moveDown(0.2);
-    if (data.propertyManagerName) {
-      row('Property Manager:', data.propertyManagerName);
-      if (data.propertyManagerPhone) row('PM Phone:', data.propertyManagerPhone);
-      if (data.propertyManagerAddress) row('PM Address:', data.propertyManagerAddress);
-    }
-
-    // S2 PREMISES
-    section(2, 'Premises');
-    para('Landlord hereby leases to Tenant the following private room within the residential property:');
-    doc.font('Helvetica-Bold').fontSize(10).fillColor(DARK)
-       .text(data.propertyAddress || '_______________', L + 20, doc.y, { width: W - 40, align: 'center' });
-    doc.moveDown(0.5);
-    if (data.roomDescription) {
-      doc.font('Helvetica-Bold').fontSize(9.5).fillColor(DARK)
-         .text('Room: ' + data.roomDescription, L + 20, doc.y, { width: W - 40, align: 'center' });
-      doc.moveDown(0.5);
-    }
-    para('Tenant has the right to occupy the above-described room ("Premises") and shared access to common areas including the kitchen, living room, and hallways. Tenant shall use the Premises solely for residential purposes. Tenant shall not sublet or assign the Premises or any part thereof without Landlord\'s prior written consent.');
-
-    // S3 LEASE TERM
-    section(3, 'Lease Term');
-    row('Start Date:', fmtDate(data.startDate));
-    row('End Date:', fmtDate(data.endDate));
-    if (data.autoMonthToMonth) {
-      para('This Agreement shall commence on the Start Date and continue through the End Date, after which it shall automatically convert to a month-to-month tenancy under the same terms and conditions, unless either party provides written notice of termination at least 30 days prior to the desired termination date.');
-    } else {
-      para('This Agreement shall commence on the Start Date and terminate on the End Date. This is a fixed-term tenancy. Unless a new agreement is signed, Tenant must vacate the Premises no later than the End Date.');
-    }
-
-    // S4 RENT
-    section(4, 'Rent');
-    row('Monthly Rent:', '$' + fmt(data.monthlyRent));
-    row('Due Date:', '1st day of each month');
-    row('Delinquent After:', '1st day (immediately upon due date)');
-    row('Grace Period:', (data.gracePeriodDays || 5) + ' days');
-    var lateFeeDesc = data.lateFeeType === 'percent'
-      ? data.lateFeeAmount + '% of monthly rent'
-      : '$' + fmt(data.lateFeeAmount || 0) + ' flat fee';
-    row('Late Fee:', lateFeeDesc + ' (assessed after grace period)');
-    row('NSF / Returned Check Fee:', '$' + fmt(nsfFee) + ' per occurrence');
-    doc.moveDown(0.3);
-    para('Rent is due on the 1st day of each month. A grace period of ' + (data.gracePeriodDays || 5) + ' days is provided; if rent remains unpaid after the grace period, a late fee of ' + lateFeeDesc + ' will be assessed. Three (3) returned checks shall constitute just cause for termination. NSF fee of $' + fmt(nsfFee) + ' applies to each returned check.');
-
-    // S5 SECURITY DEPOSIT
-    section(5, 'Security Deposit');
-    row('Security Deposit:', '$' + fmt(data.securityDeposit || 0));
-    if (data.securityDeposit > 0) {
-      para('Tenant has deposited $' + fmt(data.securityDeposit) + ' as a security deposit. Per §55.1-1226 of the VRLTA, Landlord shall return the security deposit, with any deductions itemized in writing, within 45 days after termination of tenancy. Deductions may be made for unpaid rent, cleaning fees, and damages beyond normal wear and tear.');
-    } else {
-      para('No security deposit is required under this Agreement.');
-    }
-
-    // S6 UTILITIES
-    section(6, 'Utilities');
-    para('Tenant is responsible for paying all utilities directly, including but not limited to electricity, gas, water/sewer, trash, and internet. Utilities shared among multiple tenants shall be divided equally among all occupants unless otherwise agreed in writing.');
-
-    // S7 FURNISHINGS
-    section(7, 'Furnishings & Appliances');
-    para('The following furnishings and appliances are included with the Premises:');
-    var col = 0;
-    var colW = Math.floor(W / 3);
-    var rowStartY = doc.y;
-    furnishings.forEach(function(item, i) {
-      var x = L + (col * colW);
-      if (col === 0 && i > 0) rowStartY = doc.y;
-      doc.font('Helvetica').fontSize(9).fillColor(DARK)
-         .text('• ' + item, x, col === 0 ? doc.y : rowStartY, { width: colW - 10, continued: false });
-      col++;
-      if (col >= 3) { col = 0; doc.moveDown(0.1); }
-    });
-    if (col > 0) doc.moveDown(0.3);
-    doc.moveDown(0.5);
-    para('Tenant acknowledges the above furnishings are in good and working condition upon move-in. Tenant shall be responsible for any damage beyond normal wear and tear.');
-
-    // S8 DAMAGE CHARGES
-    section(8, 'Damage Charge Schedule');
-    para('The following replacement cost schedule shall apply for damage beyond normal wear and tear:');
-    checkPageBreak(damageCharges.length * 22 + 40);
-    var tHdrY = doc.y;
-    doc.rect(L, tHdrY, W, 18).fill(LBLUE);
-    doc.font('Helvetica-Bold').fontSize(9).fillColor(BLUE)
-       .text('Item', L + 6, tHdrY + 4, { width: W * 0.65 })
-       .text('Replacement Cost', L + W * 0.65, tHdrY + 4, { width: W * 0.35, align: 'right' });
-    doc.y = tHdrY + 20;
-    damageCharges.forEach(function(dc, i) {
-      var rowY = doc.y;
-      if (i % 2 === 1) doc.rect(L, rowY, W, 16).fill('#f8fafc');
-      doc.font('Helvetica').fontSize(9).fillColor(DARK)
-         .text(dc.item, L + 6, rowY + 2, { width: W * 0.65 })
-         .text('$' + fmt(dc.amount), L + W * 0.65, rowY + 2, { width: W * 0.35 - 6, align: 'right' });
-      doc.y = rowY + 18;
-    });
-    doc.moveDown(0.5);
-    para('Actual replacement costs at time of damage may be used in lieu of the above schedule. Tenant will be billed for damage beyond normal wear and tear upon move-out.');
-
-    // S9 TENANT RESPONSIBILITIES
-    section(9, 'Tenant Responsibilities');
-    para('Tenant shall be responsible for the following:');
-    bullet('All interior fixtures, including light fixtures, faucets, and handles');
-    bullet('Heating system filters -- must be replaced every 60 days');
-    bullet('Sidewalk, driveway, and yard areas adjacent to the Premises');
-    bullet('Vivent smart home appliances (cameras, locks, sensors, panel) -- Tenant responsible for battery replacements');
-    bullet('Keeping the Premises and shared common areas clean and sanitary at all times');
-    bullet('Reporting any damage, water leaks, or mold within 24 hours of discovery (per §55.1-1234, VRLTA)');
-    bullet('Property cleanliness fees (professional cleaning) shall be divided equally among all tenants');
-    doc.moveDown(0.3);
-    para('Tenant shall NOT make any structural alterations, improvements, or installations without prior written consent of Landlord.');
-
-    // S10 ENTRY BY LANDLORD
-    section(10, 'Entry by Landlord');
-    para('Per §55.1-1229 of the VRLTA, Landlord shall provide at least 48 hours advance notice before entering the Premises for inspection, repairs, or showing to prospective tenants or purchasers. In the event of an emergency, Landlord may enter without prior notice.');
-
-    // S11 SMOKING, PARKING & STORAGE
-    section(11, 'Smoking, Parking & Storage');
-    bullet('Smoking of any substance is strictly prohibited anywhere on the Premises or property.');
-    bullet('No parking of vehicles is permitted on the property without prior written consent of Landlord.');
-    bullet('No storage of personal property in common areas (hallways, living room, kitchen).');
-    bullet('No hazardous materials shall be kept on or about the Premises.');
-
-    // S12 PETS
-    section(12, 'Pets');
-    para('No animals of any kind shall be kept on the Premises without the prior written consent of Landlord. Unauthorized pets are grounds for termination of this Agreement.');
-
-    // S13 EARLY TERMINATION
-    section(13, 'Early Termination');
-    row('Notice Required:', earlyTermDays + ' days written notice');
-    if (data.earlyTermFee) row('Early Termination Fee:', '$' + fmt(data.earlyTermFee));
-    para('Tenant may terminate this Agreement early by providing ' + earlyTermDays + ' days advance written notice to Landlord' +
-      (data.earlyTermFee ? ' and paying an early termination fee of $' + fmt(data.earlyTermFee) : '') +
-      '. Tenant remains liable for rent through the notice period or until a new tenant is placed, whichever occurs first.');
-
-    // S14 MILITARY TERMINATION
-    section(14, 'Military Termination Clause');
-    para('If Tenant is a member of the United States Armed Forces and receives orders for a permanent change of station (PCS) or deployment of not less than 90 days, Tenant may terminate this Agreement upon 30 days written notice, per the Servicemembers Civil Relief Act (SCRA) and §55.1-1253 of the VRLTA. Official orders must accompany the notice.');
-
-    // S15 SUBLETTING
-    section(15, 'Subletting & Assignment');
-    para('Tenant shall not sublet the Premises or any portion thereof, nor assign this Agreement, without the prior written consent of Landlord. Any unauthorized subletting or assignment shall be grounds for immediate termination.');
-
-    // S16 ESTOPPEL CERTIFICATE
-    section(16, 'Estoppel Certificate');
-    para('Upon request of Landlord, Tenant shall execute and deliver, within three (3) days, a written estoppel certificate certifying: (a) that this Agreement is unmodified and in full force; (b) the amount of monthly rent and date through which rent has been paid; (c) the amount of any security deposit; and (d) whether Tenant has any claims against Landlord.');
-
-    // S17 SALE OF PROPERTY
-    section(17, 'Sale of Property');
-    para('In the event Landlord sells the property, Tenant shall be provided 30 days written notice of termination, or this Agreement shall transfer to the new owner in accordance with Virginia law.');
-
-    // S18 RENTERS INSURANCE
-    section(18, "Renter's Insurance");
-    if (data.requiresRentersInsurance) {
-      row('Required:', 'Yes');
-      if (data.rentersInsuranceMinLiability) row('Minimum Liability Coverage:', '$' + fmt(data.rentersInsuranceMinLiability));
-      para("Tenant is required to obtain and maintain renter's insurance with a minimum liability coverage of $" + fmt(data.rentersInsuranceMinLiability || 100000) + " throughout the term of this Agreement. Tenant shall provide proof of insurance to Landlord within 14 days of executing this Agreement.");
-    } else {
-      para("Renter's insurance is not required under this Agreement but is strongly recommended. Landlord's insurance does not cover Tenant's personal property.");
-    }
-
-    // S19 VRLTA
-    section(19, 'Virginia Residential Landlord and Tenant Act');
-    para('This Agreement is governed by the VRLTA, Chapter 12, Title 55.1, Code of Virginia. In the event of any conflict between this Agreement and the VRLTA, the VRLTA shall control. See: https://law.lis.virginia.gov/vacode/title55.1/chapter12/');
-
-    // S20 GENERAL PROVISIONS
-    section(20, 'General Provisions');
-    bullet('Governing Law: Commonwealth of Virginia. Venue: City of Norfolk, Virginia.');
-    bullet('Entire Agreement: This Agreement supersedes all prior oral and written negotiations. Modifications must be in writing and signed by both parties.');
-    bullet('Severability: If any provision is unenforceable, the remainder shall remain in full force.');
-    bullet('Waiver: Failure to enforce any provision shall not constitute a waiver of future enforcement.');
-    bullet('Notices: All notices shall be in writing, delivered in person, by certified mail, or by email.');
-    if (data.notes) {
-      doc.moveDown(0.4);
-      para('Additional Notes: ' + data.notes);
-    }
-
-    // S21 MOVE-IN INSPECTION CHECKLIST
-    checkPageBreak(200);
-    section(21, 'Move-In Inspection Checklist');
-    para('Tenant and Landlord shall complete this checklist at move-in. Condition: G = Good, F = Fair, P = Poor.');
-
-    var areas = [
-      { area: 'Kitchen',     items: ['Countertops', 'Cabinets', 'Sink/Faucet', 'Refrigerator', 'Stove/Oven', 'Dishwasher', 'Microwave'] },
-      { area: 'Living Room', items: ['Walls/Ceiling', 'Floors', 'Windows', 'Doors', 'Light Fixtures', 'TV'] },
-      { area: 'Hallways',    items: ['Walls', 'Floors', 'Lighting'] },
-      { area: 'Tenant Room', items: ['Walls/Ceiling', 'Floors', 'Windows', 'Door/Lock', 'Closet', 'Bed', 'Other Furniture'] },
-      { area: 'Bathroom',    items: ['Toilet', 'Sink/Faucet', 'Shower/Tub', 'Mirror', 'Ventilation'] },
-    ];
-
-    var checkColW = W / 4;
-    areas.forEach(function(areaObj) {
-      checkPageBreak(areaObj.items.length * 18 + 30);
-      var aY = doc.y;
-      doc.rect(L, aY, W, 16).fill('#f1f5f9');
-      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK)
-         .text(areaObj.area, L + 6, aY + 3, { width: checkColW * 2 })
-         .text('Move-In', L + checkColW * 2, aY + 3, { width: checkColW, align: 'center' })
-         .text('Move-Out', L + checkColW * 3, aY + 3, { width: checkColW - 6, align: 'center' });
-      doc.y = aY + 18;
-      areaObj.items.forEach(function(item, i) {
-        var rY = doc.y;
-        if (i % 2 === 0) doc.rect(L, rY, W, 15).fill('#f8fafc');
-        doc.rect(L, rY, W, 15).stroke(LINE);
-        doc.font('Helvetica').fontSize(8).fillColor(DARK)
-           .text(item, L + 6, rY + 3, { width: checkColW * 2 - 12 });
-        doc.rect(L + checkColW * 2 + checkColW / 2 - 20, rY + 2, 40, 11).stroke(LINE);
-        doc.rect(L + checkColW * 3 + checkColW / 2 - 20, rY + 2, 40, 11).stroke(LINE);
-        doc.y = rY + 15;
-      });
-      doc.moveDown(0.4);
-    });
-
-    doc.moveDown(0.5);
-    para('Additional notes on move-in condition:');
-    doc.rect(L, doc.y, W, 36).stroke(LINE);
-    doc.y += 40;
-
-    // SIGNATURE PAGE
-    checkPageBreak(220);
-    doc.moveDown(0.8);
-    var sigBarY = doc.y;
-    doc.rect(L, sigBarY, W, 3).fill(BLUE);
-    doc.font('Helvetica-Bold').fontSize(12).fillColor(DARK)
-       .text('SIGNATURES', L, sigBarY + 10, { align: 'center', width: W });
-    doc.moveDown(2);
-    para('By signing below, both parties agree to the terms and conditions of this Agreement.');
-    doc.moveDown(0.8);
-
-    var halfW = (W - 48) / 2;
-
-    function sigBlock(label, name, date, xOffset) {
-      var x = L + xOffset;
-      var startY = doc.y;
-      doc.font('Helvetica-Bold').fontSize(9).fillColor(GRAY).text(label, x, startY, { width: halfW });
-      doc.y = startY + 18;
-      doc.rect(x, doc.y, halfW, 0.5).fill('#aaaaaa');
-      doc.font('Helvetica').fontSize(9).fillColor(DARK).text(name || ' ', x, doc.y + 2, { width: halfW });
-      doc.font('Helvetica').fontSize(7.5).fillColor(GRAY).text('Signature', x, doc.y + 12, { width: halfW });
-      doc.y += 30;
-      doc.rect(x, doc.y, halfW, 0.5).fill('#aaaaaa');
-      doc.font('Helvetica').fontSize(9).fillColor(DARK).text(name || ' ', x, doc.y + 2, { width: halfW });
-      doc.font('Helvetica').fontSize(7.5).fillColor(GRAY).text('Printed Name', x, doc.y + 12, { width: halfW });
-      doc.y += 30;
-      doc.rect(x, doc.y, halfW, 0.5).fill('#aaaaaa');
-      doc.font('Helvetica').fontSize(9).fillColor(DARK).text(date ? fmtDateShort(date) : ' ', x, doc.y + 2, { width: halfW });
-      doc.font('Helvetica').fontSize(7.5).fillColor(GRAY).text('Date', x, doc.y + 12, { width: halfW });
-      doc.y += 30;
-    }
-
-    var preY = doc.y;
-    sigBlock('LANDLORD / AUTHORIZED AGENT', data.landlordName, data.startDate, 0);
-    doc.y = preY;
-    sigBlock('TENANT', data.tenantName, data.startDate, halfW + 48);
-
-    if (data.propertyManagerName) {
-      doc.moveDown(1.5);
-      var pmY = doc.y;
-      sigBlock('PROPERTY MANAGER', data.propertyManagerName, data.startDate, 0);
-      doc.y = pmY;
-      if (data.coLandlordName) {
-        sigBlock('CO-LANDLORD', data.coLandlordName, data.startDate, halfW + 48);
-      }
-    }
-
-    // FOOTER on each page
-    var totalPages = doc.bufferedPageRange().count;
-    for (var pi = 0; pi < totalPages; pi++) {
-      doc.switchToPage(pi);
-      var fY = doc.page.height - 40;
-      doc.rect(L, fY - 6, W, 0.5).fill(BLUE);
-      doc.font('Helvetica').fontSize(7.5).fillColor(GRAY)
-         .text(
-           '743 A Ave, Norfolk VA 23504  ·  Lease ID: ' + data.leaseId + '  ·  Page ' + (pi + 1) + ' of ' + totalPages + '  ·  VRLTA Compliant',
-           L, fY, { align: 'center', width: W }
-         );
-    }
-
+    doc.pipe(stream);
+    draw(doc);
     doc.end();
   });
 }
 
-module.exports = { generateLeasePdf };
+function buildLeaseLayout(doc, lease) {
+  const left = 72;
+  const width = doc.page.width - 144;
+  const dark = '#111827';
+  const muted = '#4b5563';
+  const blue = '#1e40af';
+  const lightBlue = '#dbeafe';
+  const line = '#d1d5db';
+  const roomDescription = `${titleCase(lease.roomType)} room${lease.unitNumber ? ` ${lease.unitNumber}` : ''}`;
+  const landlordNames = LEASE_PARTIES.landlords.map((party) => party.name).join(' and ');
+  const propertyManager = LEASE_PARTIES.propertyManager;
+
+  function pageBreak(needed = 100) {
+    if (doc.y + needed > doc.page.height - 72) doc.addPage();
+  }
+
+  function paragraph(text, options = {}) {
+    pageBreak(options.needed || 70);
+    doc.font('Helvetica').fontSize(9.5).fillColor(dark)
+      .text(text, left, doc.y, { width, align: 'left', lineGap: 2, ...options });
+    doc.moveDown(0.65);
+  }
+
+  function bullet(text) {
+    pageBreak(30);
+    doc.font('Helvetica').fontSize(9.5).fillColor(dark)
+      .text(`- ${text}`, left + 14, doc.y, { width: width - 14, lineGap: 2 });
+    doc.moveDown(0.35);
+  }
+
+  function row(label, value) {
+    pageBreak(24);
+    const y = doc.y;
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(muted)
+      .text(label, left, y, { width: 150 });
+    doc.font('Helvetica').fontSize(9).fillColor(dark)
+      .text(String(value ?? ''), left + 155, y, { width: width - 155 });
+    doc.moveDown(0.45);
+  }
+
+  function section(number, title) {
+    pageBreak(72);
+    doc.moveDown(0.5);
+    const y = doc.y;
+    doc.rect(left, y, width, 22).fill(lightBlue);
+    doc.font('Helvetica-Bold').fontSize(10).fillColor(blue)
+      .text(`${number}. ${title.toUpperCase()}`, left + 8, y + 6, { width: width - 16 });
+    doc.y = y + 32;
+  }
+
+  function signatureBlock(label, name, x, y) {
+    const blockWidth = (width - 36) / 2;
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(muted)
+      .text(label, x, y, { width: blockWidth });
+    doc.rect(x, y + 34, blockWidth, 0.5).fill(line);
+    doc.font('Helvetica').fontSize(9).fillColor(dark)
+      .text(name || '', x, y + 38, { width: blockWidth });
+    doc.font('Helvetica').fontSize(7.5).fillColor(muted)
+      .text('Signature', x, y + 51, { width: blockWidth });
+    doc.rect(x, y + 82, blockWidth, 0.5).fill(line);
+    doc.font('Helvetica').fontSize(9).fillColor(dark)
+      .text(name || '', x, y + 86, { width: blockWidth });
+    doc.font('Helvetica').fontSize(7.5).fillColor(muted)
+      .text('Printed Name', x, y + 99, { width: blockWidth });
+    doc.rect(x, y + 130, blockWidth, 0.5).fill(line);
+    doc.font('Helvetica').fontSize(7.5).fillColor(muted)
+      .text('Date', x, y + 134, { width: blockWidth });
+  }
+
+  doc.rect(left, 56, width, 3).fill(blue);
+  doc.font('Helvetica-Bold').fontSize(17).fillColor(dark)
+    .text('MONTERO RENTALS VIRGINIA ROOM LEASE', left, 72, { width, align: 'center' });
+  doc.font('Helvetica').fontSize(9).fillColor(muted)
+    .text(`Generated for ${PROPERTY_ADDRESS.full}`, left, 96, { width, align: 'center' });
+  doc.rect(left, 112, width, 3).fill(blue);
+  doc.y = 140;
+
+  section(1, 'Parties');
+  paragraph('This Virginia room lease agreement is entered into by the Landlord, the Property Manager acting as agent for Landlord, and the Tenant identified below.');
+  row('Landlord:', landlordNames);
+  row('Property Manager:', `${propertyManager.name}, ${propertyManager.title}`);
+  row('Tenant:', lease.tenantName || '_______________');
+
+  section(2, 'Property and Room');
+  row('Property:', PROPERTY_ADDRESS.full);
+  row('Room:', roomDescription);
+  paragraph(`Landlord leases to Tenant the private ${roomDescription} at ${PROPERTY_ADDRESS.full}, together with shared use of common areas including the kitchen, bathrooms, laundry area, living areas, hallways, and other common areas designated by Landlord or Property Manager.`);
+  paragraph('Tenant shall use the room and shared areas only as a residence. Tenant may not assign this Agreement or sublet the room without prior written consent from Landlord or Property Manager.');
+
+  section(3, 'Term');
+  row('Start Date:', formatDate(lease.startDate));
+  row('End Date:', formatDate(lease.endDate));
+  paragraph('The lease term begins on the start date and ends on the end date listed above unless renewed or terminated earlier according to this Agreement and applicable Virginia law.');
+
+  section(4, 'Rent and Payment');
+  row('Monthly Rent:', `$${currency(lease.monthlyRent)}`);
+  row('Rent Due:', '1st day of each month');
+  row('Grace Period:', `${lease.gracePeriodDays} day${lease.gracePeriodDays === 1 ? '' : 's'}`);
+  row('Late Fee:', `$${currency(lease.lateFeeAmount)} flat fee`);
+  row('NSF / Returned Payment Fee:', `$${currency(lease.nsfFee)} per occurrence`);
+  paragraph(`Tenant shall pay monthly rent of $${currency(lease.monthlyRent)} through the Montero tenant portal. Accepted portal payment methods are card, ACH, and Cash App Pay. Rent is due on the 1st day of each month.`);
+  paragraph(`If rent is not received after the ${lease.gracePeriodDays}-day grace period, Tenant owes a late fee of $${currency(lease.lateFeeAmount)}. Returned or rejected payments incur an NSF fee of $${currency(lease.nsfFee)} per occurrence.`);
+
+  section(5, 'Security Deposit');
+  row('Security Deposit:', `$${currency(lease.securityDeposit)}`);
+  paragraph(`Tenant shall pay a security deposit of $${currency(lease.securityDeposit)}. Landlord will hold and return the deposit, less lawful deductions, according to the Virginia Residential Landlord and Tenant Act.`);
+
+  section(6, 'Utilities');
+  paragraph('Utilities are shared for the property. Tenant is responsible for the assigned share of utilities and must review, receive, and pay utility charges through the Montero tenant portal unless Property Manager provides written instructions otherwise.');
+  paragraph('Utility allocations may include electricity, water, sewer, gas, internet, trash, or other shared services serving the property.');
+
+  section(7, 'Entry');
+  paragraph('Landlord or Property Manager may enter the room or shared areas as allowed by Virginia law, including for inspection, repairs, maintenance, services, showings, emergencies, or other lawful purposes. Except in emergencies or as otherwise allowed by law, reasonable notice will be provided before entry into the tenant room.');
+
+  section(8, 'House Rules');
+  bullet(`Smoking permitted: ${lease.houseRules.smoking ? 'Yes' : 'No'}.`);
+  bullet(`Pets permitted: ${lease.houseRules.pets ? 'Yes' : 'No'}.`);
+  bullet(`Quiet hours: ${lease.houseRules.quietHours}.`);
+  bullet(`Guest overnight limit: ${lease.houseRules.guestNights} night${lease.houseRules.guestNights === 1 ? '' : 's'} unless Property Manager approves otherwise in writing.`);
+  bullet('Tenant shall keep the room clean, protect shared spaces, promptly report maintenance issues, and avoid disturbing other occupants.');
+
+  section(9, 'Furnishings and Damage Schedule');
+  paragraph('The following furnishings, fixtures, or shared items may be supplied for the room or common areas:');
+  lease.furnishings.forEach((item) => bullet(item));
+  paragraph('Tenant is responsible for damage beyond ordinary wear and tear. The following default damage schedule may be used unless actual repair or replacement costs differ:');
+  pageBreak(lease.damageCharges.length * 22 + 40);
+  const tableY = doc.y;
+  doc.rect(left, tableY, width, 18).fill(lightBlue);
+  doc.font('Helvetica-Bold').fontSize(9).fillColor(blue)
+    .text('Item', left + 6, tableY + 4, { width: width * 0.65 })
+    .text('Charge', left + width * 0.65, tableY + 4, { width: width * 0.35 - 6, align: 'right' });
+  doc.y = tableY + 22;
+  lease.damageCharges.forEach((charge, index) => {
+    const rowY = doc.y;
+    if (index % 2 === 1) doc.rect(left, rowY - 2, width, 18).fill('#f8fafc');
+    doc.font('Helvetica').fontSize(9).fillColor(dark)
+      .text(charge.item, left + 6, rowY, { width: width * 0.65 })
+      .text(`$${currency(charge.amount)}`, left + width * 0.65, rowY, { width: width * 0.35 - 6, align: 'right' });
+    doc.y = rowY + 18;
+  });
+
+  section(10, 'Governing Law');
+  paragraph('This Agreement is governed by the laws of the Commonwealth of Virginia, including the Virginia Residential Landlord and Tenant Act (VRLTA), Chapter 12 of Title 55.1 of the Code of Virginia, to the extent applicable.');
+  paragraph('Venue for disputes concerning the property is the appropriate court serving Norfolk, Virginia.');
+
+  section(11, 'Signature Blocks');
+  paragraph('By signing below, Tenant and Property Manager acting as agent for Landlord agree to the terms of this Montero Rentals Virginia room lease.');
+  pageBreak(180);
+  const sigY = doc.y + 12;
+  signatureBlock('TENANT', lease.tenantName || '', left, sigY);
+  signatureBlock('PROPERTY MANAGER AS AGENT', propertyManager.name, left + ((width - 36) / 2) + 36, sigY);
+  doc.y = sigY + 166;
+
+  const totalPages = doc.bufferedPageRange().count;
+  for (let i = 0; i < totalPages; i += 1) {
+    doc.switchToPage(i);
+    const footerY = doc.page.height - 42;
+    doc.rect(left, footerY - 6, width, 0.5).fill(blue);
+    doc.font('Helvetica').fontSize(7.5).fillColor(muted)
+      .text(
+        `${PROPERTY_ADDRESS.full} - Lease ID: ${lease.leaseId} - Page ${i + 1} of ${totalPages} - VRLTA`,
+        left,
+        footerY,
+        { width, align: 'center' },
+      );
+  }
+}
+
+async function generateRoomLeasePdf(data) {
+  ensureDocumentsDir();
+  const lease = normalizeLeaseData(data || {});
+  const filename = `lease-${safeFilePart(lease.leaseId)}.pdf`;
+  const filepath = path.join(DOCS_DIR, filename);
+
+  await writePdf(filepath, (doc) => buildLeaseLayout(doc, lease));
+  return leaseResult(filename, filepath);
+}
+
+function imageBufferFromDataUrl(dataUrl) {
+  if (!dataUrl) return null;
+  const match = String(dataUrl).match(/^data:image\/(png|jpe?g);base64,(.+)$/i);
+  if (!match) return null;
+  return { mime: match[1].toLowerCase(), buffer: Buffer.from(match[2], 'base64') };
+}
+
+async function embedSignatureImage(pdfDoc, imageDataUrl) {
+  const parsed = imageBufferFromDataUrl(imageDataUrl);
+  if (!parsed) return null;
+  if (parsed.mime === 'png') {
+    return pdfDoc.embedPng(parsed.buffer);
+  }
+  return pdfDoc.embedJpg(parsed.buffer);
+}
+
+async function buildSignaturePage(pdfDoc, sourcePath, signatures) {
+  const page = pdfDoc.addPage([612, 792]);
+  const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  const { width, height } = page.getSize();
+  const margin = 72;
+  const contentWidth = width - margin * 2;
+  const dark = rgb(0.07, 0.09, 0.15);
+  const blue = rgb(0.12, 0.25, 0.69);
+  const muted = rgb(0.29, 0.34, 0.39);
+  const lightBlue = rgb(0.82, 0.88, 0.98);
+
+  page.drawRectangle({
+    x: margin,
+    y: height - margin - 3,
+    width: contentWidth,
+    height: 3,
+    color: blue,
+  });
+
+  let y = height - margin - 24;
+  page.drawText('MONTERO RENTALS LEASE SIGNATURE PAGE', {
+    x: margin,
+    y,
+    size: 16,
+    font: helveticaBold,
+    color: dark,
+  });
+  y -= 26;
+  page.drawText(`Source document: ${path.basename(sourcePath)}`, {
+    x: margin,
+    y,
+    size: 9,
+    font: helvetica,
+    color: muted,
+  });
+  y -= 14;
+  page.drawText(PROPERTY_ADDRESS.full, {
+    x: margin,
+    y,
+    size: 9,
+    font: helvetica,
+    color: muted,
+  });
+  y -= 20;
+  page.drawRectangle({
+    x: margin,
+    y: y - 1,
+    width: contentWidth,
+    height: 1,
+    color: lightBlue,
+  });
+  y -= 28;
+
+  const rows = Array.isArray(signatures) ? signatures : [];
+  if (rows.length === 0) {
+    page.drawText('No signatures were provided.', {
+      x: margin,
+      y,
+      size: 10,
+      font: helvetica,
+      color: dark,
+    });
+    return;
+  }
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const signature = rows[index];
+
+    page.drawText(`${index + 1}. ${signature.role || 'Signer'}`, {
+      x: margin,
+      y,
+      size: 11,
+      font: helveticaBold,
+      color: dark,
+    });
+    y -= 18;
+    page.drawText(`Name: ${signature.name || ''}`, {
+      x: margin + 20,
+      y,
+      size: 10,
+      font: helvetica,
+      color: dark,
+    });
+    y -= 16;
+    page.drawText(`Signed at: ${formatDateTime(signature.signedAt)}`, {
+      x: margin + 20,
+      y,
+      size: 10,
+      font: helvetica,
+      color: dark,
+    });
+    y -= 16;
+
+    if (signature.imageDataUrl) {
+      const image = await embedSignatureImage(pdfDoc, signature.imageDataUrl);
+      if (image) {
+        const maxWidth = 180;
+        const maxHeight = 48;
+        const scale = Math.min(maxWidth / image.width, maxHeight / image.height, 1);
+        const drawWidth = image.width * scale;
+        const drawHeight = image.height * scale;
+        page.drawImage(image, {
+          x: margin + 20,
+          y: y - drawHeight,
+          width: drawWidth,
+          height: drawHeight,
+        });
+        y -= drawHeight + 12;
+      } else {
+        page.drawText('Signature image: invalid or unsupported format', {
+          x: margin + 20,
+          y,
+          size: 8,
+          font: helvetica,
+          color: muted,
+        });
+        y -= 14;
+      }
+    } else {
+      page.drawText('Signature: typed / electronic acknowledgment', {
+        x: margin + 20,
+        y,
+        size: 8,
+        font: helvetica,
+        color: muted,
+      });
+      y -= 14;
+    }
+
+    y -= 20;
+  }
+}
+
+async function flattenSignaturesOntoPdf({ sourcePath, outputFilename, signatures }) {
+  if (!sourcePath) {
+    throw new Error('sourcePath is required');
+  }
+  if (!fs.existsSync(sourcePath)) {
+    throw new Error(`Source PDF not found: ${sourcePath}`);
+  }
+
+  ensureDocumentsDir();
+  const sourceBase = path.basename(sourcePath, '.pdf');
+  const filename = path.basename(outputFilename || `${sourceBase}-signed.pdf`);
+  const filepath = path.join(DOCS_DIR, filename);
+
+  const sourceBuffer = fs.readFileSync(sourcePath);
+  const pdfDoc = await PdfLibDocument.load(sourceBuffer);
+  await buildSignaturePage(pdfDoc, sourcePath, signatures);
+  const signedBuffer = await pdfDoc.save();
+  fs.writeFileSync(filepath, signedBuffer);
+
+  return leaseResult(filename, filepath);
+}
+
+module.exports = {
+  generateRoomLeasePdf,
+  generateLeasePdf: generateRoomLeasePdf,
+  flattenSignaturesOntoPdf,
+};

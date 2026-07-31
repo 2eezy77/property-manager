@@ -11,7 +11,8 @@
  *   POST /api/payments/charge                  — ACH debit for rent + applied late fees
  *   GET  /api/payments/stripe-config           — tenant: Stripe publishable key + Cash App Pay flag
  *   GET  /api/payments/config                  — alias (publishableKey + cashAppEnabled)
- *   POST /api/payments/cashapp/create-intent   — tenant: start Cash App Pay rent payment
+ *   POST /api/payments/cashapp/create-intent   — tenant: start Cash App Pay rent/deposit payment
+ *   POST /api/payments/card/create-intent      — tenant: start card rent/deposit payment
  *   GET  /api/payments/cashapp/sync            — tenant: sync status after Cash App redirect
  *   POST /api/payments/run-billing             — staff: generate invoices + apply late fees
  *   GET  /api/payments/health                  — staff: Stripe/Plaid/webhook/tenant readiness
@@ -43,7 +44,8 @@ const { markLateFeesPaidForLease, settleSuccessfulRentPayment } = require('../ut
 const { getRentStatusRoster } = require('../services/rent-status.service');
 const { syncCashAppFromGmail } = require('../services/cashapp-gmail.service');
 const { runPaymentsHealth } = require('../services/payments-health.service');
-const { prepareTenantCharge } = require('../services/rent-charge.service');
+const { prepareTenantCharge, assertNoInFlightDeposit, cancelReplacedDepositPaymentIntent } = require('../services/rent-charge.service');
+const { activateNativeLeaseAfterDeposit } = require('../services/native-lease-activate.service');
 const {
   computeCardCashAppFee,
   feeMetadata,
@@ -57,6 +59,7 @@ const {
 } = require('../services/plaid-bank-link.service');
 
 const MANUAL_METHODS = new Set(['cash_app', 'check', 'zelle', 'venmo', 'wire', 'cash', 'other']);
+const CLIENT_INTENT_PAYMENT_TYPES = new Set(['rent', 'security_deposit']);
 
 async function accessiblePropertyIds(userId, role) {
   if (['super_admin', 'owner'].includes(role)) {
@@ -80,6 +83,12 @@ function monthBounds(date = new Date()) {
     start: start.toISOString().slice(0, 10),
     end: end.toISOString().slice(0, 10),
   };
+}
+
+function isStripeAccountRestrictionError(err) {
+  return /charges_enabled|charges enabled|account.*restricted|capabilit/i.test(
+    `${err.code || ''} ${err.message || ''} ${err.raw?.message || ''}`
+  );
 }
 
 const router = express.Router();
@@ -355,15 +364,18 @@ router.delete('/bank-accounts/:id', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/balance', Guards.tenantOnly, async (req, res) => {
   try {
-    // Active lease for this tenant
+    // Active lease for rent, or awaiting-deposit native lease so tenants can finish deposit payment.
     const { rows: leaseRows } = await pool.query(
-      `SELECT l.id AS lease_id, l.monthly_rent, l.grace_period_days,
+      `SELECT l.id AS lease_id, l.status, l.monthly_rent, l.grace_period_days,
               u.unit_number, p.name AS property_name,
               p.address_line1, p.city, p.state
          FROM leases l
          JOIN units      u ON u.id = l.unit_id
          JOIN properties p ON p.id = u.property_id
-        WHERE l.tenant_id = $1 AND l.status = 'active'
+        WHERE l.tenant_id = $1
+          AND l.status IN ('active', 'awaiting_deposit')
+        ORDER BY CASE WHEN l.status = 'active' THEN 0 ELSE 1 END,
+                 l.start_date DESC
         LIMIT 1`,
       [req.user.id]
     );
@@ -452,6 +464,7 @@ router.get('/balance', Guards.tenantOnly, async (req, res) => {
     res.json({
       lease: {
         id:           lease.lease_id,
+        status:       lease.status,
         unit:         `${lease.property_name} — Unit ${lease.unit_number}`,
         address:      `${lease.address_line1}, ${lease.city}, ${lease.state}`,
         monthlyRent,
@@ -495,6 +508,9 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
   if (!bankAccountId || !leaseId) {
     return res.status(400).json({ error: 'MISSING_PARAMS' });
   }
+  if (!CLIENT_INTENT_PAYMENT_TYPES.has(paymentType)) {
+    return res.status(400).json({ error: 'UNSUPPORTED_TYPE' });
+  }
 
   const client = await pool.connect();
   try {
@@ -527,8 +543,13 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
     // 2. Verify the lease belongs to this tenant
     const { rows: leaseRows } = await client.query(
       `SELECT id, monthly_rent, tenant_id FROM leases
-        WHERE id = $1 AND tenant_id = $2 AND status = 'active'`,
-      [leaseId, req.user.id]
+        WHERE id = $1
+          AND tenant_id = $2
+          AND (
+            ($3 = 'security_deposit' AND status IN ('active', 'awaiting_deposit'))
+            OR ($3 = 'rent' AND status = 'active')
+          )`,
+      [leaseId, req.user.id, paymentType]
     );
     const lease = leaseRows[0];
     if (!lease) {
@@ -547,10 +568,14 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
     let chargeMeta = {};
     let payment;
     let pendingPaymentId = null;
+    let rentAmount;
+    let lateFeeAmount;
 
     if (paymentType === 'security_deposit') {
+      await assertNoInFlightDeposit(client, leaseId);
+
       const { rows: depRows } = await client.query(
-        `SELECT id, amount, period_start, period_end, due_date
+        `SELECT id, amount, period_start, period_end, due_date, stripe_payment_intent_id
            FROM payments
           WHERE lease_id = $1 AND payment_type = 'security_deposit'
             AND status = 'pending'
@@ -566,6 +591,8 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
           message: 'No pending security deposit on file.',
         });
       }
+
+      await cancelReplacedDepositPaymentIntent(depRows[0].stripe_payment_intent_id);
       amountDollars = parseFloat(depRows[0].amount);
       amountCents = Math.round(amountDollars * 100);
       description = 'Security deposit';
@@ -589,9 +616,10 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
         }
       }
 
-      const { rentAmount, lateFeeAmount, totalAmount } =
-        await rentBilling.computeChargeBreakdown(client, leaseId);
-      amountDollars = totalAmount;
+      const breakdown = await rentBilling.computeChargeBreakdown(client, leaseId);
+      rentAmount = breakdown.rentAmount;
+      lateFeeAmount = breakdown.lateFeeAmount;
+      amountDollars = breakdown.totalAmount;
       amountCents = Math.round(amountDollars * 100);
 
       const dueDate = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -724,6 +752,10 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
       await markLateFeesPaidForLease(client, leaseId);
     }
 
+    if (localStatus === 'succeeded' && paymentType === 'security_deposit') {
+      await activateNativeLeaseAfterDeposit(client, leaseId);
+    }
+
     await client.query('COMMIT');
 
     if (localStatus === 'succeeded') {
@@ -749,6 +781,12 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
 
   } catch (err) {
     await client.query('ROLLBACK');
+    if (err.code === 'DUPLICATE_PAYMENT') {
+      return res.status(409).json({ error: 'DUPLICATE_PAYMENT', message: err.message });
+    }
+    if (err.code === 'NO_DEPOSIT_DUE') {
+      return res.status(404).json({ error: 'NO_DEPOSIT_DUE', message: err.message });
+    }
     console.error('[payments/charge]', err);
     res.status(500).json({ error: 'CHARGE_FAILED', message: 'Payment could not be initiated.' });
   } finally {
@@ -779,8 +817,8 @@ router.get('/config', Guards.tenantOnly, (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /api/payments/cashapp/create-intent — tenant: Cash App Pay for rent
-// Body: { leaseId, paymentType?: 'rent' }
+// POST /api/payments/cashapp/create-intent — tenant: Cash App Pay for rent/deposit
+// Body: { leaseId, paymentType?: 'rent'|'security_deposit' }
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
   if (blockManagerPaymentAccess(req, res)) return;
@@ -794,10 +832,10 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
 
   const { leaseId, paymentType = 'rent' } = req.body;
   if (!leaseId) return res.status(400).json({ error: 'MISSING_PARAMS' });
-  if (paymentType !== 'rent') {
+  if (!CLIENT_INTENT_PAYMENT_TYPES.has(paymentType)) {
     return res.status(400).json({
       error: 'UNSUPPORTED_TYPE',
-      message: 'Cash App Pay is available for rent only.',
+      message: 'Cash App Pay is available for rent and security deposits.',
     });
   }
 
@@ -861,6 +899,7 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
 
     res.json({
       clientSecret: paymentIntent.client_secret,
+      paymentIntentId: paymentIntent.id,
       paymentId: prep.payment.id,
       amount: fee.totalAmount,
       baseAmount: fee.baseAmount,
@@ -872,6 +911,9 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
     if (err.code === 'LEASE_NOT_FOUND') {
       return res.status(404).json({ error: 'LEASE_NOT_FOUND' });
     }
+    if (err.code === 'NO_DEPOSIT_DUE') {
+      return res.status(404).json({ error: 'NO_DEPOSIT_DUE', message: err.message });
+    }
     if (err.code === 'DUPLICATE_PAYMENT') {
       return res.status(409).json({ error: 'DUPLICATE_PAYMENT', message: err.message });
     }
@@ -880,6 +922,132 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
       ? 'Cash App Pay is not enabled on your Stripe account. Enable it in Stripe Dashboard → Settings → Payment methods.'
       : 'Could not start Cash App payment.';
     res.status(500).json({ error: 'CASHAPP_INTENT_FAILED', message });
+  } finally {
+    client.release();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/payments/card/create-intent — tenant: card payment for rent/deposit
+// Body: { leaseId, paymentType?: 'rent'|'security_deposit', includeFirstMonth?: boolean }
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/card/create-intent', Guards.tenantOnly, async (req, res) => {
+  if (blockManagerPaymentAccess(req, res)) return;
+
+  const { leaseId, paymentType = 'rent', includeFirstMonth = false } = req.body;
+  if (!leaseId) return res.status(400).json({ error: 'MISSING_PARAMS' });
+  if (!CLIENT_INTENT_PAYMENT_TYPES.has(paymentType)) {
+    return res.status(400).json({ error: 'UNSUPPORTED_TYPE' });
+  }
+  if (includeFirstMonth && paymentType !== 'security_deposit') {
+    return res.status(400).json({
+      error: 'UNSUPPORTED_BUNDLE',
+      message: 'First-month bundling is only available with security deposits.',
+    });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const prep = await prepareTenantCharge(client, {
+      tenantId: req.user.id,
+      leaseId,
+      paymentType,
+      bankAccountId: null,
+      metadataExtra: {
+        payment_method: 'card',
+        source: 'stripe_card',
+        ...(includeFirstMonth ? { include_first_month: 'true' } : {}),
+      },
+    });
+
+    let amountDollars = prep.amountDollars;
+    let amountCents = prep.amountCents;
+    const bundleMeta = {};
+    if (includeFirstMonth) {
+      const firstMonthRent = parseFloat(prep.lease.monthly_rent);
+      amountDollars += firstMonthRent;
+      amountCents += Math.round(firstMonthRent * 100);
+      bundleMeta.include_first_month = 'true';
+      bundleMeta.bundled_first_month_rent = firstMonthRent.toFixed(2);
+    }
+
+    const { rows: [userRow] } = await client.query(
+      `SELECT first_name, last_name, email FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    const customerId = await stripe.getOrCreateCustomer(req.user.id, userRow.email);
+
+    // Tenant pays 2.9%+$0.30 on card; ledger payment.amount stays base.
+    const fee = computeCardCashAppFee(amountCents);
+    const feeMeta = feeMetadata(fee);
+
+    const paymentIntent = await stripe.createCardPaymentIntent({
+      amountCents: fee.totalCents,
+      customerId,
+      description: includeFirstMonth
+        ? `${prep.description} + first month rent (incl. processing fee)`
+        : `${prep.description} (incl. processing fee)`,
+      metadata: {
+        payment_id: prep.payment.id,
+        lease_id: leaseId,
+        tenant_id: req.user.id,
+        payment_type: paymentType,
+        ...prep.chargeMeta,
+        ...bundleMeta,
+        ...feeMeta,
+      },
+    });
+
+    await client.query(
+      `UPDATE payments
+          SET stripe_payment_intent_id = $1,
+              metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+              updated_at = NOW()
+        WHERE id = $3`,
+      [
+        paymentIntent.id,
+        JSON.stringify({
+          payment_method: 'card',
+          source: 'stripe_card',
+          ...bundleMeta,
+          ...feeMeta,
+        }),
+        prep.payment.id,
+      ]
+    );
+
+    await client.query('COMMIT');
+
+    res.json({
+      clientSecret: paymentIntent.client_secret,
+      paymentIntentId: paymentIntent.id,
+      paymentId: prep.payment.id,
+      amount: fee.totalAmount,
+      baseAmount: fee.baseAmount,
+      processingFee: fee.processingFee,
+      publishableKey: stripe.getPublishableKey(),
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.code === 'LEASE_NOT_FOUND') {
+      return res.status(404).json({ error: 'LEASE_NOT_FOUND' });
+    }
+    if (err.code === 'NO_DEPOSIT_DUE') {
+      return res.status(404).json({ error: 'NO_DEPOSIT_DUE', message: err.message });
+    }
+    if (err.code === 'DUPLICATE_PAYMENT') {
+      return res.status(409).json({ error: 'DUPLICATE_PAYMENT', message: err.message });
+    }
+    if (isStripeAccountRestrictionError(err)) {
+      return res.status(503).json({
+        error: 'STRIPE_ACCOUNT_RESTRICTED',
+        message: err.message,
+      });
+    }
+    console.error('[payments/card/create-intent]', err);
+    res.status(500).json({ error: 'CARD_INTENT_FAILED', message: 'Could not start card payment.' });
   } finally {
     client.release();
   }

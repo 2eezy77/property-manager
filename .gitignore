@@ -35,3 +35,9 @@ uploads/
 
 # Plaid/compliance uploads (may contain PII — do not commit)
 assets/compliance/
+
+# Session-uploaded lease samples / templates with tenant PII — do not commit
+documents/leases/
+
+# Generated room lease PDFs (may contain tenant PII)
+documents/lease-*.pdf

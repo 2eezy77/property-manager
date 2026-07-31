@@ -23,6 +23,8 @@ export default defineConfig(({ mode }) => {
         '/auth': { target: apiTarget, changeOrigin: true },
         '/api': { target: apiTarget, changeOrigin: true },
         '/uploads': { target: apiTarget, changeOrigin: true },
+        // Native lease PDFs are served by Express from /documents
+        '/documents': { target: apiTarget, changeOrigin: true },
         '/dev': { target: apiTarget, changeOrigin: true },
       },
     },
