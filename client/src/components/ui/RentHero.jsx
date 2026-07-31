@@ -31,12 +31,19 @@ export default function RentHero({ balance, propertyLabel, onPay, payHref = '/te
   }
 
   const { lease, currentPayment, lateFeeBalance } = balance;
-  const isPaid    = currentPayment?.status === 'succeeded';
+  const rentPaid = currentPayment?.status === 'succeeded'
+    || (typeof balance.rentRemaining === 'number' && balance.rentRemaining <= 0.009);
   const isProc    = currentPayment?.status === 'processing';
-  const totalDue  = (lease.monthlyRent ?? 0) + (lateFeeBalance ?? 0);
-  const dueDate   = currentPayment?.due_date ?? lease.nextDueDate;
+  // Prefer API totalDue (accounts for succeeded rent this month); fall back for older payloads
+  const totalDue  = typeof balance.totalDue === 'number'
+    ? balance.totalDue
+    : (lease.monthlyRent ?? 0) + (lateFeeBalance ?? 0);
+  const isPaid    = rentPaid && totalDue <= 0.009;
+  const dueDate   = isPaid || rentPaid
+    ? (lease.nextDueDate ?? currentPayment?.due_date)
+    : (currentPayment?.due_date ?? lease.nextDueDate);
   const days      = daysUntil(dueDate);
-  const overdue   = !isPaid && !isProc && days !== null && days < 0;
+  const overdue   = !isPaid && !isProc && !rentPaid && totalDue > 0.009 && days !== null && days < 0;
   const address   = propertyLabel ?? lease.unit ?? lease.address ?? '743 A Ave, Norfolk VA';
 
   const statusPill = isPaid
@@ -47,7 +54,15 @@ export default function RentHero({ balance, propertyLabel, onPay, payHref = '/te
         ? 'bg-red-500/40 text-white'
         : 'bg-white/15 text-white/90';
 
-  const statusText = isPaid ? 'Paid this month' : isProc ? 'Processing' : overdue ? 'Overdue' : 'Due soon';
+  const statusText = isPaid
+    ? 'Paid this month'
+    : isProc
+      ? 'Processing'
+      : overdue
+        ? 'Overdue'
+        : rentPaid && lateFeeBalance > 0
+          ? 'Late fees due'
+          : 'Due soon';
 
   return (
     <section
@@ -79,18 +94,24 @@ export default function RentHero({ balance, propertyLabel, onPay, payHref = '/te
           {fmt(totalDue)}
         </p>
         <p className="mt-2 text-sm text-white/75">
-          Due {fmtDate(dueDate)}
-          {days !== null && !isPaid && !isProc && (
-            <span className="ml-2 font-semibold">
-              {overdue ? `${Math.abs(days)} days overdue` : `in ${days} days`}
-            </span>
+          {isPaid ? (
+            <>Next due {fmtDate(dueDate)}</>
+          ) : (
+            <>
+              Due {fmtDate(dueDate)}
+              {days !== null && !isProc && !rentPaid && (
+                <span className="ml-2 font-semibold">
+                  {overdue ? `${Math.abs(days)} days overdue` : `in ${days} days`}
+                </span>
+              )}
+            </>
           )}
         </p>
         {lateFeeBalance > 0 && (
           <p className="mt-1 text-xs text-red-200">Includes {fmt(lateFeeBalance)} in late fees</p>
         )}
 
-        {!isPaid && !isProc && !hidePayAction && (
+        {!isPaid && !isProc && totalDue > 0.009 && !hidePayAction && (
           onPay ? (
             <button
               type="button"
