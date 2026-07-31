@@ -55,6 +55,21 @@ function chargeIdFromIntent(pi) {
   return typeof pi.latest_charge === 'string' ? pi.latest_charge : pi.latest_charge?.id ?? null;
 }
 
+function paymentIntentLikeFromCharge(charge) {
+  const type = charge.payment_method_details?.type;
+  const payment_method_types =
+    type === 'cashapp' ? ['cashapp']
+    : type === 'card' ? ['card']
+    : type === 'us_bank_account' ? ['us_bank_account']
+    : [];
+  return {
+    id: charge.payment_intent || charge.id,
+    latest_charge: charge.id,
+    metadata: charge.metadata || {},
+    payment_method_types,
+  };
+}
+
 /** Skip duplicate webhook deliveries; never re-settle an already-succeeded payment. */
 async function findPaymentForIntent(piId) {
   const { rows } = await pool.query(
@@ -318,6 +333,43 @@ async function updateLeaseSigningFeeByCharge(charge, { status }) {
   return true;
 }
 
+async function settleSecurityDepositSuccess(client, {
+  paymentId,
+  leaseId,
+  tenantId,
+  amount,
+  pi,
+  eventId,
+}) {
+  await activateNativeLeaseAfterDeposit(client, leaseId);
+
+  const bundledRentPayment = await insertBundledFirstMonthRent(client, {
+    pi,
+    eventId,
+    leaseId,
+    tenantId,
+  });
+  if (bundledRentPayment) {
+    await processSplits(client, bundledRentPayment.id, leaseId, bundledRentPayment.amount, pi);
+  }
+
+  await client.query(
+    `INSERT INTO notifications
+       (user_id, type, title, body, channel, related_entity_type, related_entity_id, sent_at)
+     VALUES ($1, 'rent_received',
+             'Security Deposit Confirmed',
+             $2,
+             'push', 'payment', $3, NOW())`,
+    [
+      tenantId,
+      `Your security deposit of $${parseFloat(amount).toFixed(2)} has been confirmed.`,
+      paymentId,
+    ]
+  );
+
+  return bundledRentPayment;
+}
+
 // ── charge.pending ────────────────────────────────────────────────────────────
 async function onChargeProcessing(charge, eventId) {
   await pool.query(
@@ -350,6 +402,7 @@ async function onChargeSucceeded(charge, eventId) {
   // body but match by stripe_charge_id.
   const client = await pool.connect();
   let utilityBillId = null;
+  let bundledRentPayment = null;
   try {
     await client.query('BEGIN');
 
@@ -373,7 +426,16 @@ async function onChargeSucceeded(charge, eventId) {
 
     const { id: paymentId, lease_id, tenant_id, amount, payment_type } = rows[0];
 
-    if (payment_type === 'identity_verification_fee') {
+    if (payment_type === 'security_deposit') {
+      bundledRentPayment = await settleSecurityDepositSuccess(client, {
+        paymentId,
+        leaseId: lease_id,
+        tenantId: tenant_id,
+        amount,
+        pi: paymentIntentLikeFromCharge(charge),
+        eventId,
+      });
+    } else if (payment_type === 'identity_verification_fee') {
       await syncIdentityFeePaymentSucceeded(client, {
         id: paymentId,
         lease_id,
@@ -446,6 +508,16 @@ async function onChargeSucceeded(charge, eventId) {
         amount,
         paymentType: payment_type,
       }).catch(err => console.error('[stripe-webhook] payment email:', err.message));
+    }
+
+    if (bundledRentPayment) {
+      notifyPaymentReceived({
+        paymentId: bundledRentPayment.id,
+        tenantId: tenant_id,
+        leaseId: lease_id,
+        amount: bundledRentPayment.amount,
+        paymentType: 'rent',
+      }).catch(err => console.error('[stripe-webhook] bundled rent email:', err.message));
     }
   } catch (err) {
     await client.query('ROLLBACK');
@@ -643,31 +715,14 @@ async function onSucceeded(pi, eventId) {
         ]
       );
     } else if (payment_type === 'security_deposit') {
-      await activateNativeLeaseAfterDeposit(client, lease_id);
-
-      bundledRentPayment = await insertBundledFirstMonthRent(client, {
-        pi,
-        eventId,
+      bundledRentPayment = await settleSecurityDepositSuccess(client, {
+        paymentId,
         leaseId: lease_id,
         tenantId: tenant_id,
+        amount,
+        pi,
+        eventId,
       });
-      if (bundledRentPayment) {
-        await processSplits(client, bundledRentPayment.id, lease_id, bundledRentPayment.amount, pi);
-      }
-
-      await client.query(
-        `INSERT INTO notifications
-           (user_id, type, title, body, channel, related_entity_type, related_entity_id, sent_at)
-         VALUES ($1, 'rent_received',
-                 'Security Deposit Confirmed',
-                 $2,
-                 'push', 'payment', $3, NOW())`,
-        [
-          tenant_id,
-          `Your security deposit of $${parseFloat(amount).toFixed(2)} has been confirmed.`,
-          paymentId,
-        ]
-      );
     } else if (payment_type === 'identity_verification_fee') {
       await syncIdentityFeePaymentSucceeded(client, {
         id: paymentId,
@@ -961,3 +1016,4 @@ async function processSplits(client, paymentId, leaseId, totalAmount, pi) {
 }
 
 module.exports = router;
+module.exports.__test = { onChargeSucceeded };

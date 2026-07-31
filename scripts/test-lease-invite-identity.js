@@ -27,6 +27,7 @@ const {
 } = require('../src/services/tenant-identity.service');
 const { activateNativeLeaseAfterDeposit } = require('../src/services/native-lease-activate.service');
 const identityVerificationAlert = require('../src/services/email-templates/identityVerificationAlert');
+const stripeWebhook = require('../src/webhooks/stripe.webhook');
 
 const STAFF_EMAIL = process.env.NATIVE_LEASE_STAFF_EMAIL || 'manager@example.com';
 const UNIT_ID = process.env.NATIVE_LEASE_UNIT_ID || '70ecac50-b98d-4243-96a9-5da48a1f7192';
@@ -173,6 +174,181 @@ async function runActivationGateChecks(reporter) {
   reporter.ok('identity verified after deposit activates native lease');
 }
 
+async function runVerifiedIdentityTerminalCheck(reporter) {
+  const originalConnect = pool.connect;
+  const originalQuery = pool.query;
+  const verifiedRow = {
+    id: 'identity-terminal-test',
+    lease_id: 'lease-terminal-test',
+    tenant_id: 'tenant-terminal-test',
+    stripe_verification_session_id: 'vs_terminal_test',
+    status: 'verified',
+    verified_at: new Date('2026-01-01T00:00:00Z'),
+    legal_name: 'Verified Tenant',
+    date_of_birth: '1990-01-02',
+    address_line1: '123 Verified St',
+    ssn_last4: '6789',
+  };
+  const client = {
+    updateCount: 0,
+    async query(sql, params) {
+      const normalized = sql.replace(/\s+/g, ' ').trim().toLowerCase();
+      if (normalized === 'begin' || normalized === 'commit' || normalized === 'rollback') {
+        return { rows: [] };
+      }
+      if (normalized.startsWith('select') && normalized.includes('from tenant_identity_verifications')) {
+        assert.deepStrictEqual(params, ['vs_terminal_test']);
+        return { rows: [verifiedRow] };
+      }
+      if (normalized.startsWith('update tenant_identity_verifications')) {
+        this.updateCount += 1;
+        return {
+          rows: [{
+            ...verifiedRow,
+            status: params[1],
+            last_error_code: params[2],
+            last_error_reason: params[3],
+            legal_name: params[4] || verifiedRow.legal_name,
+          }],
+        };
+      }
+      throw new Error(`Unexpected terminal identity query: ${sql}`);
+    },
+    release() {},
+  };
+
+  pool.connect = async () => client;
+  pool.query = async () => ({ rows: [] });
+  try {
+    const result = await applyIdentitySessionUpdate({
+      id: 'vs_terminal_test',
+      status: 'requires_input',
+      last_error: { code: 'document_unverified', reason: 'blurry_image' },
+      verified_outputs: {
+        first_name: 'Downgrade',
+        last_name: 'Attempt',
+      },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.strictEqual(result.status, 'verified');
+    assert.strictEqual(result.legal_name, 'Verified Tenant');
+    assert.strictEqual(client.updateCount, 0, 'verified identity rows should not be overwritten by later downgrade webhooks');
+    reporter.ok('verified identity ignores out-of-order downgrade webhooks');
+  } finally {
+    pool.connect = originalConnect;
+    pool.query = originalQuery;
+  }
+}
+
+function createChargeSucceededClient({ identityStatus }) {
+  const state = {
+    lease: {
+      id: 'lease-charge-test',
+      status: 'awaiting_deposit',
+      signing_provider: 'native',
+      deposit_paid_at: null,
+    },
+    identity: identityStatus ? { status: identityStatus } : null,
+    payment: {
+      id: 'payment-charge-test',
+      lease_id: 'lease-charge-test',
+      tenant_id: 'tenant-charge-test',
+      amount: '1000.00',
+      payment_type: 'security_deposit',
+      status: 'processing',
+    },
+    notifications: [],
+    lateFeesTouched: false,
+    splitTouched: false,
+  };
+
+  const client = {
+    state,
+    async query(sql, params) {
+      const normalized = sql.replace(/\s+/g, ' ').trim().toLowerCase();
+      if (normalized === 'begin' || normalized === 'commit' || normalized === 'rollback') {
+        return { rows: [] };
+      }
+      if (normalized.startsWith('update payments')) {
+        assert.deepStrictEqual(params, ['ch_charge_deposit', 'evt_charge_deposit']);
+        state.payment.status = 'succeeded';
+        state.payment.stripe_charge_id = params[0];
+        state.payment.stripe_webhook_event_id = params[1];
+        state.payment.paid_at = state.payment.paid_at || new Date();
+        return { rows: [state.payment] };
+      }
+      if (normalized.startsWith('select') && normalized.includes('from leases')) {
+        assert.deepStrictEqual(params, ['lease-charge-test']);
+        return { rows: [state.lease] };
+      }
+      if (normalized.startsWith('select') && normalized.includes('from tenant_identity_verifications')) {
+        assert.deepStrictEqual(params, ['lease-charge-test']);
+        return { rows: state.identity ? [state.identity] : [] };
+      }
+      if (normalized.startsWith('update leases') && normalized.includes("status = 'awaiting_identity'")) {
+        state.lease.status = 'awaiting_identity';
+        state.lease.deposit_paid_at = state.lease.deposit_paid_at || new Date();
+        return { rows: [{ id: state.lease.id, status: state.lease.status }] };
+      }
+      if (normalized.startsWith('update leases') && normalized.includes("status = 'active'")) {
+        state.lease.status = 'active';
+        state.lease.deposit_paid_at = state.lease.deposit_paid_at || new Date();
+        return { rows: [{ id: state.lease.id, status: state.lease.status }] };
+      }
+      if (normalized.startsWith('insert into notifications')) {
+        state.notifications.push({ params, sql });
+        return { rows: [] };
+      }
+      if (normalized.startsWith('update late_fees')) {
+        state.lateFeesTouched = true;
+        throw new Error('security deposit charge should not mark rent late fees paid');
+      }
+      if (normalized.includes('payment_splits')) {
+        state.splitTouched = true;
+        throw new Error('security deposit charge should not create rent payment splits');
+      }
+      throw new Error(`Unexpected charge success query: ${sql}`);
+    },
+    release() {},
+  };
+  return client;
+}
+
+async function runChargeSucceededDepositGateChecks(reporter) {
+  assert(
+    stripeWebhook.__test?.onChargeSucceeded,
+    'stripe webhook should expose onChargeSucceeded for unit-level regression coverage'
+  );
+
+  const originalConnect = pool.connect;
+  const originalQuery = pool.query;
+  pool.query = async () => ({ rows: [] });
+  try {
+    const awaitingIdentityClient = createChargeSucceededClient({ identityStatus: null });
+    pool.connect = async () => awaitingIdentityClient;
+    await stripeWebhook.__test.onChargeSucceeded({ id: 'ch_charge_deposit', payment_intent: 'pi_charge_deposit' }, 'evt_charge_deposit');
+    assert.strictEqual(awaitingIdentityClient.state.lease.status, 'awaiting_identity');
+    assert(awaitingIdentityClient.state.lease.deposit_paid_at, 'charge success should stamp deposit_paid_at');
+    assert.strictEqual(awaitingIdentityClient.state.lateFeesTouched, false);
+    assert.strictEqual(awaitingIdentityClient.state.splitTouched, false);
+    assert.match(awaitingIdentityClient.state.notifications[0].params[1], /security deposit/i);
+    reporter.ok('charge.succeeded deposit without verified identity moves native lease to awaiting_identity');
+
+    const activeClient = createChargeSucceededClient({ identityStatus: 'verified' });
+    pool.connect = async () => activeClient;
+    await stripeWebhook.__test.onChargeSucceeded({ id: 'ch_charge_deposit', payment_intent: 'pi_charge_deposit' }, 'evt_charge_deposit');
+    assert.strictEqual(activeClient.state.lease.status, 'active');
+    assert(activeClient.state.lease.deposit_paid_at, 'charge success should stamp deposit_paid_at before activation');
+    assert.strictEqual(activeClient.state.lateFeesTouched, false);
+    assert.strictEqual(activeClient.state.splitTouched, false);
+    reporter.ok('charge.succeeded deposit with verified identity activates native lease');
+  } finally {
+    await new Promise((resolve) => setImmediate(resolve));
+    pool.connect = originalConnect;
+    pool.query = originalQuery;
+  }
+}
+
 function runIdentityAlertTemplateChecks(reporter) {
   const { html, text } = identityVerificationAlert.render({
     tenantName: 'Invited Tenant',
@@ -205,6 +381,8 @@ async function main() {
 
   await section('Native activation gate', async () => {
     await runActivationGateChecks(reporter);
+    await runVerifiedIdentityTerminalCheck(reporter);
+    await runChargeSucceededDepositGateChecks(reporter);
     runIdentityAlertTemplateChecks(reporter);
   });
   if (process.env.LEASE_INVITE_IDENTITY_ACTIVATION_ONLY === '1') {

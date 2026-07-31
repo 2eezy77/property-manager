@@ -492,12 +492,14 @@ async function applyIdentitySessionUpdate(session) {
     const row = await rowForSession(session, client);
     if (!row) return null;
 
+    const status = statusFromSession(session);
+    if (row.status === 'verified') return row;
+
     const outputs = session.verified_outputs || {};
     const address = addressFromOutputs(outputs);
     const idNumber = outputs.id_number || outputs.ssn || null;
     const ssnDigits = idNumber ? String(idNumber).replace(/\D/g, '') : '';
     const encrypted = ssnDigits.length === 9 ? encryptSsn(ssnDigits) : null;
-    const status = statusFromSession(session);
 
     const { rows } = await client.query(
       `UPDATE tenant_identity_verifications
