@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 /**
- * Add required payment_intent.* events to the live Montero Rentals webhook.
+ * Merge ALL_WEBHOOK_EVENTS (payment_intent.*, Connect, Identity verification) into
+ * the live Montero Rentals webhook endpoint.
  *
  *   node scripts/update-stripe-webhook-events.js --dry-run
  *   node scripts/update-stripe-webhook-events.js --apply
+ *   npm run stripe:webhook-events
  *
  * Requires STRIPE_SECRET_KEY (live secret with webhook write access).
  */

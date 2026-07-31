@@ -351,10 +351,14 @@ const REQUIRED_WEBHOOK_EVENTS = [
   'payment_intent.canceled',
 ];
 
-/** Connect payroll + dispute notifications — sync via npm run stripe:webhook:sync */
+/** Connect payroll, dispute, and Identity verification — sync via npm run stripe:webhook:sync */
 const EXTRA_WEBHOOK_EVENTS = [
   'charge.dispute.created',
   'account.updated',
+  'identity.verification_session.verified',
+  'identity.verification_session.requires_input',
+  'identity.verification_session.canceled',
+  'identity.verification_session.processing',
 ];
 
 const ALL_WEBHOOK_EVENTS = [...REQUIRED_WEBHOOK_EVENTS, ...EXTRA_WEBHOOK_EVENTS];
