@@ -19,6 +19,10 @@ const {
   applyNativeSignature,
   getNativeDocumentForUser,
 } = require('../services/native-lease.service');
+const {
+  createIdentityFeeIntent,
+  createIdentitySession,
+} = require('../services/tenant-identity.service');
 
 const router = express.Router();
 router.use(authenticate);
@@ -29,6 +33,13 @@ function resolveRlDocumentId(lease, bodyDocumentId) {
   const url = lease.document_url || '';
   if (url.startsWith('rl-doc-')) return url.slice('rl-doc-'.length);
   return null;
+}
+
+function isStripeIdentityUnavailable(err) {
+  if (!err.raw && !String(err.type || '').startsWith('Stripe')) return false;
+  return /identity|verification|not enabled|restricted|capabilit|permission|access/i.test(
+    `${err.code || ''} ${err.type || ''} ${err.message || ''} ${err.raw?.message || ''}`
+  );
 }
 
 // ── GET /api/leases/my  — tenant's leases ────────────────────────────────────
@@ -283,6 +294,56 @@ router.post('/:id/native/sign', anyRole, async (req, res) => {
   } catch (err) {
     console.error('[POST /leases/:id/native/sign]', err);
     res.status(err.statusCode ?? 500).json({ error: err.message, code: err.code });
+  }
+});
+
+// ── POST /api/leases/:id/identity/fee  — tenant-paid Stripe Identity fee ───────
+router.post('/:id/identity/fee', tenantOnly, async (req, res) => {
+  try {
+    const result = await createIdentityFeeIntent({
+      leaseId: req.params.id,
+      tenantId: req.user.id,
+    });
+    res.json(result);
+  } catch (err) {
+    if (isStripeIdentityUnavailable(err)) {
+      return res.status(503).json({
+        error: 'STRIPE_IDENTITY_UNAVAILABLE',
+        code: 'STRIPE_IDENTITY_UNAVAILABLE',
+        message: err.message,
+      });
+    }
+    console.error('[POST /leases/:id/identity/fee]', err);
+    res.status(err.statusCode ?? 500).json({
+      error: err.code || err.message,
+      code: err.code,
+      message: err.message,
+    });
+  }
+});
+
+// ── POST /api/leases/:id/identity/session  — hosted Stripe Identity URL ────────
+router.post('/:id/identity/session', tenantOnly, async (req, res) => {
+  try {
+    const result = await createIdentitySession({
+      leaseId: req.params.id,
+      tenantId: req.user.id,
+    });
+    res.json(result);
+  } catch (err) {
+    if (isStripeIdentityUnavailable(err)) {
+      return res.status(503).json({
+        error: 'STRIPE_IDENTITY_UNAVAILABLE',
+        code: 'STRIPE_IDENTITY_UNAVAILABLE',
+        message: err.message,
+      });
+    }
+    console.error('[POST /leases/:id/identity/session]', err);
+    res.status(err.statusCode ?? 500).json({
+      error: err.code || err.message,
+      code: err.code,
+      message: err.message,
+    });
   }
 });
 

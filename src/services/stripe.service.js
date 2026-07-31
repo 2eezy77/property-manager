@@ -514,6 +514,22 @@ async function createCardPaymentIntent({
   });
 }
 
+async function createIdentityVerificationSession({ returnUrl, metadata = {} }) {
+  return stripe.identity.verificationSessions.create({
+    type: 'document',
+    options: {
+      document: { require_matching_selfie: true },
+    },
+    provided_details: metadata.email ? { email: metadata.email } : undefined,
+    metadata,
+    return_url: returnUrl,
+  });
+}
+
+async function retrieveIdentityVerificationSession(id, { expand = ['verified_outputs'] } = {}) {
+  return stripe.identity.verificationSessions.retrieve(id, { expand });
+}
+
 async function retrievePaymentIntent(paymentIntentId) {
   return stripe.paymentIntents.retrieve(paymentIntentId);
 }
@@ -552,6 +568,8 @@ module.exports = {
   probeAchPaymentIntentAvailable,
   createCashAppPaymentIntent,
   createCardPaymentIntent,
+  createIdentityVerificationSession,
+  retrieveIdentityVerificationSession,
   retrievePaymentIntent,
   cancelPaymentIntent,
 };

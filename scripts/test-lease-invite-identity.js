@@ -17,7 +17,13 @@ const {
   section,
   PW,
   MANAGER_PW,
+  TENANT_PW,
 } = require('./lib/test-helpers');
+const { computeCardCashAppFee } = require('../src/services/payment-processing-fee.service');
+const {
+  applyIdentitySessionUpdate,
+  isIdentityVerified,
+} = require('../src/services/tenant-identity.service');
 
 const STAFF_EMAIL = process.env.NATIVE_LEASE_STAFF_EMAIL || 'manager@example.com';
 const UNIT_ID = process.env.NATIVE_LEASE_UNIT_ID || '70ecac50-b98d-4243-96a9-5da48a1f7192';
@@ -71,6 +77,18 @@ async function loadStaffOrgId(email) {
     [email]
   );
   return rows[0]?.org_id || null;
+}
+
+async function setTenantPassword(userId) {
+  const passwordHash = await bcrypt.hash(TENANT_PW || PW, 12);
+  await pool.query(
+    `UPDATE users
+        SET password_hash = $1,
+            email_verified_at = COALESCE(email_verified_at, NOW()),
+            updated_at = NOW()
+      WHERE id = $2`,
+    [passwordHash, userId]
+  );
 }
 
 async function seedLeaseLessTenant(orgId) {
@@ -157,6 +175,81 @@ async function main() {
       'GET /api/tenants?for_lease_create=1 should include invited org tenant'
     );
     reporter.ok('lease-create tenant picker includes invited org tenant');
+
+    await setTenantPassword(tenant.id);
+    const tenantToken = await login(inviteEmail, TENANT_PW || PW);
+    const noFeeSessionRes = await req(
+      'POST',
+      `/api/leases/${createRes.body.lease.id}/identity/session`,
+      null,
+      tenantToken
+    );
+    assert(
+      [400, 402].includes(noFeeSessionRes.status),
+      `identity session without fee should be rejected, got ${noFeeSessionRes.status} ${JSON.stringify(noFeeSessionRes.body)}`
+    );
+    assert.strictEqual(noFeeSessionRes.body.code || noFeeSessionRes.body.error, 'IDENTITY_FEE_REQUIRED');
+    reporter.ok('identity session is blocked until tenant pays the identity fee');
+
+    const feeRes = await req(
+      'POST',
+      `/api/leases/${createRes.body.lease.id}/identity/fee`,
+      null,
+      tenantToken
+    );
+    requireStatus('identity fee intent', feeRes, 200);
+    const expectedFee = computeCardCashAppFee(150);
+    assert.strictEqual(feeRes.body.baseAmount, expectedFee.baseAmount);
+    assert.strictEqual(feeRes.body.processingFee, expectedFee.processingFee);
+    assert.strictEqual(feeRes.body.amount, expectedFee.totalAmount);
+    assert(feeRes.body.clientSecret, 'fee intent should return a Stripe client secret');
+    assert(feeRes.body.paymentId, 'fee intent should return a payment row id');
+    reporter.ok('identity fee intent uses locked base amount and card processing fee');
+
+    await pool.query(
+      `UPDATE payments
+          SET status = 'succeeded',
+              paid_at = NOW(),
+              updated_at = NOW()
+        WHERE id = $1`,
+      [feeRes.body.paymentId]
+    );
+    const paidSessionRes = await req(
+      'POST',
+      `/api/leases/${createRes.body.lease.id}/identity/session`,
+      null,
+      tenantToken
+    );
+    if (paidSessionRes.status === 503 && paidSessionRes.body.error === 'STRIPE_IDENTITY_UNAVAILABLE') {
+      reporter.skip('identity hosted session creates after fee', paidSessionRes.body.message || 'Stripe Identity unavailable');
+    } else {
+      requireStatus('identity hosted session after fee', paidSessionRes, 200);
+      assert(paidSessionRes.body.url, 'identity session should return hosted Stripe URL');
+      assert(paidSessionRes.body.sessionId, 'identity session should return Stripe session id');
+      reporter.ok('identity hosted session is created after fee payment');
+
+      await applyIdentitySessionUpdate({
+        id: paidSessionRes.body.sessionId,
+        status: 'verified',
+        metadata: {
+          lease_id: createRes.body.lease.id,
+          tenant_id: tenant.id,
+        },
+        verified_outputs: {
+          first_name: 'Invited',
+          last_name: 'Tenant',
+          dob: { year: 1990, month: 1, day: 2 },
+          address: {
+            line1: '123 Test St',
+            city: 'Norfolk',
+            state: 'VA',
+            postal_code: '23510',
+          },
+        },
+      });
+      assert.strictEqual(await isIdentityVerified(createRes.body.lease.id), true);
+      reporter.ok('identity session update marks the lease identity verified');
+    }
 
     const duplicateRes = await req('POST', '/api/leases/native', {
       unit_id: UNIT_ID,

@@ -1,25 +1,15 @@
-STATUS: DONE_WITH_CONCERNS
+STATUS: DONE
 
 COMMITS
-- feat(leases): native create, PDF, and e-sign API
+- `feat(identity): tenant-paid Stripe Identity fee and session`
 
 TEST summary
-- RED: `node scripts/test-native-lease.js` failed at `POST /api/leases/native` with 404 before route/service implementation.
-- GREEN: `npm run test:native-lease` passed 11/11 against local API, covering create defaults, PDF generation, document URL, send, tenant sign, manager sign, awaiting_deposit, pending security_deposit payment, manager signing fee, and Rocket Lawyer document gate.
-- Regression: `npm run test:native-lease-defaults` passed.
-- Regression: `node scripts/test-native-lease-pdf.js` passed.
-- Syntax: `node --check src/services/native-lease.service.js`, `src/routes/leases.routes.js`, and `scripts/test-native-lease.js` passed.
-- Build: `npm run build` passed.
+- RED: `node scripts/test-lease-invite-identity.js` failed at missing `POST /api/leases/:id/identity/session` with HTTP 404.
+- GREEN: `node scripts/test-lease-invite-identity.js` passed 11/11 against the running local API, covering no-fee session gate, locked $1.50 fee base, processing fee helper match, hosted Stripe Identity session creation, and session update to verified.
+- Regression: `npm run test:identity-crypto` passed.
+- Regression: `npm run test:processing-fee` passed.
+- Syntax: `node --check src/services/tenant-identity.service.js src/services/stripe.service.js src/routes/leases.routes.js scripts/test-lease-invite-identity.js` passed.
 
 CONCERNS
-- `npm run build` still reports existing npm audit findings (1 moderate, 3 high) from the client install and a Vite chunk-size warning; build exits 0.
-
-## Post-review fix: PDF flatten outside transaction
-
-**Change:** `applyManagerSignature` no longer calls `flattenSignaturesOntoPdf` inside the `FOR UPDATE` transaction. The transaction now records the manager signature, marks the envelope completed, inserts the pending `security_deposit` payment, and sets the lease to `awaiting_deposit` with `manager_signed_at`. After commit, `attachFlattenedSignedPdf` runs `flattenSignaturesOntoPdf` and performs a short follow-up `UPDATE` for `signed_pdf_path` / `document_url` and `signature_envelopes.signed_document_url`.
-
-**Flatten failure behavior:** If post-commit flatten fails, the lease remains `awaiting_deposit` (signatures already persisted); the error is logged; the API still returns HTTP 200 with `signedPdfError` on the result and `signed_pdf_path` left null so clients can distinguish a completed sign from a deferred PDF.
-
-**Route:** `POST /api/leases/native` maps `INVALID_ROOM_TYPE` to HTTP 400.
-
-**Verification:** `npm run test:native-lease` — 11/11 passed.
+- No `lint` script exists in `package.json`; syntax checks were used for changed JS files.
+- `npm install` reports one existing high-severity audit finding; not introduced or changed by Task 3.
