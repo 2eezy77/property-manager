@@ -26,6 +26,20 @@ function fmt(amount) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
 }
 
+/** Client estimate matching server 2.9% + $0.30 (server is source of truth at charge time). */
+function estimateCardCashAppTotal(baseAmount) {
+  const baseCents = Math.round(Number(baseAmount) * 100);
+  if (!Number.isFinite(baseCents) || baseCents < 0) {
+    return { baseAmount: 0, processingFee: 0, totalAmount: 0 };
+  }
+  const feeCents = Math.round(baseCents * 0.029) + 30;
+  return {
+    baseAmount: baseCents / 100,
+    processingFee: feeCents / 100,
+    totalAmount: (baseCents + feeCents) / 100,
+  };
+}
+
 function fmtDate(iso) {
   if (!iso) return '—';
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -147,6 +161,10 @@ function PayConfirmModal({ account, balance, onConfirm, onCancel, loading }) {
               </div>
             )}
             <div className="flex justify-between px-4 py-3">
+              <span className="text-sm text-emerald-700">Processing fee</span>
+              <span className="text-sm font-medium text-emerald-700">$0.00 (ACH)</span>
+            </div>
+            <div className="flex justify-between px-4 py-3">
               <span className="text-sm font-medium text-gray-700">Total</span>
               <span className="text-sm font-semibold text-gray-900">{fmt(total)}</span>
             </div>
@@ -164,7 +182,7 @@ function PayConfirmModal({ account, balance, onConfirm, onCancel, loading }) {
 
           <p className="mt-4 text-xs text-gray-400 leading-relaxed">
             By confirming, you authorise a one-time ACH debit from your account.
-            ACH transfers cannot be recalled once submitted.
+            ACH has no processing fee. Transfers cannot be recalled once submitted.
           </p>
         </div>
 
@@ -638,12 +656,14 @@ export default function PaymentsPage() {
         </h2>
         <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-blue-900/90">
           <li>
-            <strong className="font-semibold">Autopay + bank</strong>
-            {' — late fees waived while Autopay is on. Best for monthly rent.'}
+            <strong className="font-semibold">Bank (ACH) — no processing fee</strong>
+            {' — best for rent. Autopay also waives late fees while it is on.'}
           </li>
           <li>
-            <strong className="font-semibold">Cash App in this page</strong>
-            {' — one-time rent that posts to your ledger right away (no screenshot chase).'}
+            <strong className="font-semibold">Card / Cash App</strong>
+            {' — include a '}
+            <strong className="font-semibold">2.9% + $0.30</strong>
+            {' processing fee (paid by you, not added to your rent balance).'}
           </li>
           <li>
             <strong className="font-semibold">Autopay is opt-in</strong>
@@ -672,9 +692,11 @@ export default function PaymentsPage() {
           <div>
             <p className="text-sm font-semibold text-slate-900">Pay with Cash App in the portal</p>
             <p className="text-xs text-slate-500">
+              {fmt(estimateCardCashAppTotal(balance.totalDue).totalAmount)}
+              {' total incl. 2.9% + $0.30 fee · '}
               {noBankLinked
-                ? 'Posts to your balance immediately · no bank link required'
-                : 'One-time · for Autopay + late-fee waiver, connect a bank below'}
+                ? 'or connect a bank for ACH with no processing fee'
+                : 'ACH has no processing fee'}
             </p>
           </div>
           <span className="shrink-0 rounded-lg bg-[#00D632] px-3 py-1.5 text-xs font-bold text-white">
@@ -708,7 +730,9 @@ export default function PaymentsPage() {
           </div>
 
           <p className="text-xs text-slate-500">
-            Preferred: bank ACH (and Autopay for late-fee waiver). Card is available for rent or deposits; Cash App is fine for one-time rent.
+            Preferred: bank ACH — no processing fee (Autopay also waives late fees).
+            Card and Cash App include a 2.9% + $0.30 processing fee.
+            Card works for rent or deposits; Cash App is fine for one-time rent.
           </p>
 
           {(rentDue || depositDue) && (
@@ -725,7 +749,9 @@ export default function PaymentsPage() {
                     disabled={!!cardLoadingType}
                     className="rounded-xl bg-indigo-600 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
                   >
-                    {cardLoadingType === 'rent' ? 'Preparing card form…' : `Pay ${fmt(balance.totalDue)} with Card`}
+                    {cardLoadingType === 'rent'
+                      ? 'Preparing card form…'
+                      : `Pay ${fmt(estimateCardCashAppTotal(balance.totalDue).totalAmount)} with Card`}
                   </button>
                 )}
                 {depositDue && (
@@ -737,13 +763,20 @@ export default function PaymentsPage() {
                   >
                     {cardLoadingType === 'security_deposit'
                       ? 'Preparing card form…'
-                      : `Pay deposit ${fmt(balance.securityDepositPayment.amount)} with Card`}
+                      : `Pay deposit ${fmt(estimateCardCashAppTotal(balance.securityDepositPayment.amount).totalAmount)} with Card`}
                   </button>
                 )}
               </div>
               {cardIntent && (
                 <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
-                  <p className="text-sm font-medium text-slate-700">Amount: {fmt(cardIntent.amount)}</p>
+                  <p className="text-sm font-medium text-slate-700">
+                    Total: {fmt(cardIntent.amount)}
+                    {cardIntent.processingFee != null && (
+                      <span className="ml-2 text-xs font-normal text-slate-500">
+                        (incl. {fmt(cardIntent.processingFee)} processing fee)
+                      </span>
+                    )}
+                  </p>
                   <CardPaymentForm
                     clientSecret={cardIntent.clientSecret}
                     publishableKey={cardIntent.publishableKey || stripeConfig?.publishableKey}
@@ -759,14 +792,24 @@ export default function PaymentsPage() {
           )}
 
           {cashAppAvailable && rentDue && (
-            <button
-              type="button"
-              onClick={handleCashAppPay}
-              disabled={cashAppLoading}
-              className="w-full rounded-xl bg-[#00D632] py-2.5 text-sm font-bold text-white hover:bg-[#00bf2d] disabled:opacity-50"
-            >
-              {cashAppLoading ? 'Opening Cash App…' : `Pay ${fmt(balance.totalDue)} with Cash App (portal)`}
-            </button>
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={handleCashAppPay}
+                disabled={cashAppLoading}
+                className="w-full rounded-xl bg-[#00D632] py-2.5 text-sm font-bold text-white hover:bg-[#00bf2d] disabled:opacity-50"
+              >
+                {cashAppLoading
+                  ? 'Opening Cash App…'
+                  : `Pay ${fmt(estimateCardCashAppTotal(balance.totalDue).totalAmount)} with Cash App`}
+              </button>
+              <p className="text-xs text-slate-500">
+                Rent {fmt(balance.totalDue)}
+                {' + processing fee '}
+                {fmt(estimateCardCashAppTotal(balance.totalDue).processingFee)}
+                {' · ACH has no processing fee'}
+              </p>
+            </div>
           )}
 
           {verifiedAccounts.length === 0 ? (

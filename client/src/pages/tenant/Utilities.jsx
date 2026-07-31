@@ -184,11 +184,12 @@ export default function TenantUtilities() {
       />
 
       <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-3 text-sm text-slate-700">
-        <p className="font-medium text-slate-900">Pay in the portal</p>
+        <p className="font-medium text-slate-900">Pay in the portal only</p>
         <p className="mt-1 text-xs leading-relaxed text-slate-600">
           Open shares are paid under{' '}
           <Link to="/tenant/payments" className="font-medium text-indigo-700 hover:underline">Payments</Link>
-          {' '}(bank ACH or Cash App Pay). We only auto-debit if you turn on Autopay.
+          {' '}(bank ACH — no processing fee — or Cash App Pay with 2.9% + $0.30).
+          Off-app transfers are not accepted. We only auto-debit if Autopay is on.
         </p>
         {openTotal > 0 && (
           <Link

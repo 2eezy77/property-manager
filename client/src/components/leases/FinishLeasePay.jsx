@@ -10,6 +10,20 @@ function fmtMoney(value) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(value || 0));
 }
 
+/** Client estimate matching server 2.9% + $0.30 (server is source of truth at charge time). */
+function estimateCardCashAppTotal(baseAmount) {
+  const baseCents = Math.round(Number(baseAmount) * 100);
+  if (!Number.isFinite(baseCents) || baseCents < 0) {
+    return { baseAmount: 0, processingFee: 0, totalAmount: 0 };
+  }
+  const feeCents = Math.round(baseCents * 0.029) + 30;
+  return {
+    baseAmount: baseCents / 100,
+    processingFee: feeCents / 100,
+    totalAmount: (baseCents + feeCents) / 100,
+  };
+}
+
 function showToast(message, variant = 'error') {
   window.dispatchEvent(new CustomEvent('api:toast', { detail: { message, variant } }));
 }
@@ -259,7 +273,9 @@ export default function FinishLeasePay({ lease, onPaid }) {
       method === key ? 'border-indigo-300 bg-indigo-50 text-indigo-800' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
     }`
   );
-  const cardTotal = Number(lease.security_deposit || 0) + (includeFirstMonth ? Number(lease.monthly_rent || 0) : 0);
+  const cardBaseTotal = Number(lease.security_deposit || 0) + (includeFirstMonth ? Number(lease.monthly_rent || 0) : 0);
+  const cardEstimate = estimateCardCashAppTotal(cardBaseTotal);
+  const cashAppEstimate = estimateCardCashAppTotal(lease.security_deposit);
 
   return (
     <section className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-5">
@@ -317,10 +333,14 @@ export default function FinishLeasePay({ lease, onPaid }) {
             <span>
               Include first month rent with this card payment
               <span className="block text-xs text-slate-400">
-                Total: {fmtMoney(cardTotal)}
+                Base: {fmtMoney(cardBaseTotal)} · Charged: {fmtMoney(cardEstimate.totalAmount)}
+                {' '}(incl. {fmtMoney(cardEstimate.processingFee)} processing fee)
               </span>
             </span>
           </label>
+          <p className="mb-3 text-xs text-slate-500">
+            Card and Cash App include a 2.9% + $0.30 processing fee. ACH has no fee.
+          </p>
           {!cardIntent ? (
             <button
               type="button"
@@ -328,11 +348,18 @@ export default function FinishLeasePay({ lease, onPaid }) {
               disabled={cardLoading}
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
             >
-              {cardLoading ? 'Preparing card form...' : `Pay ${fmtMoney(cardTotal)}`}
+              {cardLoading ? 'Preparing card form...' : `Pay ${fmtMoney(cardEstimate.totalAmount)} with Card`}
             </button>
           ) : (
             <div className="space-y-3">
-              <p className="text-sm font-medium text-slate-700">Amount: {fmtMoney(cardIntent.amount)}</p>
+              <p className="text-sm font-medium text-slate-700">
+                Amount: {fmtMoney(cardIntent.amount)}
+                {cardIntent.processingFee != null && (
+                  <span className="ml-1 text-xs font-normal text-slate-500">
+                    (incl. {fmtMoney(cardIntent.processingFee)} processing fee)
+                  </span>
+                )}
+              </p>
               <CardPaymentForm
                 clientSecret={cardIntent.clientSecret}
                 publishableKey={cardIntent.publishableKey}
@@ -417,6 +444,7 @@ export default function FinishLeasePay({ lease, onPaid }) {
         <div className="mt-5 rounded-xl border border-slate-200 bg-white p-4">
           <p className="text-sm text-slate-600">
             Cash App Pay opens a secure Stripe confirmation flow and returns you to this lease page.
+            Includes a {fmtMoney(cashAppEstimate.processingFee)} processing fee (2.9% + $0.30).
           </p>
           <button
             type="button"
@@ -424,7 +452,9 @@ export default function FinishLeasePay({ lease, onPaid }) {
             disabled={cashAppLoading}
             className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-700 disabled:opacity-50"
           >
-            {cashAppLoading ? 'Opening Cash App...' : `Pay ${fmtMoney(lease.security_deposit)} with Cash App`}
+            {cashAppLoading
+              ? 'Opening Cash App...'
+              : `Pay ${fmtMoney(cashAppEstimate.totalAmount)} with Cash App`}
           </button>
         </div>
       )}

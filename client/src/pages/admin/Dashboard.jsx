@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   CreditCard, Banknote, Users, User, Zap, Mail, Footprints, ScrollText,
-  DollarSign, FileText, AlertTriangle,
+  DollarSign, FileText, AlertTriangle, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import api from '@/api/axios';
 import { useAuth } from '@/context/AuthContext';
@@ -51,6 +51,10 @@ export default function AdminDashboardPage() {
   const [oversight, setOversight] = useState(null);
   const [visitPayroll, setVisitPayroll] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [oversightExpanded, setOversightExpanded] = useState(false);
+  const [paymentsExpanded, setPaymentsExpanded] = useState(false);
+  const [portfolioExpanded, setPortfolioExpanded] = useState(false);
+  const [financeOpen, setFinanceOpen] = useState(true);
 
   useEffect(() => {
     Promise.allSettled([
@@ -94,6 +98,9 @@ export default function AdminDashboardPage() {
   const playbookDone  = oversight?.playbook?.completed ?? 0;
   const playbookTotal = oversight?.playbook?.total ?? 0;
   const oversightTitle = mgr ? `Manager oversight — ${mgrName}` : 'Manager oversight';
+  const tenantPreview = data.tenants.slice(0, 5);
+  const maintCount = oversight?.recent?.maintenance?.length ?? 0;
+  const inboxCount = oversight?.recent?.inbox_threads?.length ?? 0;
 
   return (
     <div className="stagger-section space-y-6">
@@ -192,6 +199,58 @@ export default function AdminDashboardPage() {
               </div>
             </div>
 
+            {!oversightExpanded && (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                {playbookTotal > 0 && (
+                  <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-medium text-emerald-800">
+                    Playbook {playbookDone}/{playbookTotal}
+                  </span>
+                )}
+                {maintCount > 0 && (
+                  <span className="rounded-full bg-slate-100 px-2.5 py-1 font-medium text-slate-700">
+                    {maintCount} maintenance
+                  </span>
+                )}
+                {inboxCount > 0 && (
+                  <span className="rounded-full bg-slate-100 px-2.5 py-1 font-medium text-slate-700">
+                    {inboxCount} inbox
+                  </span>
+                )}
+                {onboardGap > 0 && (
+                  <span className="rounded-full bg-amber-50 px-2.5 py-1 font-medium text-amber-800">
+                    {onboardGap} onboarding
+                  </span>
+                )}
+                {offboardGap > 0 && (
+                  <span className="rounded-full bg-rose-50 px-2.5 py-1 font-medium text-rose-800">
+                    {offboardGap} offboarding
+                  </span>
+                )}
+                {(oc?.utility_bills_pending ?? 0) > 0 && (
+                  <span className="rounded-full bg-violet-50 px-2.5 py-1 font-medium text-violet-800">
+                    {oc.utility_bills_pending} utilities
+                  </span>
+                )}
+                {playbookTotal === 0 && maintCount === 0 && inboxCount === 0 && onboardGap === 0 && offboardGap === 0 && !(oc?.utility_bills_pending) && (
+                  <span>All clear — expand for activity details</span>
+                )}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setOversightExpanded((v) => !v)}
+              className="btn-motion inline-flex items-center gap-1.5 text-xs font-semibold text-violet-700 hover:text-violet-900"
+            >
+              {oversightExpanded ? (
+                <>Collapse details <ChevronUp size={14} aria-hidden /></>
+              ) : (
+                <>Expand details <ChevronDown size={14} aria-hidden /></>
+              )}
+            </button>
+
+            {oversightExpanded && (
+              <>
             {playbookTotal > 0 && (
               <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 px-4 py-3 text-sm">
                 <p className="font-semibold text-emerald-900">
@@ -309,6 +368,8 @@ export default function AdminDashboardPage() {
                 )}
               </div>
             )}
+              </>
+            )}
           </div>
         )}
       </Panel>
@@ -324,7 +385,7 @@ export default function AdminDashboardPage() {
                 <p className="py-10 text-center text-sm text-slate-400">No active tenants</p>
               ) : (
                 <ul className="stagger-list divide-y divide-slate-100">
-                  {data.tenants.map(t => (
+                  {tenantPreview.map(t => (
                     <li key={t.id} className="flex items-center gap-4 px-5 py-4 transition hover:bg-slate-50">
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-violet-50 text-sm font-bold text-violet-700">
                         {t.first_name?.[0]}{t.last_name?.[0]}
@@ -354,90 +415,170 @@ export default function AdminDashboardPage() {
               ) : !data.payments.length ? (
                 <p className="py-10 text-center text-sm text-slate-400">No payments yet</p>
               ) : (
-                <ul className="stagger-list divide-y divide-slate-100">
-                  {data.payments.map(p => (
-                    <li key={p.id} className="flex items-center justify-between gap-4 px-5 py-3.5">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-slate-900">{p.tenant_name}</p>
-                        <p className="text-xs text-slate-500">Unit {p.unit_number} · {p.status}</p>
-                      </div>
-                      <p className={`shrink-0 text-sm font-bold tabular-nums ${p.status === 'succeeded' ? 'text-emerald-600' : 'text-slate-700'}`}>
-                        {fmt(p.amount)}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
+                    <p className="text-xs text-slate-500">
+                      {data.payments.length} recent payment{data.payments.length === 1 ? '' : 's'}
+                      {!paymentsExpanded && data.payments[0] && (
+                        <> · latest {fmt(data.payments[0].amount)} from {data.payments[0].tenant_name}</>
+                      )}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentsExpanded((v) => !v)}
+                      className="btn-motion inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-violet-700 hover:text-violet-900"
+                    >
+                      {paymentsExpanded ? (
+                        <>Hide <ChevronUp size={14} aria-hidden /></>
+                      ) : (
+                        <>Show <ChevronDown size={14} aria-hidden /></>
+                      )}
+                    </button>
+                  </div>
+                  {paymentsExpanded && (
+                    <ul className="stagger-list divide-y divide-slate-100">
+                      {data.payments.map(p => (
+                        <li key={p.id} className="flex items-center justify-between gap-4 px-5 py-3.5">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-slate-900">{p.tenant_name}</p>
+                            <p className="text-xs text-slate-500">Unit {p.unit_number} · {p.status}</p>
+                          </div>
+                          <p className={`shrink-0 text-sm font-bold tabular-nums ${p.status === 'succeeded' ? 'text-emerald-600' : 'text-slate-700'}`}>
+                            {fmt(p.amount)}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
               )}
             </div>
           </Panel>
         </div>
 
-        {/* Right rail — property spotlight (Azmir-style) */}
+        {/* Right rail — portfolio snapshot + finance */}
         <div className="space-y-6 lg:col-span-4">
-          <div className="hover-lift motion-pop overflow-hidden rounded-2xl bg-gradient-to-br from-violet-600 to-indigo-700 p-6 text-white shadow-lg">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-white/60">Primary Property</p>
-            <h2 className="mt-2 text-xl font-bold leading-snug">{property?.name ?? 'Property'}</h2>
-            <p className="mt-1 text-sm text-white/75">
-              {property ? `${property.city}${property.state ? `, ${property.state}` : ''}` : 'Norfolk, VA'}
-            </p>
-            <div className="mt-6 grid grid-cols-3 gap-2 text-center">
-              <div className="rounded-xl bg-white/10 py-3">
-                <p className="text-xl font-bold">{totalUnits || '—'}</p>
-                <p className="text-[10px] text-white/70">Units</p>
+          <div className="portal-card hover-lift overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setPortfolioExpanded((v) => !v)}
+              className="btn-motion flex w-full items-center justify-between gap-3 px-5 py-4 text-left"
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-900">Portfolio snapshot</p>
+                <p className="mt-0.5 truncate text-xs text-slate-500">
+                  {property?.name ?? 'Property'}
+                  {' · '}
+                  {totalUnits || '—'} units · {occupancyPct}% occupied · {collectPct}% collected
+                </p>
               </div>
-              <div className="rounded-xl bg-white/10 py-3">
-                <p className="text-xl font-bold">{occupancyPct}%</p>
-                <p className="text-[10px] text-white/70">Full</p>
+              {portfolioExpanded ? (
+                <ChevronUp size={16} className="shrink-0 text-slate-400" aria-hidden />
+              ) : (
+                <ChevronDown size={16} className="shrink-0 text-slate-400" aria-hidden />
+              )}
+            </button>
+            {portfolioExpanded && (
+              <div className="space-y-6 border-t border-slate-100 p-5">
+                <div className="overflow-hidden rounded-2xl bg-gradient-to-br from-violet-600 to-indigo-700 p-5 text-white shadow-lg">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-white/60">Primary Property</p>
+                  <h2 className="mt-2 text-lg font-bold leading-snug">{property?.name ?? 'Property'}</h2>
+                  <p className="mt-1 text-sm text-white/75">
+                    {property ? `${property.city}${property.state ? `, ${property.state}` : ''}` : 'Norfolk, VA'}
+                  </p>
+                  <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                    <div className="rounded-xl bg-white/10 py-2.5">
+                      <p className="text-lg font-bold">{totalUnits || '—'}</p>
+                      <p className="text-[10px] text-white/70">Units</p>
+                    </div>
+                    <div className="rounded-xl bg-white/10 py-2.5">
+                      <p className="text-lg font-bold">{occupancyPct}%</p>
+                      <p className="text-[10px] text-white/70">Full</p>
+                    </div>
+                    <div className="rounded-xl bg-white/10 py-2.5">
+                      <p className="text-lg font-bold">{data.tenants.length}</p>
+                      <p className="text-[10px] text-white/70">Tenants</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-3 text-sm font-semibold text-slate-900">Rent collection</p>
+                  <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-start">
+                    <ProgressRing
+                      percent={collectPct}
+                      colorClass="stroke-violet-500"
+                      sublabel="this month"
+                    />
+                    <div className="min-w-0 flex-1 space-y-4">
+                      <MiniBarChart
+                        colorClass="bg-violet-500"
+                        bars={[
+                          { label: 'Expected', value: monthlyRent },
+                          { label: 'Collected', value: collected },
+                          { label: 'Remaining', value: Math.max(0, monthlyRent - collected) },
+                        ]}
+                      />
+                      <p className="text-xs text-slate-400">
+                        {data.stats?.failed_count
+                          ? `${data.stats.failed_count} failed payment(s) need follow-up`
+                          : 'All ACH payments processing normally'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="rounded-xl bg-white/10 py-3">
-                <p className="text-xl font-bold">{data.tenants.length}</p>
-                <p className="text-[10px] text-white/70">Tenants</p>
-              </div>
-            </div>
+            )}
           </div>
 
           <RecentActivitySnippet />
 
-          <Panel title="Rent Collection">
-            <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-start">
-              <ProgressRing
-                percent={collectPct}
-                colorClass="stroke-violet-500"
-                sublabel="this month"
-              />
-              <div className="min-w-0 flex-1 space-y-4">
-                <MiniBarChart
-                  colorClass="bg-violet-500"
-                  bars={[
-                    { label: 'Expected', value: monthlyRent },
-                    { label: 'Collected', value: collected },
-                    { label: 'Remaining', value: Math.max(0, monthlyRent - collected) },
-                  ]}
-                />
-                <p className="text-xs text-slate-400">
-                  {data.stats?.failed_count
-                    ? `${data.stats.failed_count} failed payment(s) need follow-up`
-                    : 'All ACH payments processing normally'}
-                </p>
+          <div className="portal-card hover-lift overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setFinanceOpen((v) => !v)}
+              className="btn-motion flex w-full items-center justify-between gap-3 border-b border-slate-100 px-5 py-4 text-left"
+            >
+              <h2 className="text-sm font-semibold text-slate-900">Finance</h2>
+              <div className="flex items-center gap-2">
+                <Link
+                  to="/admin/finance"
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-xs font-medium text-slate-500 transition hover:text-slate-800"
+                >
+                  View all →
+                </Link>
+                {financeOpen ? (
+                  <ChevronUp size={16} className="shrink-0 text-slate-400" aria-hidden />
+                ) : (
+                  <ChevronDown size={16} className="shrink-0 text-slate-400" aria-hidden />
+                )}
               </div>
-            </div>
-          </Panel>
-
-          <Panel title="Mortgage" actionTo="/admin/finance">
-            {loading ? (
-              <div className="h-20 skeleton rounded-xl" />
-            ) : !mortgage ? (
-              <p className="text-sm text-slate-400">Import statements via npm run import:mortgage</p>
-            ) : (
-              <div className="space-y-2 text-sm">
-                <p className="text-lg font-bold text-slate-900">{fmt(mortgage.monthly_payment)}/mo</p>
-                <p className="text-slate-500">
-                  Principal {fmt(mortgage.principal_balance)} · due {mortgage.due_date ?? '—'}
-                </p>
-                <p className="text-xs text-slate-400">Newrez · stmt {mortgage.statement_date}</p>
+            </button>
+            {financeOpen && (
+              <div className="p-5">
+                {loading ? (
+                  <div className="h-20 skeleton rounded-xl" />
+                ) : !mortgage ? (
+                  <p className="text-sm text-slate-400">Import statements via npm run import:mortgage</p>
+                ) : (
+                  <div className="space-y-2 text-sm">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Mortgage</p>
+                    <p className="text-lg font-bold text-slate-900">{fmt(mortgage.monthly_payment)}/mo</p>
+                    <p className="text-slate-500">
+                      Principal {fmt(mortgage.principal_balance)} · due {mortgage.due_date ?? '—'}
+                    </p>
+                    <p className="text-xs text-slate-400">Newrez · stmt {mortgage.statement_date}</p>
+                  </div>
+                )}
               </div>
             )}
-          </Panel>
+            {!financeOpen && !loading && mortgage && (
+              <p className="px-5 pb-4 text-xs text-slate-500">
+                Mortgage {fmt(mortgage.monthly_payment)}/mo · due {mortgage.due_date ?? '—'}
+              </p>
+            )}
+          </div>
         </div>
       </div>
     </div>

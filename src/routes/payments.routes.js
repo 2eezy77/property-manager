@@ -46,6 +46,11 @@ const { syncCashAppFromGmail } = require('../services/cashapp-gmail.service');
 const { runPaymentsHealth } = require('../services/payments-health.service');
 const { prepareTenantCharge, assertNoInFlightDeposit, cancelReplacedDepositPaymentIntent } = require('../services/rent-charge.service');
 const { activateNativeLeaseAfterDeposit } = require('../services/native-lease-activate.service');
+const {
+  computeCardCashAppFee,
+  feeMetadata,
+  feeSchedulePublic,
+} = require('../services/payment-processing-fee.service');
 const { partnerErrorMessage } = require('../utils/plaid-errors');
 const { assertAchDebitAllowed } = require('../services/plaid-ach-guard.service');
 const {
@@ -353,7 +358,9 @@ router.delete('/bank-accounts/:id', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/payments/balance
-// Returns the tenant's current open lease, rent due, and any pending late fees
+// Returns the tenant's current open lease, rent due, and any pending late fees.
+// When this month's rent is already succeeded, totalDue is late fees only (not
+// another full month) so the tenant UI shows Paid instead of false Overdue.
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/balance', Guards.tenantOnly, async (req, res) => {
   try {
@@ -375,22 +382,48 @@ router.get('/balance', Guards.tenantOnly, async (req, res) => {
     if (!leaseRows[0]) return res.json({ balance: null, lease: null });
 
     const lease = leaseRows[0];
+    const monthlyRent = parseFloat(lease.monthly_rent);
 
-    // Pending rent payment for current month
-    const now       = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-      .toISOString().split('T')[0];
+    // Calendar month in America/New_York (property timezone) — avoid UTC
+    // flipping the period near month boundaries on Railway.
+    const monthStart = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date()).replace(/(\d{4})-(\d{2})-\d{2}/, (_, y, m) => `${y}-${m}-01`);
 
+    // Prefer succeeded → processing → pending for "this month" rent row
     const { rows: paymentRows } = await pool.query(
       `SELECT id, amount, status, due_date, period_start, period_end
          FROM payments
         WHERE lease_id = $1
           AND payment_type = 'rent'
-          AND status IN ('pending','processing')
           AND period_start = $2
-        ORDER BY created_at DESC LIMIT 1`,
+          AND status IN ('succeeded', 'processing', 'pending')
+        ORDER BY
+          CASE status
+            WHEN 'succeeded'  THEN 0
+            WHEN 'processing' THEN 1
+            WHEN 'pending'    THEN 2
+            ELSE 3
+          END,
+          created_at DESC
+        LIMIT 1`,
       [lease.lease_id, monthStart]
     );
+
+    const { rows: paidRows } = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) AS paid
+         FROM payments
+        WHERE lease_id = $1
+          AND payment_type = 'rent'
+          AND period_start = $2
+          AND status = 'succeeded'`,
+      [lease.lease_id, monthStart]
+    );
+    const paidThisMonth = parseFloat(paidRows[0]?.paid ?? 0);
+    const rentRemaining = Math.max(0, Math.round((monthlyRent - paidThisMonth) * 100) / 100);
 
     // Pending late fees
     const { rows: lateFeeRows } = await pool.query(
@@ -399,8 +432,19 @@ router.get('/balance', Guards.tenantOnly, async (req, res) => {
         WHERE lease_id = $1 AND status IN ('pending','applied')`,
       [lease.lease_id]
     );
+    const lateFeeBalance = parseFloat(lateFeeRows[0]?.total ?? 0);
 
-    const defaultDueDate = monthStart;
+    const currentPayment = paymentRows[0] ?? null;
+    const paidInFull = rentRemaining <= 0.009;
+
+    // Next due: 1st of following month when this month is settled
+    let nextDueDate = currentPayment?.due_date ?? monthStart;
+    if (paidInFull) {
+      const [y, m] = monthStart.split('-').map(Number);
+      const next = new Date(Date.UTC(y, m, 1)); // m is already 1-based month number → use as next month index
+      // monthStart is YYYY-MM-01; Date.UTC(y, m, 1) with m=7 → Aug 1. Correct.
+      nextDueDate = next.toISOString().slice(0, 10);
+    }
 
     const { rows: depositRows } = await pool.query(
       `SELECT id, amount, status, due_date, period_start, period_end
@@ -416,9 +460,6 @@ router.get('/balance', Guards.tenantOnly, async (req, res) => {
     const securityDepositPayment = depositRows[0]
       ? { ...depositRows[0], amount: parseFloat(depositRows[0].amount) }
       : null;
-    const rentTotalDue = lease.status === 'active'
-      ? parseFloat(lease.monthly_rent) + parseFloat(lateFeeRows[0]?.total ?? 0)
-      : 0;
 
     res.json({
       lease: {
@@ -426,14 +467,27 @@ router.get('/balance', Guards.tenantOnly, async (req, res) => {
         status:       lease.status,
         unit:         `${lease.property_name} — Unit ${lease.unit_number}`,
         address:      `${lease.address_line1}, ${lease.city}, ${lease.state}`,
-        monthlyRent:  parseFloat(lease.monthly_rent),
+        monthlyRent,
         gracePeriod:  lease.grace_period_days,
-        nextDueDate:  paymentRows[0]?.due_date ?? defaultDueDate,
+        nextDueDate,
       },
-      currentPayment: paymentRows[0] ?? null,
+      currentPayment: currentPayment
+        ? { ...currentPayment, amount: parseFloat(currentPayment.amount) }
+        : (paidInFull
+          ? {
+              id: null,
+              amount: paidThisMonth,
+              status: 'succeeded',
+              due_date: monthStart,
+              period_start: monthStart,
+              period_end: null,
+            }
+          : null),
       securityDepositPayment,
-      lateFeeBalance: parseFloat(lateFeeRows[0]?.total ?? 0),
-      totalDue: rentTotalDue,
+      lateFeeBalance,
+      rentRemaining,
+      paidThisMonth,
+      totalDue: Math.round((rentRemaining + lateFeeBalance) * 100) / 100,
       cashAppPayAvailable: stripe.isCashAppPayConfigured(),
     });
   } catch (err) {
@@ -747,6 +801,7 @@ function tenantStripeClientConfig() {
     publishableKey: stripe.getPublishableKey(),
     cashAppPayAvailable,
     cashAppEnabled: cashAppPayAvailable,
+    processingFees: feeSchedulePublic(),
   };
 }
 
@@ -805,16 +860,21 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
     );
     const customerId = await stripe.getOrCreateCustomer(req.user.id, userRow.email);
 
+    // Tenant pays 2.9%+$0.30; ledger payment.amount stays base rent.
+    const fee = computeCardCashAppFee(prep.amountCents);
+    const feeMeta = feeMetadata(fee);
+
     const paymentIntent = await stripe.createCashAppPaymentIntent({
-      amountCents: prep.amountCents,
+      amountCents: fee.totalCents,
       customerId,
-      description: prep.description,
+      description: `${prep.description} (incl. processing fee)`,
       metadata: {
         payment_id: prep.payment.id,
         lease_id: leaseId,
         tenant_id: req.user.id,
         payment_type: paymentType,
         ...prep.chargeMeta,
+        ...feeMeta,
       },
     });
 
@@ -829,6 +889,7 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
         JSON.stringify({
           payment_method: 'cash_app',
           source: 'stripe_cashapp',
+          ...feeMeta,
         }),
         prep.payment.id,
       ]
@@ -840,7 +901,9 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
       clientSecret: paymentIntent.client_secret,
       paymentIntentId: paymentIntent.id,
       paymentId: prep.payment.id,
-      amount: prep.amountDollars,
+      amount: fee.totalAmount,
+      baseAmount: fee.baseAmount,
+      processingFee: fee.processingFee,
       publishableKey: stripe.getPublishableKey(),
     });
   } catch (err) {
@@ -916,12 +979,16 @@ router.post('/card/create-intent', Guards.tenantOnly, async (req, res) => {
     );
     const customerId = await stripe.getOrCreateCustomer(req.user.id, userRow.email);
 
+    // Tenant pays 2.9%+$0.30 on card; ledger payment.amount stays base.
+    const fee = computeCardCashAppFee(amountCents);
+    const feeMeta = feeMetadata(fee);
+
     const paymentIntent = await stripe.createCardPaymentIntent({
-      amountCents,
+      amountCents: fee.totalCents,
       customerId,
       description: includeFirstMonth
-        ? `${prep.description} + first month rent`
-        : prep.description,
+        ? `${prep.description} + first month rent (incl. processing fee)`
+        : `${prep.description} (incl. processing fee)`,
       metadata: {
         payment_id: prep.payment.id,
         lease_id: leaseId,
@@ -929,6 +996,7 @@ router.post('/card/create-intent', Guards.tenantOnly, async (req, res) => {
         payment_type: paymentType,
         ...prep.chargeMeta,
         ...bundleMeta,
+        ...feeMeta,
       },
     });
 
@@ -944,6 +1012,7 @@ router.post('/card/create-intent', Guards.tenantOnly, async (req, res) => {
           payment_method: 'card',
           source: 'stripe_card',
           ...bundleMeta,
+          ...feeMeta,
         }),
         prep.payment.id,
       ]
@@ -955,7 +1024,9 @@ router.post('/card/create-intent', Guards.tenantOnly, async (req, res) => {
       clientSecret: paymentIntent.client_secret,
       paymentIntentId: paymentIntent.id,
       paymentId: prep.payment.id,
-      amount: amountDollars,
+      amount: fee.totalAmount,
+      baseAmount: fee.baseAmount,
+      processingFee: fee.processingFee,
       publishableKey: stripe.getPublishableKey(),
     });
   } catch (err) {

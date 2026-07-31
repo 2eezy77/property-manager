@@ -39,6 +39,8 @@
     "send:email-previews": "node scripts/send-email-template-samples.js",
     "portal-launch:send": "node scripts/send-portal-launch.js",
     "portal-launch:send:dry": "node scripts/send-portal-launch.js --dry-run",
+    "tenant:portal-only:notice": "node scripts/send-portal-only-payments-notice.js --apply",
+    "tenant:portal-only:notice:dry": "node scripts/send-portal-only-payments-notice.js",
     "rent:billing": "node scripts/run-rent-billing.js",
     "payments:health": "node scripts/payments-health.js",
     "payments:health:json": "node scripts/payments-health.js --json",
@@ -59,7 +61,9 @@
     "test:native-lease:all": "npm run test:native-lease-defaults && npm run test:native-lease-pdf && npm run test:native-lease",
     "rocketlawyer:probe": "node scripts/rocketlawyer-probe.js",
     "build": "cd client && npm install && npm run build",
-    "assert:portal-pay": "node scripts/assert-portal-pay-guards.js"
+    "assert:portal-pay": "node scripts/assert-portal-pay-guards.js",
+    "test:processing-fee": "node scripts/test-processing-fee.js",
+    "test:balance-paid": "node scripts/test-balance-paid-month.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.27.0",

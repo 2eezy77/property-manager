@@ -350,9 +350,10 @@ export default function TenantDashboard() {
             to="/tenant/payments"
             className="portal-card hover-lift block border border-blue-100 bg-blue-50/60 px-4 py-3"
           >
-            <p className="text-sm font-semibold text-blue-950">Pay rent in the portal</p>
+            <p className="text-sm font-semibold text-blue-950">Pay rent in the portal only</p>
             <p className="mt-1 text-xs leading-relaxed text-blue-900/80">
-              Autopay waives late fees. Pay with bank ACH or Cash App Pay on Payments — we only auto-debit if Autopay is on.
+              Off-app Cash App, Venmo, and Zelle are no longer accepted. Bank ACH has no processing fee;
+              Cash App Pay in Payments includes 2.9% + $0.30. Autopay waives late fees and is the only auto-debit.
               {balance?.securityDepositPayment
                 ? ` Security deposit still due (${fmt(balance.securityDepositPayment.amount)}).`
                 : ''}
