@@ -1,9 +1,6 @@
 #!/usr/bin/env node
 /**
  * Lease invite + identity QA smoke script.
- *
- * Task 2 covers the invite portion only; identity cases will be appended by the
- * follow-up task.
  */
 
 const assert = require('assert');
@@ -93,6 +90,156 @@ async function setTenantPassword(userId) {
       WHERE id = $2`,
     [passwordHash, userId]
   );
+}
+
+async function createInvitedNativeLease(staffToken, {
+  firstName = 'Invited',
+  lastName = 'Tenant',
+  phone = '757-555-0199',
+  startOffset = 60,
+  endOffset = 425,
+} = {}) {
+  const inviteEmail = uniqueInviteEmail();
+  const createRes = await req('POST', '/api/leases/native', {
+    unit_id: UNIT_ID,
+    room_type: 'regular',
+    start_date: isoDateDaysFromNow(startOffset),
+    end_date: isoDateDaysFromNow(endOffset),
+    invite: {
+      email: inviteEmail,
+      first_name: firstName,
+      last_name: lastName,
+      phone,
+    },
+  }, staffToken);
+  requireStatus('create native lease with invite', createRes, 201);
+
+  const tenant = await loadTenant(inviteEmail);
+  assert(tenant, 'invited tenant user should exist');
+  await setTenantPassword(tenant.id);
+  const tenantToken = await login(inviteEmail, TENANT_PW || PW);
+
+  return {
+    createRes,
+    inviteEmail,
+    leaseId: createRes.body.lease.id,
+    tenant,
+    tenantToken,
+  };
+}
+
+async function signNativeLeaseFlow({ leaseId, staffToken, tenantToken, tenantName = 'Invited Tenant' }) {
+  const pdfRes = await req('POST', `/api/leases/${leaseId}/native/pdf`, null, staffToken);
+  requireStatus('generate native PDF', pdfRes, 200);
+  assert(pdfRes.body.pdfPath || pdfRes.body.path, 'PDF response should include a path');
+
+  const sendRes = await req('POST', `/api/leases/${leaseId}/native/send`, null, staffToken);
+  requireStatus('send native lease', sendRes, 200);
+  assert.strictEqual(sendRes.body.lease.status, 'pending_tenant_signature');
+
+  const tenantSignRes = await req('POST', `/api/leases/${leaseId}/native/sign`, {
+    signedName: tenantName,
+  }, tenantToken);
+  requireStatus('tenant native sign', tenantSignRes, 200);
+  assert.strictEqual(tenantSignRes.body.lease.status, 'pending_manager_signature');
+
+  const managerSignRes = await req('POST', `/api/leases/${leaseId}/native/sign`, {
+    signedName: 'Local Manager',
+  }, staffToken);
+  requireStatus('manager native sign', managerSignRes, 200);
+  assert.strictEqual(managerSignRes.body.lease.status, 'awaiting_deposit');
+  assert(managerSignRes.body.depositPayment?.id, 'manager signature should create deposit payment');
+  assert(managerSignRes.body.feeId, 'manager signing fee should be ensured');
+
+  return managerSignRes.body;
+}
+
+async function loadLeaseStatus(leaseId) {
+  const { rows } = await pool.query(
+    `SELECT id, status, deposit_paid_at
+       FROM leases
+      WHERE id = $1`,
+    [leaseId]
+  );
+  assert(rows[0], `lease should exist: ${leaseId}`);
+  return rows[0];
+}
+
+async function settlePendingSecurityDepositAndActivate(leaseId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [payment] } = await client.query(
+      `UPDATE payments
+          SET status = 'succeeded',
+              paid_at = COALESCE(paid_at, NOW()),
+              updated_at = NOW()
+        WHERE id = (
+          SELECT id
+            FROM payments
+           WHERE lease_id = $1
+             AND payment_type = 'security_deposit'
+             AND status IN ('pending', 'processing')
+           ORDER BY created_at DESC
+           LIMIT 1
+           FOR UPDATE
+        )
+        RETURNING id`,
+      [leaseId]
+    );
+    assert(payment, 'pending security deposit payment should exist before settlement');
+    const activation = await activateNativeLeaseAfterDeposit(client, leaseId);
+    await client.query('COMMIT');
+    return activation;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function seedVerifiedIdentity(leaseId, tenantId, { sessionId = null } = {}) {
+  const { rows } = await pool.query(
+    `INSERT INTO tenant_identity_verifications
+       (lease_id, tenant_id, stripe_verification_session_id, status, verified_at,
+        legal_name, date_of_birth, address_line1, address_city, address_state, address_postal)
+     VALUES ($1, $2, $3, 'verified', NOW(),
+             'Invited Tenant', '1990-01-02', '123 Test St', 'Norfolk', 'VA', '23510')
+     ON CONFLICT (lease_id) DO UPDATE
+       SET tenant_id = EXCLUDED.tenant_id,
+           stripe_verification_session_id = COALESCE(
+             EXCLUDED.stripe_verification_session_id,
+             tenant_identity_verifications.stripe_verification_session_id
+           ),
+           status = 'verified',
+           verified_at = COALESCE(tenant_identity_verifications.verified_at, NOW()),
+           legal_name = EXCLUDED.legal_name,
+           date_of_birth = EXCLUDED.date_of_birth,
+           address_line1 = EXCLUDED.address_line1,
+           address_city = EXCLUDED.address_city,
+           address_state = EXCLUDED.address_state,
+           address_postal = EXCLUDED.address_postal,
+           updated_at = NOW()
+     RETURNING *`,
+    [leaseId, tenantId, sessionId]
+  );
+  return rows[0];
+}
+
+async function activateAfterVerifiedIdentity(leaseId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const activation = await tryActivateAfterIdentity(client, leaseId);
+    await client.query('COMMIT');
+    return activation;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 function createActivationClient({ status = 'awaiting_deposit', identityStatus = null } = {}) {
@@ -423,20 +570,13 @@ async function main() {
     );
     reporter.ok('invite without phone is rejected with phone validation');
 
-    const inviteEmail = uniqueInviteEmail();
-    const createRes = await req('POST', '/api/leases/native', {
-      unit_id: UNIT_ID,
-      room_type: 'regular',
-      start_date: isoDateDaysFromNow(60),
-      end_date: isoDateDaysFromNow(425),
-      invite: {
-        email: inviteEmail,
-        first_name: 'Invited',
-        last_name: 'Tenant',
-        phone: '757-555-0199',
-      },
-    }, staffToken);
-    requireStatus('create native lease with invite', createRes, 201);
+    const {
+      createRes,
+      inviteEmail,
+      leaseId,
+      tenant,
+      tenantToken,
+    } = await createInvitedNativeLease(staffToken);
     assert.strictEqual(createRes.body.lease.status, 'draft');
     assert.strictEqual(createRes.body.lease.signing_provider, 'native');
     assert.strictEqual(createRes.body.tenant.email, inviteEmail);
@@ -444,8 +584,6 @@ async function main() {
     assert.strictEqual(typeof createRes.body.inviteSent, 'boolean');
     reporter.ok('native draft lease is created for invited tenant');
 
-    const tenant = await loadTenant(inviteEmail);
-    assert(tenant, 'invited tenant user should exist');
     assert.strictEqual(tenant.role, 'tenant');
     assert(tenant.org_id, 'invited tenant should have org_id');
     assert.strictEqual(tenant.phone, '757-555-0199');
@@ -459,11 +597,9 @@ async function main() {
     );
     reporter.ok('lease-create tenant picker includes invited org tenant');
 
-    await setTenantPassword(tenant.id);
-    const tenantToken = await login(inviteEmail, TENANT_PW || PW);
     const noFeeSessionRes = await req(
       'POST',
-      `/api/leases/${createRes.body.lease.id}/identity/session`,
+      `/api/leases/${leaseId}/identity/session`,
       null,
       tenantToken
     );
@@ -476,46 +612,54 @@ async function main() {
 
     const feeRes = await req(
       'POST',
-      `/api/leases/${createRes.body.lease.id}/identity/fee`,
+      `/api/leases/${leaseId}/identity/fee`,
       null,
       tenantToken
     );
-    requireStatus('identity fee intent', feeRes, 200);
-    const expectedFee = computeCardCashAppFee(150);
-    assert.strictEqual(feeRes.body.baseAmount, expectedFee.baseAmount);
-    assert.strictEqual(feeRes.body.processingFee, expectedFee.processingFee);
-    assert.strictEqual(feeRes.body.amount, expectedFee.totalAmount);
-    assert(feeRes.body.clientSecret, 'fee intent should return a Stripe client secret');
-    assert(feeRes.body.paymentId, 'fee intent should return a payment row id');
-    reporter.ok('identity fee intent uses locked base amount and card processing fee');
-
-    await pool.query(
-      `UPDATE payments
-          SET status = 'succeeded',
-              paid_at = NOW(),
-              updated_at = NOW()
-        WHERE id = $1`,
-      [feeRes.body.paymentId]
-    );
-    const paidSessionRes = await req(
-      'POST',
-      `/api/leases/${createRes.body.lease.id}/identity/session`,
-      null,
-      tenantToken
-    );
-    if (paidSessionRes.status === 503 && paidSessionRes.body.error === 'STRIPE_IDENTITY_UNAVAILABLE') {
-      reporter.skip('identity hosted session creates after fee', paidSessionRes.body.message || 'Stripe Identity unavailable');
+    let paidSessionRes = null;
+    if (feeRes.status === 503 && feeRes.body.error === 'STRIPE_IDENTITY_UNAVAILABLE') {
+      reporter.skip('identity fee intent uses locked base amount and card processing fee', feeRes.body.message || 'Stripe restricted');
+      reporter.skip('identity hosted session creates after fee', feeRes.body.message || 'Stripe Identity unavailable');
     } else {
-      requireStatus('identity hosted session after fee', paidSessionRes, 200);
-      assert(paidSessionRes.body.url, 'identity session should return hosted Stripe URL');
-      assert(paidSessionRes.body.sessionId, 'identity session should return Stripe session id');
-      reporter.ok('identity hosted session is created after fee payment');
+      requireStatus('identity fee intent', feeRes, 200);
+      const expectedFee = computeCardCashAppFee(150);
+      assert.strictEqual(feeRes.body.baseAmount, expectedFee.baseAmount);
+      assert.strictEqual(feeRes.body.processingFee, expectedFee.processingFee);
+      assert.strictEqual(feeRes.body.amount, expectedFee.totalAmount);
+      assert(feeRes.body.clientSecret, 'fee intent should return a Stripe client secret');
+      assert(feeRes.body.paymentId, 'fee intent should return a payment row id');
+      reporter.ok('identity fee intent uses locked base amount and card processing fee');
 
+      await pool.query(
+        `UPDATE payments
+            SET status = 'succeeded',
+                paid_at = NOW(),
+                updated_at = NOW()
+          WHERE id = $1`,
+        [feeRes.body.paymentId]
+      );
+      paidSessionRes = await req(
+        'POST',
+        `/api/leases/${leaseId}/identity/session`,
+        null,
+        tenantToken
+      );
+      if (paidSessionRes.status === 503 && paidSessionRes.body.error === 'STRIPE_IDENTITY_UNAVAILABLE') {
+        reporter.skip('identity hosted session creates after fee', paidSessionRes.body.message || 'Stripe Identity unavailable');
+      } else {
+        requireStatus('identity hosted session after fee', paidSessionRes, 200);
+        assert(paidSessionRes.body.url, 'identity session should return hosted Stripe URL');
+        assert(paidSessionRes.body.sessionId, 'identity session should return Stripe session id');
+        reporter.ok('identity hosted session is created after fee payment');
+      }
+    }
+
+    if (paidSessionRes?.status === 200) {
       await applyIdentitySessionUpdate({
         id: paidSessionRes.body.sessionId,
         status: 'verified',
         metadata: {
-          lease_id: createRes.body.lease.id,
+          lease_id: leaseId,
           tenant_id: tenant.id,
         },
         verified_outputs: {
@@ -530,9 +674,49 @@ async function main() {
           },
         },
       });
-      assert.strictEqual(await isIdentityVerified(createRes.body.lease.id), true);
+      assert.strictEqual(await isIdentityVerified(leaseId), true);
       reporter.ok('identity session update marks the lease identity verified');
+    } else {
+      await seedVerifiedIdentity(leaseId, tenant.id);
+      assert.strictEqual(await isIdentityVerified(leaseId), true);
+      reporter.ok('verified identity row can be simulated when Stripe Identity is unavailable');
     }
+
+    await signNativeLeaseFlow({ leaseId, staffToken, tenantToken });
+    reporter.ok('invited tenant lease completes native signing path');
+
+    const verifiedDeposit = await settlePendingSecurityDepositAndActivate(leaseId);
+    assert.strictEqual(verifiedDeposit.status, 'active');
+    const activeLease = await loadLeaseStatus(leaseId);
+    assert.strictEqual(activeLease.status, 'active');
+    assert(activeLease.deposit_paid_at, 'active lease should retain deposit_paid_at');
+    reporter.ok('verified identity plus deposit settlement activates invited native lease');
+
+    const unverifiedFlow = await createInvitedNativeLease(staffToken, {
+      firstName: 'Awaiting',
+      lastName: 'Identity',
+      startOffset: 70,
+      endOffset: 435,
+    });
+    await signNativeLeaseFlow({
+      leaseId: unverifiedFlow.leaseId,
+      staffToken,
+      tenantToken: unverifiedFlow.tenantToken,
+      tenantName: 'Awaiting Identity',
+    });
+    const awaitingIdentityDeposit = await settlePendingSecurityDepositAndActivate(unverifiedFlow.leaseId);
+    assert.strictEqual(awaitingIdentityDeposit.status, 'awaiting_identity');
+    const awaitingLease = await loadLeaseStatus(unverifiedFlow.leaseId);
+    assert.strictEqual(awaitingLease.status, 'awaiting_identity');
+    assert(awaitingLease.deposit_paid_at, 'awaiting_identity lease should have deposit_paid_at set');
+    reporter.ok('deposit settlement without verified identity leaves invited native lease awaiting_identity');
+
+    await seedVerifiedIdentity(unverifiedFlow.leaseId, unverifiedFlow.tenant.id);
+    const activationAfterIdentity = await activateAfterVerifiedIdentity(unverifiedFlow.leaseId);
+    assert.strictEqual(activationAfterIdentity.status, 'active');
+    const activatedAfterIdentityLease = await loadLeaseStatus(unverifiedFlow.leaseId);
+    assert.strictEqual(activatedAfterIdentityLease.status, 'active');
+    reporter.ok('identity verification after deposit activates invited native lease');
 
     const duplicateRes = await req('POST', '/api/leases/native', {
       unit_id: UNIT_ID,
