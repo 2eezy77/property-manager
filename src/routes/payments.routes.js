@@ -44,6 +44,11 @@ const { getRentStatusRoster } = require('../services/rent-status.service');
 const { syncCashAppFromGmail } = require('../services/cashapp-gmail.service');
 const { runPaymentsHealth } = require('../services/payments-health.service');
 const { prepareTenantCharge } = require('../services/rent-charge.service');
+const {
+  computeCardCashAppFee,
+  feeMetadata,
+  feeSchedulePublic,
+} = require('../services/payment-processing-fee.service');
 const { partnerErrorMessage } = require('../utils/plaid-errors');
 const { assertAchDebitAllowed } = require('../services/plaid-ach-guard.service');
 const {
@@ -706,6 +711,7 @@ function tenantStripeClientConfig() {
     publishableKey: stripe.getPublishableKey(),
     cashAppPayAvailable,
     cashAppEnabled: cashAppPayAvailable,
+    processingFees: feeSchedulePublic(),
   };
 }
 
@@ -764,16 +770,21 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
     );
     const customerId = await stripe.getOrCreateCustomer(req.user.id, userRow.email);
 
+    // Tenant pays 2.9%+$0.30; ledger payment.amount stays base rent.
+    const fee = computeCardCashAppFee(prep.amountCents);
+    const feeMeta = feeMetadata(fee);
+
     const paymentIntent = await stripe.createCashAppPaymentIntent({
-      amountCents: prep.amountCents,
+      amountCents: fee.totalCents,
       customerId,
-      description: prep.description,
+      description: `${prep.description} (incl. processing fee)`,
       metadata: {
         payment_id: prep.payment.id,
         lease_id: leaseId,
         tenant_id: req.user.id,
         payment_type: paymentType,
         ...prep.chargeMeta,
+        ...feeMeta,
       },
     });
 
@@ -788,6 +799,7 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
         JSON.stringify({
           payment_method: 'cash_app',
           source: 'stripe_cashapp',
+          ...feeMeta,
         }),
         prep.payment.id,
       ]
@@ -798,7 +810,9 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
     res.json({
       clientSecret: paymentIntent.client_secret,
       paymentId: prep.payment.id,
-      amount: prep.amountDollars,
+      amount: fee.totalAmount,
+      baseAmount: fee.baseAmount,
+      processingFee: fee.processingFee,
       publishableKey: stripe.getPublishableKey(),
     });
   } catch (err) {

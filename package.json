@@ -55,7 +55,8 @@
     "stripe:connect:status": "node scripts/stripe-connect-status.js",
     "rocketlawyer:probe": "node scripts/rocketlawyer-probe.js",
     "build": "cd client && npm install && npm run build",
-    "assert:portal-pay": "node scripts/assert-portal-pay-guards.js"
+    "assert:portal-pay": "node scripts/assert-portal-pay-guards.js",
+    "test:processing-fee": "node scripts/test-processing-fee.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.27.0",
