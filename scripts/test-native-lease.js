@@ -152,7 +152,11 @@ async function main() {
       requireStatus('card security deposit PaymentIntent', cardIntentRes, 200);
       assert(cardIntentRes.body.clientSecret, 'card intent response should include clientSecret');
       assert(cardIntentRes.body.paymentIntentId, 'card intent response should include paymentIntentId');
+      assert.strictEqual(Number(cardIntentRes.body.baseAmount), 900);
+      assert.strictEqual(Number(cardIntentRes.body.processingFee), 26.4);
+      assert.strictEqual(Number(cardIntentRes.body.amount), 926.4);
       reporter.ok('card security deposit PaymentIntent can be created while awaiting deposit');
+      reporter.ok('card deposit create-intent applies 2.9%+$0.30 processing fee');
 
       const secondIntentRes = await req('POST', '/api/payments/card/create-intent', {
         leaseId,
@@ -164,6 +168,7 @@ async function main() {
         secondIntentRes.body.paymentIntentId !== cardIntentRes.body.paymentIntentId,
         'second create-intent should replace prior PI (cancel + new intent)'
       );
+      assert.strictEqual(Number(secondIntentRes.body.amount), 926.4);
       reporter.ok('second deposit create-intent replaces prior open PI (cancel-then-overwrite)');
     }
 
