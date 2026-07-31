@@ -13,3 +13,18 @@ TEST summary
 CONCERNS
 - No `lint` script exists in `package.json`; syntax checks were used for changed JS files.
 - `npm install` reports one existing high-severity audit finding; not introduced or changed by Task 3.
+
+---
+
+## Follow-up: native-only identity gate
+
+STATUS: DONE
+
+COMMIT
+- `fix(identity): restrict fee/session to native leases`
+
+CHANGE
+- `loadLeaseForTenant` in `src/services/tenant-identity.service.js` now selects `signing_provider` and rejects non-`native` leases with HTTP 400 and code `IDENTITY_NATIVE_ONLY` (used by both `createIdentityFeeIntent` and `createIdentitySession`).
+
+TEST summary
+- `node scripts/test-lease-invite-identity.js`: **11 passed · 0 failed** (native invite lease path unchanged; fee/session still gated on paid fee then session creation).

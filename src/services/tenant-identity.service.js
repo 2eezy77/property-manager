@@ -53,7 +53,7 @@ async function withTransaction(fn) {
 
 async function loadLeaseForTenant(client, leaseId, tenantId) {
   const { rows } = await client.query(
-    `SELECT l.id, l.tenant_id, l.status,
+    `SELECT l.id, l.tenant_id, l.status, l.signing_provider,
             u.email AS tenant_email,
             TRIM(CONCAT(u.first_name, ' ', u.last_name)) AS tenant_name
        FROM leases l
@@ -65,6 +65,13 @@ async function loadLeaseForTenant(client, leaseId, tenantId) {
   if (!lease) throw httpError('Lease not found.', 404, 'LEASE_NOT_FOUND');
   if (String(lease.tenant_id) !== String(tenantId)) {
     throw httpError('Access denied.', 403, 'ACCESS_DENIED');
+  }
+  if (lease.signing_provider !== 'native') {
+    throw httpError(
+      'Identity verification is only available for native leases.',
+      400,
+      'IDENTITY_NATIVE_ONLY'
+    );
   }
   return lease;
 }
