@@ -85,14 +85,16 @@ async function processAutopayCharges(db = pool) {
     const { rows: inFlight } = await db.query(
       `SELECT id FROM payments
         WHERE lease_id = $1 AND payment_type = 'rent'
-          AND period_start = $2 AND status IN ('processing','succeeded')`,
+          AND period_start = $2 AND status = 'processing'`,
       [lease.lease_id, monthStart]
     );
     if (inFlight.length) continue;
 
-    const lateFeeAmount = await getLateFeeTotal(db, lease.lease_id);
-    const rentAmount = parseFloat(lease.monthly_rent);
-    const totalAmount = Math.round((rentAmount + lateFeeAmount) * 100) / 100;
+    const breakdown = await computeChargeBreakdown(db, lease.lease_id, { monthStart });
+    const rentAmount = breakdown.rentAmount;
+    const lateFeeAmount = breakdown.lateFeeAmount;
+    const totalAmount = breakdown.totalAmount;
+    if (totalAmount <= 0.009) continue;
     const amountCents = Math.round(totalAmount * 100);
 
     const client = await db.connect();
@@ -103,12 +105,21 @@ async function processAutopayCharges(db = pool) {
       const { rows: pendingRows } = await client.query(
         `SELECT id FROM payments
           WHERE lease_id = $1 AND payment_type = 'rent' AND period_start = $2 AND status = 'pending'
+            AND COALESCE(metadata->>'partial_installment', 'false') <> 'true'
           FOR UPDATE`,
         [lease.lease_id, monthStart]
       );
 
       let paymentId;
-      const meta = { rent_amount: rentAmount.toFixed(2), late_fee_amount: lateFeeAmount.toFixed(2), autopay: true };
+      const meta = {
+        rent_amount: rentAmount.toFixed(2),
+        late_fee_amount: lateFeeAmount.toFixed(2),
+        total_remaining_before: totalAmount.toFixed(2),
+        rent_original_amount: breakdown.monthlyRent.toFixed(2),
+        autopay: true,
+        payment_method: 'ach',
+        source: 'stripe_ach',
+      };
       if (pendingRows[0]) {
         const { rows: [u] } = await client.query(
           `UPDATE payments SET amount = $1, bank_account_id = $2, metadata = $3, updated_at = NOW()
@@ -186,8 +197,13 @@ async function processAutopayCharges(db = pool) {
         ]
       );
 
-      if (localStatus === 'succeeded' && lateFeeAmount > 0) {
-        await markLateFeesPaidForLease(client, lease.lease_id);
+      if (localStatus === 'succeeded') {
+        const { settleRentPaymentSuccess } = require('../utils/payment-settlement');
+        await settleRentPaymentSuccess(client, {
+          paymentId,
+          leaseId: lease.lease_id,
+          amount: totalAmount,
+        });
       }
 
       await client.query('COMMIT');
@@ -419,17 +435,39 @@ async function getLateFeeTotal(db, leaseId) {
   return parseFloat(rows[0]?.total ?? 0);
 }
 
-async function computeChargeBreakdown(db, leaseId) {
+async function computeChargeBreakdown(db, leaseId, { monthStart } = {}) {
+  const period = monthStart || currentMonthStart();
   const { rows: [lease] } = await db.query(
     `SELECT monthly_rent FROM leases WHERE id = $1`,
     [leaseId]
   );
-  const rentAmount = parseFloat(lease?.monthly_rent ?? 0);
+  const monthlyRent = Math.round(parseFloat(lease?.monthly_rent ?? 0) * 100) / 100;
+  // Prefer metadata.rent_amount so late-fee portions on the same charge aren't
+  // counted twice toward monthly rent remaining.
+  const { rows: paidRows } = await db.query(
+    `SELECT COALESCE(SUM(
+              COALESCE(
+                NULLIF(metadata->>'rent_amount', '')::numeric,
+                amount
+              )
+            ), 0) AS paid
+       FROM payments
+      WHERE lease_id = $1
+        AND payment_type = 'rent'
+        AND period_start = $2::date
+        AND status = 'succeeded'
+        AND COALESCE(metadata->>'closed_by_installments', 'false') <> 'true'`,
+    [leaseId, period]
+  );
+  const paidThisMonth = Math.round(parseFloat(paidRows[0]?.paid ?? 0) * 100) / 100;
+  const rentRemaining = Math.max(0, Math.round((monthlyRent - paidThisMonth) * 100) / 100);
   const lateFeeAmount = await getLateFeeTotal(db, leaseId);
   return {
-    rentAmount,
+    rentAmount: rentRemaining,
     lateFeeAmount,
-    totalAmount: Math.round((rentAmount + lateFeeAmount) * 100) / 100,
+    totalAmount: Math.round((rentRemaining + lateFeeAmount) * 100) / 100,
+    monthlyRent,
+    paidThisMonth,
   };
 }
 
