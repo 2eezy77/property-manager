@@ -224,6 +224,8 @@ export default function PaymentsPage() {
   const [showConfirm,   setShowConfirm]   = useState(false);
   const [showDepositConfirm, setShowDepositConfirm] = useState(false);
   const [depositPayLoading, setDepositPayLoading] = useState(false);
+  const [depositAmountInput, setDepositAmountInput] = useState('');
+  const [cashAppPayType, setCashAppPayType] = useState('rent');
   const [payLoading,    setPayLoading]    = useState(false);
   const [payResult,     setPayResult]     = useState(null);  // { success, message }
   const [histPage,      setHistPage]      = useState(1);
@@ -264,6 +266,10 @@ export default function PaymentsPage() {
       setPagination(histRes.data.pagination);
       if (autopayRes) setAutopay(autopayRes.data.autopay);
       if (stripeRes) setStripeConfig(stripeRes.data);
+      const dep = balRes.data?.securityDepositPayment;
+      if (dep?.remaining != null || dep?.amount != null) {
+        setDepositAmountInput(String(Number(dep.remaining ?? dep.amount).toFixed(2)));
+      }
     } catch (err) {
       setPageLoadError(apiErrorMessage(err, 'Could not load payments. Please try again.'));
     } finally {
@@ -404,20 +410,46 @@ export default function PaymentsPage() {
     }
   }, [updateLinkToken, relinkPlaidReady, relinkPlaidLoading, openRelinkPlaid]);
 
+  function resolveDepositAmount() {
+    const remaining = Number(
+      balance?.securityDepositPayment?.remaining
+      ?? balance?.securityDepositPayment?.amount
+      ?? 0
+    );
+    const raw = depositAmountInput === '' || depositAmountInput == null
+      ? remaining
+      : Number(depositAmountInput);
+    if (!Number.isFinite(raw) || raw <= 0) {
+      return { ok: false, message: 'Enter a valid deposit amount.' };
+    }
+    if (raw > remaining + 0.001) {
+      return { ok: false, message: `Amount cannot exceed ${fmt(remaining)} still owed.` };
+    }
+    return { ok: true, amount: Math.round(raw * 100) / 100, remaining };
+  }
+
   async function handleDepositPay() {
     if (!selectedAcct || !balance?.lease || !balance?.securityDepositPayment) return;
+    const resolved = resolveDepositAmount();
+    if (!resolved.ok) {
+      setPayResult({ success: false, message: resolved.message });
+      return;
+    }
     setDepositPayLoading(true);
     try {
       await api.post('/api/payments/charge', {
         bankAccountId: selectedAcct.id,
         leaseId: balance.lease.id,
         paymentType: 'security_deposit',
+        amount: resolved.amount,
       });
       setShowDepositConfirm(false);
       setShowPayFlow(false);
       setPayResult({
         success: true,
-        message: 'Security deposit submitted! ACH transfers settle in 4–5 business days.',
+        message: resolved.amount < resolved.remaining - 0.001
+          ? `Partial security deposit of ${fmt(resolved.amount)} submitted! ACH settles in 4–5 business days.`
+          : 'Security deposit submitted! ACH transfers settle in 4–5 business days.',
       });
       await load(1);
     } catch (err) {
@@ -454,15 +486,26 @@ export default function PaymentsPage() {
     }
   }
 
-  async function handleCashAppPay() {
+  async function handleCashAppPay(paymentType = 'rent') {
     if (!balance?.lease) return;
+    let amount;
+    if (paymentType === 'security_deposit') {
+      const resolved = resolveDepositAmount();
+      if (!resolved.ok) {
+        setPayResult({ success: false, message: resolved.message });
+        return;
+      }
+      amount = resolved.amount;
+    }
+    setCashAppPayType(paymentType);
     setCashAppLoading(true);
     setCardIntent(null);
     setPayResult(null);
     try {
       const { data } = await api.post('/api/payments/cashapp/create-intent', {
         leaseId: balance.lease.id,
-        paymentType: 'rent',
+        paymentType,
+        ...(paymentType === 'security_deposit' ? { amount } : {}),
       }, { skipGlobalError: true });
 
       const publishableKey = data.publishableKey || stripeConfig?.publishableKey;
@@ -494,6 +537,15 @@ export default function PaymentsPage() {
 
   async function startCardPayment(paymentType) {
     if (!balance?.lease) return;
+    let amount;
+    if (paymentType === 'security_deposit') {
+      const resolved = resolveDepositAmount();
+      if (!resolved.ok) {
+        setPayResult({ success: false, message: resolved.message });
+        return;
+      }
+      amount = resolved.amount;
+    }
     setCardLoadingType(paymentType);
     setCardIntent(null);
     setPayResult(null);
@@ -501,6 +553,7 @@ export default function PaymentsPage() {
       const { data } = await api.post('/api/payments/card/create-intent', {
         leaseId: balance.lease.id,
         paymentType,
+        ...(paymentType === 'security_deposit' ? { amount } : {}),
       }, { skipGlobalError: true });
       setCardIntent({ ...data, paymentType });
     } catch (err) {
@@ -594,6 +647,20 @@ export default function PaymentsPage() {
   const noBankLinked = verifiedAccounts.length === 0;
   const rentDue = balance?.lease?.status === 'active' && Number(balance?.totalDue || 0) > 0;
   const depositDue = !managerPreview && balance?.securityDepositPayment;
+  const depositRemaining = Number(
+    balance?.securityDepositPayment?.remaining
+    ?? balance?.securityDepositPayment?.amount
+    ?? 0
+  );
+  const depositPaidTotal = Number(balance?.securityDepositPayment?.paidTotal || 0);
+  const depositOriginal = Number(
+    balance?.securityDepositPayment?.originalAmount
+    ?? (depositRemaining + depositPaidTotal)
+  );
+  const depositPayAmount = (() => {
+    const n = Number(depositAmountInput);
+    return Number.isFinite(n) && n > 0 ? n : depositRemaining;
+  })();
 
   return (
     <div className="stagger-section space-y-6">
@@ -685,7 +752,7 @@ export default function PaymentsPage() {
       {!managerPreview && rentDue && cashAppAvailable && !showPayFlow && (
         <button
           type="button"
-          onClick={handleCashAppPay}
+          onClick={() => handleCashAppPay('rent')}
           disabled={cashAppLoading}
           className="portal-card hover-lift flex w-full items-center justify-between gap-3 px-4 py-3 text-left disabled:opacity-50"
         >
@@ -714,8 +781,11 @@ export default function PaymentsPage() {
           <div>
             <p className="text-sm font-semibold text-slate-900">Security deposit due — pay in the portal</p>
             <p className="text-xs text-slate-500">
-              {fmt(balance.securityDepositPayment.amount)} · due {fmtDate(balance.securityDepositPayment.due_date)}
-              {' · '}pay by card now, or ACH after you connect a bank
+              {depositPaidTotal > 0.009
+                ? `${fmt(depositPaidTotal)} paid of ${fmt(depositOriginal)} · ${fmt(depositRemaining)} remaining`
+                : `${fmt(depositRemaining)} due`}
+              {' · '}due {fmtDate(balance.securityDepositPayment.due_date)}
+              {' · '}pay bit by bit by card, Cash App, or ACH
             </p>
           </div>
           <span className="shrink-0 text-sm font-semibold text-violet-700">Pay →</span>
@@ -732,8 +802,50 @@ export default function PaymentsPage() {
           <p className="text-xs text-slate-500">
             Preferred: bank ACH — no processing fee (Autopay also waives late fees).
             Card and Cash App include a 2.9% + $0.30 processing fee.
-            Card works for rent or deposits; Cash App is fine for one-time rent.
+            Security deposits can be paid in full or bit by bit.
           </p>
+
+          {depositDue && (
+            <div className="space-y-2 rounded-xl border border-violet-100 bg-violet-50/60 p-4">
+              <label htmlFor="deposit-amount" className="block text-sm font-semibold text-slate-900">
+                Security deposit amount
+              </label>
+              <p className="text-xs text-slate-600">
+                {depositPaidTotal > 0.009
+                  ? `${fmt(depositPaidTotal)} paid of ${fmt(depositOriginal)} · ${fmt(depositRemaining)} still owed`
+                  : `${fmt(depositRemaining)} owed`}
+                . Enter any amount up to the remaining balance.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">$</span>
+                  <input
+                    id="deposit-amount"
+                    type="number"
+                    min="1"
+                    step="0.01"
+                    max={depositRemaining}
+                    value={depositAmountInput}
+                    onChange={(e) => {
+                      setDepositAmountInput(e.target.value);
+                      setCardIntent(null);
+                    }}
+                    className="w-40 rounded-lg border border-slate-300 py-2 pl-7 pr-3 text-sm font-medium text-slate-900 focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDepositAmountInput(depositRemaining.toFixed(2));
+                    setCardIntent(null);
+                  }}
+                  className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs font-semibold text-violet-800 hover:bg-violet-50"
+                >
+                  Pay remaining
+                </button>
+              </div>
+            </div>
+          )}
 
           {(rentDue || depositDue) && (
             <div className="space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
@@ -763,7 +875,7 @@ export default function PaymentsPage() {
                   >
                     {cardLoadingType === 'security_deposit'
                       ? 'Preparing card form…'
-                      : `Pay deposit ${fmt(estimateCardCashAppTotal(balance.securityDepositPayment.amount).totalAmount)} with Card`}
+                      : `Pay deposit ${fmt(estimateCardCashAppTotal(depositPayAmount).totalAmount)} with Card`}
                   </button>
                 )}
               </div>
@@ -791,24 +903,40 @@ export default function PaymentsPage() {
             </div>
           )}
 
-          {cashAppAvailable && rentDue && (
+          {cashAppAvailable && (rentDue || depositDue) && (
             <div className="space-y-2">
-              <button
-                type="button"
-                onClick={handleCashAppPay}
-                disabled={cashAppLoading}
-                className="w-full rounded-xl bg-[#00D632] py-2.5 text-sm font-bold text-white hover:bg-[#00bf2d] disabled:opacity-50"
-              >
-                {cashAppLoading
-                  ? 'Opening Cash App…'
-                  : `Pay ${fmt(estimateCardCashAppTotal(balance.totalDue).totalAmount)} with Cash App`}
-              </button>
-              <p className="text-xs text-slate-500">
-                Rent {fmt(balance.totalDue)}
-                {' + processing fee '}
-                {fmt(estimateCardCashAppTotal(balance.totalDue).processingFee)}
-                {' · ACH has no processing fee'}
-              </p>
+              {rentDue && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleCashAppPay('rent')}
+                    disabled={cashAppLoading}
+                    className="w-full rounded-xl bg-[#00D632] py-2.5 text-sm font-bold text-white hover:bg-[#00bf2d] disabled:opacity-50"
+                  >
+                    {cashAppLoading && cashAppPayType === 'rent'
+                      ? 'Opening Cash App…'
+                      : `Pay rent ${fmt(estimateCardCashAppTotal(balance.totalDue).totalAmount)} with Cash App`}
+                  </button>
+                  <p className="text-xs text-slate-500">
+                    Rent {fmt(balance.totalDue)}
+                    {' + processing fee '}
+                    {fmt(estimateCardCashAppTotal(balance.totalDue).processingFee)}
+                    {' · ACH has no processing fee'}
+                  </p>
+                </>
+              )}
+              {depositDue && (
+                <button
+                  type="button"
+                  onClick={() => handleCashAppPay('security_deposit')}
+                  disabled={cashAppLoading}
+                  className="w-full rounded-xl border border-[#00D632] bg-white py-2.5 text-sm font-bold text-[#008c22] hover:bg-emerald-50 disabled:opacity-50"
+                >
+                  {cashAppLoading && cashAppPayType === 'security_deposit'
+                    ? 'Opening Cash App…'
+                    : `Pay deposit ${fmt(estimateCardCashAppTotal(depositPayAmount).totalAmount)} with Cash App`}
+                </button>
+              )}
             </div>
           )}
 
@@ -848,7 +976,7 @@ export default function PaymentsPage() {
                   onClick={() => setShowDepositConfirm(true)}
                   className="w-full rounded-xl border border-violet-300 bg-violet-50 py-2.5 text-sm font-semibold text-violet-900 hover:bg-violet-100 transition-colors"
                 >
-                  Pay deposit ({fmt(balance.securityDepositPayment.amount)})
+                  Pay deposit ({fmt(depositPayAmount)}) by ACH
                 </button>
               )}
             </div>
@@ -866,7 +994,11 @@ export default function PaymentsPage() {
           >
             <h2 id="deposit-confirm-title" className="text-lg font-semibold text-gray-900">Confirm security deposit</h2>
             <p className="mt-2 text-sm text-gray-600">
-              {fmt(balance.securityDepositPayment.amount)} due {fmtDate(balance.securityDepositPayment.due_date)}
+              Charge {fmt(depositPayAmount)}
+              {depositPayAmount < depositRemaining - 0.001
+                ? ` toward ${fmt(depositRemaining)} remaining`
+                : ` (full remaining balance)`}
+              {' · '}due {fmtDate(balance.securityDepositPayment.due_date)}
             </p>
             <p className="mt-1 text-xs text-gray-500">From ····{selectedAcct.account_mask}</p>
             <div className="mt-5 flex gap-3">
