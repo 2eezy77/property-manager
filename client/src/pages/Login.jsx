@@ -11,6 +11,12 @@ import AuthPageShell from '@/components/AuthPageShell';
 import { DEV_AUTO_LOGIN, DEV_LOGIN_EMAIL, DEV_LOGIN_PASSWORD } from '@/utils/devAuth';
 const REMEMBER_EMAIL_KEY = 'mr_last_login_email';
 
+/** Preserve query/hash so Plaid OAuth (`/oauth-return?oauth_state_id=…`) can resume after login. */
+function destinationFromLocationState(from, fallback) {
+  if (!from?.pathname) return fallback;
+  return `${from.pathname}${from.search || ''}${from.hash || ''}`;
+}
+
 function FieldIcon({ children }) {
   return (
     <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden>
@@ -79,7 +85,10 @@ export default function Login() {
   useEffect(() => {
     if (status !== 'authenticated' || !user) return;
     if (revealPendingRef.current || revealedUser) return;
-    const dest = location.state?.from?.pathname ?? ROLE_HOME[user.role] ?? '/';
+    const dest = destinationFromLocationState(
+      location.state?.from,
+      ROLE_HOME[user.role] ?? '/',
+    );
     navigate(dest, { replace: true });
   }, [status, user, revealedUser, location.state, navigate]);
 
@@ -95,7 +104,16 @@ export default function Login() {
     revealPendingRef.current = true;
     try {
       const user = await login(trimmed, password);
-      const dest = location.state?.from?.pathname ?? ROLE_HOME[user.role];
+      const dest = destinationFromLocationState(
+        location.state?.from,
+        ROLE_HOME[user.role],
+      );
+      // Skip PortalReveal for Plaid OAuth resume — Android Custom Tabs are timing-sensitive.
+      if (dest.startsWith('/oauth-return')) {
+        revealPendingRef.current = false;
+        navigate(dest, { replace: true });
+        return;
+      }
       setDestination(dest);
       setRevealedUser(user);
     } catch (err) {

@@ -400,6 +400,7 @@ export default function PaymentsPage() {
     linkTokenPath: '/api/payments/plaid/update-link-token',
     exchangePath: '/api/payments/plaid/exchange-update',
     returnTo: location.pathname,
+    oauthSessionExtra: relinkAccount ? { bankAccountId: relinkAccount.id } : null,
   });
 
   async function startRelink(account) {
@@ -1200,6 +1201,9 @@ export default function PaymentsPage() {
             <p className="mx-auto mt-1 max-w-sm text-xs text-slate-500">
               Autopay waives late fees while it is on. ACH uses a verified bank; card is available in the pay flow for one-time rent or deposits.
               {cashAppAvailable && rentDue ? ' Portal Cash App above still works for one-time rent.' : ''}
+            </p>
+            <p className="mx-auto mt-2 max-w-sm text-xs text-slate-500">
+              On Android/Samsung: use Chrome, complete the SMS code, and return to this same browser window so linking can finish.
             </p>
             <button
               type="button"

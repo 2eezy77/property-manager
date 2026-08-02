@@ -2,6 +2,10 @@
  * usePlaidLink.js
  * Fetches a Plaid Link token, initialises react-plaid-link, and persists OAuth
  * session state so /oauth-return can resume OAuth institutions (Chase, BoA, etc.).
+ *
+ * Android / Samsung Internet often completes SMS/OAuth in a Custom Tab that can
+ * drop sessionStorage or bounce through /login — we therefore mirror the session
+ * to localStorage and also stash the full redirect URL.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -10,6 +14,7 @@ import api from '@/api/axios';
 
 export const PLAID_OAUTH_SESSION_KEY = 'plaid_oauth_session';
 const PLAID_OAUTH_LOCAL_KEY = 'plaid_oauth_session_backup';
+export const PLAID_OAUTH_RETURN_URL_KEY = 'plaid_oauth_return_url';
 
 function defaultExchangePath(linkTokenPath) {
   if (linkTokenPath.endsWith('/link-token')) {
@@ -47,6 +52,25 @@ export function clearPlaidOAuthSession() {
   try {
     localStorage.removeItem(PLAID_OAUTH_LOCAL_KEY);
   } catch { /* ignore */ }
+  try {
+    localStorage.removeItem(PLAID_OAUTH_RETURN_URL_KEY);
+  } catch { /* ignore */ }
+}
+
+/** Stash the bank redirect URL as soon as /oauth-return loads (before auth bounce). */
+export function savePlaidOAuthReturnUrl(url) {
+  if (!url || !String(url).includes('oauth_state_id=')) return;
+  try {
+    localStorage.setItem(PLAID_OAUTH_RETURN_URL_KEY, url);
+  } catch { /* ignore */ }
+}
+
+export function readPlaidOAuthReturnUrl() {
+  try {
+    return localStorage.getItem(PLAID_OAUTH_RETURN_URL_KEY);
+  } catch {
+    return null;
+  }
 }
 
 function plaidFetchErrorMessage(err) {
@@ -69,6 +93,7 @@ function plaidFetchErrorMessage(err) {
  *   receivedRedirectUri?: string,
  *   initialLinkToken?: string | null,
  *   autoOpen?: boolean,
+ *   oauthSessionExtra?: object,
  * }} options
  */
 export function usePlaidLink({
@@ -81,6 +106,7 @@ export function usePlaidLink({
   receivedRedirectUri,
   initialLinkToken = null,
   autoOpen = false,
+  oauthSessionExtra = null,
 }) {
   const resolvedExchangePath = exchangePath ?? defaultExchangePath(linkTokenPath);
   const [linkToken, setLinkToken] = useState(initialLinkToken);
@@ -138,9 +164,11 @@ export function usePlaidLink({
       linkTokenPath,
       exchangePath: resolvedExchangePath,
       returnTo: returnTo ?? window.location.pathname,
+      ...(oauthSessionExtra || {}),
+      savedAt: new Date().toISOString(),
     });
     openSDK();
-  }, [linkToken, linkTokenPath, resolvedExchangePath, returnTo, openSDK]);
+  }, [linkToken, linkTokenPath, resolvedExchangePath, returnTo, openSDK, oauthSessionExtra]);
 
   const sdkReady = ready && !loading && !!linkToken;
 
