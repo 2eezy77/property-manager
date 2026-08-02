@@ -132,7 +132,7 @@ export default function ManagerInbox() {
   const showDetail = !!active;
 
   return (
-    <div className="flex flex-col h-[calc(100dvh-4rem)] min-h-0">
+    <div className="-mx-4 -my-5 sm:-mx-6 sm:-my-8 lg:-mx-10 flex flex-col h-[calc(100dvh-3.5rem)] min-h-0 bg-white">
       {/* Header — hide on mobile when viewing a thread to maximize space */}
       <div className={`px-4 sm:px-6 py-4 border-b border-gray-200 bg-white shrink-0 ${showDetail ? 'hidden md:block' : ''}`}>
         <h1 className="text-xl font-bold text-gray-900">Inbox</h1>
