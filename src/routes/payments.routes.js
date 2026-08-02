@@ -395,12 +395,13 @@ router.get('/balance', Guards.tenantOnly, async (req, res) => {
 
     // Prefer succeeded → processing → pending for "this month" rent row
     const { rows: paymentRows } = await pool.query(
-      `SELECT id, amount, status, due_date, period_start, period_end
+      `SELECT id, amount, status, due_date, period_start, period_end, metadata
          FROM payments
         WHERE lease_id = $1
           AND payment_type = 'rent'
           AND period_start = $2
           AND status IN ('succeeded', 'processing', 'pending')
+          AND COALESCE(metadata->>'closed_by_installments', 'false') <> 'true'
         ORDER BY
           CASE status
             WHEN 'succeeded'  THEN 0
@@ -408,18 +409,25 @@ router.get('/balance', Guards.tenantOnly, async (req, res) => {
             WHEN 'pending'    THEN 2
             ELSE 3
           END,
+          CASE WHEN COALESCE(metadata->>'partial_installment', 'false') = 'true' THEN 1 ELSE 0 END,
           created_at DESC
         LIMIT 1`,
       [lease.lease_id, monthStart]
     );
 
     const { rows: paidRows } = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) AS paid
+      `SELECT COALESCE(SUM(
+                COALESCE(
+                  NULLIF(metadata->>'rent_amount', '')::numeric,
+                  amount
+                )
+              ), 0) AS paid
          FROM payments
         WHERE lease_id = $1
           AND payment_type = 'rent'
           AND period_start = $2
-          AND status = 'succeeded'`,
+          AND status = 'succeeded'
+          AND COALESCE(metadata->>'closed_by_installments', 'false') <> 'true'`,
       [lease.lease_id, monthStart]
     );
     const paidThisMonth = parseFloat(paidRows[0]?.paid ?? 0);
@@ -567,7 +575,7 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
       leaseId,
       paymentType,
       bankAccountId,
-      amount: paymentType === 'security_deposit' ? amount : null,
+      amount: ['rent', 'security_deposit'].includes(paymentType) ? amount : null,
       metadataExtra: {
         payment_method: 'ach',
         source: 'stripe_ach',
@@ -654,7 +662,12 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
     );
 
     if (localStatus === 'succeeded' && paymentType === 'rent') {
-      await markLateFeesPaidForLease(client, leaseId);
+      const { settleRentPaymentSuccess } = require('../utils/payment-settlement');
+      await settleRentPaymentSuccess(client, {
+        paymentId: payment.id,
+        leaseId,
+        amount: amountDollars,
+      });
     }
 
     if (localStatus === 'succeeded' && paymentType === 'security_deposit') {
@@ -692,6 +705,7 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
         leaseId,
         amount: amountDollars,
         paymentType,
+        skipLateFeeClear: paymentType === 'rent',
       });
     }
 
@@ -714,11 +728,14 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
     if (err.code === 'NO_DEPOSIT_DUE') {
       return res.status(404).json({ error: 'NO_DEPOSIT_DUE', message: err.message });
     }
+    if (err.code === 'NOTHING_DUE') {
+      return res.status(404).json({ error: 'NOTHING_DUE', message: err.message });
+    }
     if (err.code === 'LEASE_NOT_FOUND') {
       return res.status(404).json({ error: 'LEASE_NOT_FOUND' });
     }
-    if (err.code === 'INVALID_DEPOSIT_AMOUNT') {
-      return res.status(400).json({ error: 'INVALID_DEPOSIT_AMOUNT', message: err.message });
+    if (err.code === 'INVALID_DEPOSIT_AMOUNT' || err.code === 'INVALID_PAYMENT_AMOUNT') {
+      return res.status(400).json({ error: err.code, message: err.message });
     }
     console.error('[payments/charge]', err);
     res.status(500).json({ error: 'CHARGE_FAILED', message: 'Payment could not be initiated.' });
@@ -781,7 +798,7 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
       leaseId,
       paymentType,
       bankAccountId: null,
-      amount: paymentType === 'security_deposit' ? amount : null,
+      amount: ['rent', 'security_deposit'].includes(paymentType) ? amount : null,
       metadataExtra: {
         payment_method: 'cash_app',
         source: 'stripe_cashapp',
@@ -852,8 +869,11 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
     if (err.code === 'DUPLICATE_PAYMENT') {
       return res.status(409).json({ error: 'DUPLICATE_PAYMENT', message: err.message });
     }
-    if (err.code === 'INVALID_DEPOSIT_AMOUNT') {
-      return res.status(400).json({ error: 'INVALID_DEPOSIT_AMOUNT', message: err.message });
+    if (err.code === 'INVALID_DEPOSIT_AMOUNT' || err.code === 'INVALID_PAYMENT_AMOUNT') {
+      return res.status(400).json({ error: err.code, message: err.message });
+    }
+    if (err.code === 'NOTHING_DUE') {
+      return res.status(404).json({ error: 'NOTHING_DUE', message: err.message });
     }
     console.error('[payments/cashapp/create-intent]', err);
     const message = err.message?.includes('cashapp')
@@ -893,7 +913,7 @@ router.post('/card/create-intent', Guards.tenantOnly, async (req, res) => {
       leaseId,
       paymentType,
       bankAccountId: null,
-      amount: paymentType === 'security_deposit' ? amount : null,
+      amount: ['rent', 'security_deposit'].includes(paymentType) ? amount : null,
       metadataExtra: {
         payment_method: 'card',
         source: 'stripe_card',
@@ -987,8 +1007,11 @@ router.post('/card/create-intent', Guards.tenantOnly, async (req, res) => {
     if (err.code === 'DUPLICATE_PAYMENT') {
       return res.status(409).json({ error: 'DUPLICATE_PAYMENT', message: err.message });
     }
-    if (err.code === 'INVALID_DEPOSIT_AMOUNT') {
-      return res.status(400).json({ error: 'INVALID_DEPOSIT_AMOUNT', message: err.message });
+    if (err.code === 'INVALID_DEPOSIT_AMOUNT' || err.code === 'INVALID_PAYMENT_AMOUNT') {
+      return res.status(400).json({ error: err.code, message: err.message });
+    }
+    if (err.code === 'NOTHING_DUE') {
+      return res.status(404).json({ error: 'NOTHING_DUE', message: err.message });
     }
     if (isStripeAccountRestrictionError(err)) {
       return res.status(503).json({
@@ -1068,6 +1091,14 @@ router.get('/cashapp/sync', Guards.tenantOnly, async (req, res) => {
             await activateNativeLeaseAfterDeposit(client, payment.lease_id);
           }
         }
+        if (rowCount && payment.payment_type === 'rent') {
+          const { settleRentPaymentSuccess } = require('../utils/payment-settlement');
+          await settleRentPaymentSuccess(client, {
+            paymentId: payment.id,
+            leaseId: payment.lease_id,
+            amount: parseFloat(payment.amount),
+          });
+        }
         await client.query('COMMIT');
         if (rowCount) {
           status = 'succeeded';
@@ -1077,6 +1108,7 @@ router.get('/cashapp/sync', Guards.tenantOnly, async (req, res) => {
             leaseId: payment.lease_id,
             amount: parseFloat(payment.amount),
             paymentType: payment.payment_type,
+            skipLateFeeClear: payment.payment_type === 'rent',
           });
         } else {
           status = 'succeeded';

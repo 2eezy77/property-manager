@@ -479,7 +479,7 @@ async function onChargeSucceeded(charge, eventId) {
               updated_at               = NOW()
         WHERE stripe_charge_id         = $1
           AND status                  <> 'succeeded'
-       RETURNING id, lease_id, tenant_id, amount, payment_type`,
+       RETURNING id, lease_id, tenant_id, amount, payment_type, metadata`,
       [charge.id, eventId]
     );
 
@@ -488,7 +488,7 @@ async function onChargeSucceeded(charge, eventId) {
       return console.warn(`[stripe-webhook] no payment row for charge ${charge.id}`);
     }
 
-    const { id: paymentId, lease_id, tenant_id, amount, payment_type } = rows[0];
+    const { id: paymentId, lease_id, tenant_id, amount, payment_type, metadata } = rows[0];
 
     if (payment_type === 'security_deposit') {
       bundledRentPayment = await settleSecurityDepositSuccess(client, {
@@ -499,6 +499,37 @@ async function onChargeSucceeded(charge, eventId) {
         pi: paymentIntentLikeFromCharge(charge),
         eventId,
       });
+    } else if (payment_type === 'rent') {
+      const { settleRentPaymentSuccess } = require('../utils/payment-settlement');
+      const credit = await settleRentPaymentSuccess(client, {
+        paymentId,
+        leaseId: lease_id,
+        amount,
+      });
+      const body = credit && credit.completed === false
+        ? `We received $${parseFloat(amount).toFixed(2)} toward this month's rent. $${Number(credit.rentRemaining).toFixed(2)} rent still owed.`
+        : `Your rent payment of $${parseFloat(amount).toFixed(2)} has been confirmed.`;
+      await client.query(
+        `INSERT INTO notifications
+           (user_id, type, title, body, channel, related_entity_type, related_entity_id, sent_at)
+         VALUES ($1, 'rent_received', $2, $3, 'push', 'payment', $4, NOW())`,
+        [
+          tenant_id,
+          credit && credit.completed === false ? 'Partial Rent Payment Received' : 'Payment Confirmed',
+          body,
+          paymentId,
+        ]
+      );
+      const splitAmount = metadata?.rent_amount != null
+        ? parseFloat(metadata.rent_amount)
+        : parseFloat(amount);
+      await processSplits(
+        client,
+        paymentId,
+        lease_id,
+        Number.isFinite(splitAmount) ? splitAmount : amount,
+        paymentIntentLikeFromCharge(charge)
+      );
     } else if (payment_type === 'identity_verification_fee') {
       await syncIdentityFeePaymentSucceeded(client, {
         id: paymentId,
@@ -553,7 +584,7 @@ async function onChargeSucceeded(charge, eventId) {
          VALUES ($1, 'rent_received',
                  'Payment Confirmed',
                  $2, 'push', 'payment', $3, NOW())`,
-        [tenant_id, `Your rent payment of $${parseFloat(amount).toFixed(2)} has been confirmed.`, paymentId]
+        [tenant_id, `Your payment of $${parseFloat(amount).toFixed(2)} has been confirmed.`, paymentId]
       );
 
       await processSplits(client, paymentId, lease_id, amount, { id: charge.id });
@@ -741,7 +772,7 @@ async function onSucceeded(pi, eventId) {
               updated_at               = NOW()
         WHERE stripe_payment_intent_id = $3
           AND status <> 'succeeded'
-       RETURNING id, lease_id, tenant_id, amount, payment_type`,
+       RETURNING id, lease_id, tenant_id, amount, payment_type, metadata`,
       [chargeIdFromIntent(pi), eventId, pi.id]
     );
 
@@ -750,7 +781,7 @@ async function onSucceeded(pi, eventId) {
       return;
     }
 
-    const { id: paymentId, lease_id, tenant_id, amount, payment_type } = rows[0];
+    const { id: paymentId, lease_id, tenant_id, amount, payment_type, metadata } = rows[0];
     await stampPaymentMethodMetadata(client, paymentId, pi);
 
     if (payment_type === 'utility') {
@@ -809,10 +840,38 @@ async function onSucceeded(pi, eventId) {
           paymentId,
         ]
       );
-    } else {
-      // Rent / late_fee / other — original flow
+    } else if (payment_type === 'rent') {
+      const { settleRentPaymentSuccess } = require('../utils/payment-settlement');
+      const credit = await settleRentPaymentSuccess(client, {
+        paymentId,
+        leaseId: lease_id,
+        amount,
+      });
+      const body = credit && credit.completed === false
+        ? `We received $${parseFloat(amount).toFixed(2)} toward this month's rent. $${Number(credit.rentRemaining).toFixed(2)} rent still owed.`
+        : `Your rent payment of $${parseFloat(amount).toFixed(2)} has been confirmed.`;
 
-      // 2. Mark any pending late fees as paid for this lease
+      await client.query(
+        `INSERT INTO notifications
+           (user_id, type, title, body, channel, related_entity_type, related_entity_id, sent_at)
+         VALUES ($1, 'rent_received',
+                 $2,
+                 $3,
+                 'push', 'payment', $4, NOW())`,
+        [
+          tenant_id,
+          credit && credit.completed === false ? 'Partial Rent Payment Received' : 'Payment Confirmed',
+          body,
+          paymentId,
+        ]
+      );
+
+      const splitAmount = metadata?.rent_amount != null
+        ? parseFloat(metadata.rent_amount)
+        : parseFloat(amount);
+      await processSplits(client, paymentId, lease_id, Number.isFinite(splitAmount) ? splitAmount : amount, pi);
+    } else {
+      // late_fee / other — original flow
       await client.query(
         `UPDATE late_fees
             SET status = 'paid', applied_at = NOW()
@@ -820,7 +879,6 @@ async function onSucceeded(pi, eventId) {
         [lease_id]
       );
 
-      // 3. Insert success notification for tenant
       await client.query(
         `INSERT INTO notifications
            (user_id, type, title, body, channel, related_entity_type, related_entity_id, sent_at)
@@ -830,12 +888,11 @@ async function onSucceeded(pi, eventId) {
                  'push', 'payment', $3, NOW())`,
         [
           tenant_id,
-          `Your rent payment of $${parseFloat(amount).toFixed(2)} has been confirmed.`,
+          `Your payment of $${parseFloat(amount).toFixed(2)} has been confirmed.`,
           paymentId,
         ]
       );
 
-      // 4. Trigger payment splits (fetch split rules from lease → property → org)
       await processSplits(client, paymentId, lease_id, amount, pi);
     }
 
