@@ -4,16 +4,21 @@
 
 const rentBilling = require('./rent-billing.service');
 const stripe = require('./stripe.service');
+const { roundMoney, parseMoney } = require('./security-deposit-partial.service');
+
+const MIN_DEPOSIT_INSTALLMENT = 1;
 
 async function assertNoInFlightDeposit(client, leaseId) {
+  // Only block in-flight processing. Succeeded installments are expected while a
+  // pending remaining-balance row still exists.
   const { rows: inFlight } = await client.query(
     `SELECT id FROM payments
       WHERE lease_id = $1 AND payment_type = 'security_deposit'
-        AND status IN ('processing', 'succeeded')`,
+        AND status = 'processing'`,
     [leaseId]
   );
   if (inFlight.length > 0) {
-    const err = new Error('A security deposit payment is already in progress or complete.');
+    const err = new Error('A security deposit payment is already in progress.');
     err.code = 'DUPLICATE_PAYMENT';
     throw err;
   }
@@ -49,6 +54,7 @@ async function prepareTenantCharge(client, {
   paymentType = 'rent',
   bankAccountId = null,
   metadataExtra = {},
+  amount = null,
 }) {
   if (!['rent', 'security_deposit'].includes(paymentType)) {
     const err = new Error('UNSUPPORTED_PAYMENT_TYPE');
@@ -57,7 +63,7 @@ async function prepareTenantCharge(client, {
   }
 
   const { rows: leaseRows } = await client.query(
-    `SELECT id, monthly_rent, tenant_id FROM leases
+    `SELECT id, monthly_rent, security_deposit, tenant_id FROM leases
       WHERE id = $1
         AND tenant_id = $2
         AND (
@@ -89,7 +95,7 @@ async function prepareTenantCharge(client, {
     await assertNoInFlightDeposit(client, leaseId);
 
     const { rows: depRows } = await client.query(
-      `SELECT id, amount, period_start, period_end, due_date, stripe_payment_intent_id
+      `SELECT id, amount, period_start, period_end, due_date, stripe_payment_intent_id, metadata
          FROM payments
         WHERE lease_id = $1 AND payment_type = 'security_deposit'
           AND status = 'pending'
@@ -104,19 +110,136 @@ async function prepareTenantCharge(client, {
       throw err;
     }
 
-    await cancelReplacedDepositPaymentIntent(depRows[0].stripe_payment_intent_id);
-    amountDollars = parseFloat(depRows[0].amount);
-    amountCents = Math.round(amountDollars * 100);
-    description = 'Security deposit';
-    chargeMeta = { ...chargeMeta, payment_kind: 'security_deposit' };
-    payment = { id: depRows[0].id };
+    const parent = depRows[0];
+    await cancelReplacedDepositPaymentIntent(parent.stripe_payment_intent_id);
 
-    await client.query(
-      `UPDATE payments
-          SET amount = $1, bank_account_id = $2, metadata = $3, updated_at = NOW()
-        WHERE id = $4`,
-      [amountDollars, bankAccountId, JSON.stringify(chargeMeta), depRows[0].id]
+    // Cancel abandoned pending installment rows for this deposit so only one open PI exists.
+    const { rows: openInstallments } = await client.query(
+      `SELECT id, stripe_payment_intent_id
+         FROM payments
+        WHERE lease_id = $1
+          AND payment_type = 'security_deposit'
+          AND status = 'pending'
+          AND id <> $2
+          AND COALESCE(metadata->>'partial_installment', 'false') = 'true'`,
+      [leaseId, parent.id]
     );
+    for (const row of openInstallments) {
+      await cancelReplacedDepositPaymentIntent(row.stripe_payment_intent_id);
+      await client.query(
+        `UPDATE payments
+            SET status = 'failed',
+                failure_reason = 'Superseded by a new deposit payment attempt',
+                updated_at = NOW()
+          WHERE id = $1 AND status = 'pending'`,
+        [row.id]
+      );
+    }
+
+    const remaining = roundMoney(parent.amount);
+    const requestedRaw = amount == null || amount === '' ? remaining : parseMoney(amount);
+    if (!Number.isFinite(requestedRaw)) {
+      const err = new Error('Enter a valid deposit amount.');
+      err.code = 'INVALID_DEPOSIT_AMOUNT';
+      throw err;
+    }
+    const requested = roundMoney(requestedRaw);
+    if (requested < MIN_DEPOSIT_INSTALLMENT) {
+      const err = new Error(`Minimum deposit payment is $${MIN_DEPOSIT_INSTALLMENT.toFixed(2)}.`);
+      err.code = 'INVALID_DEPOSIT_AMOUNT';
+      throw err;
+    }
+    if (requested > remaining + 0.001) {
+      const err = new Error(`Deposit payment cannot exceed the $${remaining.toFixed(2)} still owed.`);
+      err.code = 'INVALID_DEPOSIT_AMOUNT';
+      throw err;
+    }
+
+    const parentMeta = parent.metadata || {};
+    const priorPaid = parseMoney(parentMeta.deposit_paid_total);
+    const depositPaidTotal = Number.isFinite(priorPaid) ? priorPaid : 0;
+    const original = parseMoney(parentMeta.deposit_original_amount);
+    const depositOriginal = Number.isFinite(original)
+      ? original
+      : roundMoney(
+        Number.isFinite(parseMoney(lease.security_deposit))
+          ? parseMoney(lease.security_deposit)
+          : remaining + depositPaidTotal
+      );
+
+    const isPartial = requested < remaining - 0.001;
+    amountDollars = requested;
+    amountCents = Math.round(amountDollars * 100);
+    description = isPartial
+      ? `Security deposit payment ($${amountDollars.toFixed(2)} of $${remaining.toFixed(2)} remaining)`
+      : 'Security deposit';
+    chargeMeta = {
+      ...chargeMeta,
+      payment_kind: 'security_deposit',
+      deposit_remaining_before: remaining.toFixed(2),
+      deposit_original_amount: depositOriginal.toFixed(2),
+      deposit_paid_total: depositPaidTotal.toFixed(2),
+    };
+
+    if (isPartial) {
+      chargeMeta.partial_installment = true;
+      chargeMeta.parent_deposit_payment_id = parent.id;
+      const { rows: [inserted] } = await client.query(
+        `INSERT INTO payments
+           (lease_id, tenant_id, bank_account_id, amount, currency,
+            status, payment_type, period_start, period_end, due_date, metadata)
+         VALUES ($1,$2,$3,$4,'USD','pending','security_deposit',$5,$6,$7,$8)
+         RETURNING id`,
+        [
+          leaseId,
+          tenantId,
+          bankAccountId,
+          amountDollars,
+          parent.period_start,
+          parent.period_end,
+          parent.due_date,
+          JSON.stringify(chargeMeta),
+        ]
+      );
+      payment = inserted;
+
+      // Keep parent metadata/original totals accurate without changing remaining yet.
+      await client.query(
+        `UPDATE payments
+            SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+                updated_at = NOW()
+          WHERE id = $1`,
+        [
+          parent.id,
+          JSON.stringify({
+            deposit_original_amount: depositOriginal,
+            deposit_paid_total: depositPaidTotal,
+            partial_deposit: depositPaidTotal > 0,
+          }),
+        ]
+      );
+    } else {
+      payment = { id: parent.id };
+      await client.query(
+        `UPDATE payments
+            SET amount = $1,
+                bank_account_id = $2,
+                metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+                updated_at = NOW()
+          WHERE id = $4`,
+        [
+          amountDollars,
+          bankAccountId,
+          JSON.stringify({
+            ...chargeMeta,
+            deposit_original_amount: depositOriginal,
+            deposit_paid_total: depositPaidTotal,
+            partial_installment: false,
+          }),
+          parent.id,
+        ]
+      );
+    }
   } else {
     if (paymentType === 'rent') {
       const { rows: inFlight } = await client.query(
@@ -204,4 +327,5 @@ module.exports = {
   prepareTenantCharge,
   assertNoInFlightDeposit,
   cancelReplacedDepositPaymentIntent,
+  MIN_DEPOSIT_INSTALLMENT,
 };

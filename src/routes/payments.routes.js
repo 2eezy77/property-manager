@@ -447,19 +447,41 @@ router.get('/balance', Guards.tenantOnly, async (req, res) => {
     }
 
     const { rows: depositRows } = await pool.query(
-      `SELECT id, amount, status, due_date, period_start, period_end
+      `SELECT id, amount, status, due_date, period_start, period_end, metadata
          FROM payments
         WHERE lease_id = $1
           AND payment_type = 'security_deposit'
           AND status IN ('pending','processing')
+          AND COALESCE(metadata->>'partial_installment', 'false') <> 'true'
         ORDER BY due_date ASC
         LIMIT 1`,
       [lease.lease_id]
     );
 
-    const securityDepositPayment = depositRows[0]
-      ? { ...depositRows[0], amount: parseFloat(depositRows[0].amount) }
-      : null;
+    let securityDepositPayment = null;
+    if (depositRows[0]) {
+      const dep = depositRows[0];
+      const meta = dep.metadata || {};
+      const remaining = parseFloat(dep.amount);
+      const paidRaw = parseFloat(meta.deposit_paid_total);
+      const paidTotal = Number.isFinite(paidRaw) ? paidRaw : 0;
+      const originalRaw = parseFloat(meta.deposit_original_amount);
+      const originalAmount = Number.isFinite(originalRaw)
+        ? originalRaw
+        : Math.round((remaining + paidTotal) * 100) / 100;
+      securityDepositPayment = {
+        id: dep.id,
+        amount: remaining,
+        remaining,
+        paidTotal,
+        originalAmount,
+        isPartial: paidTotal > 0.009 || meta.partial_deposit === true,
+        status: dep.status,
+        due_date: dep.due_date,
+        period_start: dep.period_start,
+        period_end: dep.period_end,
+      };
+    }
 
     res.json({
       lease: {
@@ -503,7 +525,7 @@ router.get('/balance', Guards.tenantOnly, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/charge', Guards.tenantOnly, async (req, res) => {
   if (blockManagerPaymentAccess(req, res)) return;
-  const { bankAccountId, leaseId, paymentType = 'rent' } = req.body;
+  const { bankAccountId, leaseId, paymentType = 'rent', amount = null } = req.body;
 
   if (!bankAccountId || !leaseId) {
     return res.status(400).json({ error: 'MISSING_PARAMS' });
@@ -540,144 +562,26 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
       });
     }
 
-    // 2. Verify the lease belongs to this tenant
-    const { rows: leaseRows } = await client.query(
-      `SELECT id, monthly_rent, tenant_id FROM leases
-        WHERE id = $1
-          AND tenant_id = $2
-          AND (
-            ($3 = 'security_deposit' AND status IN ('active', 'awaiting_deposit', 'awaiting_identity'))
-            OR ($3 = 'rent' AND status = 'active')
-          )`,
-      [leaseId, req.user.id, paymentType]
-    );
-    const lease = leaseRows[0];
-    if (!lease) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'LEASE_NOT_FOUND' });
-    }
-
-    // 3. Idempotency: block duplicate payment for same month
-    const now        = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-      .toISOString().split('T')[0];
-
-    let amountDollars;
-    let amountCents;
-    let description;
-    let chargeMeta = {};
-    let payment;
-    let pendingPaymentId = null;
-    let rentAmount;
-    let lateFeeAmount;
-
-    if (paymentType === 'security_deposit') {
-      await assertNoInFlightDeposit(client, leaseId);
-
-      const { rows: depRows } = await client.query(
-        `SELECT id, amount, period_start, period_end, due_date, stripe_payment_intent_id
-           FROM payments
-          WHERE lease_id = $1 AND payment_type = 'security_deposit'
-            AND status = 'pending'
-          ORDER BY due_date ASC
-          LIMIT 1
-          FOR UPDATE`,
-        [leaseId]
-      );
-      if (!depRows[0]) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({
-          error: 'NO_DEPOSIT_DUE',
-          message: 'No pending security deposit on file.',
-        });
-      }
-
-      await cancelReplacedDepositPaymentIntent(depRows[0].stripe_payment_intent_id);
-      amountDollars = parseFloat(depRows[0].amount);
-      amountCents = Math.round(amountDollars * 100);
-      description = 'Security deposit';
-      chargeMeta = { payment_kind: 'security_deposit' };
-      pendingPaymentId = depRows[0].id;
-      payment = { id: depRows[0].id };
-    } else {
-      if (paymentType === 'rent') {
-        const { rows: inFlight } = await client.query(
-          `SELECT id FROM payments
-            WHERE lease_id = $1 AND payment_type = 'rent'
-              AND period_start = $2 AND status IN ('processing','succeeded')`,
-          [leaseId, monthStart]
-        );
-        if (inFlight.length > 0) {
-          await client.query('ROLLBACK');
-          return res.status(409).json({
-            error:   'DUPLICATE_PAYMENT',
-            message: 'A payment for this period is already in progress or complete.',
-          });
-        }
-      }
-
-      const breakdown = await rentBilling.computeChargeBreakdown(client, leaseId);
-      rentAmount = breakdown.rentAmount;
-      lateFeeAmount = breakdown.lateFeeAmount;
-      amountDollars = breakdown.totalAmount;
-      amountCents = Math.round(amountDollars * 100);
-
-      const dueDate = new Date(now.getFullYear(), now.getMonth(), 1);
-      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-        .toISOString().split('T')[0];
-      const monthLabel = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
-      description = lateFeeAmount > 0
-        ? `Rent + late fees — ${monthLabel}`
-        : `Rent — ${monthLabel}`;
-
-      chargeMeta = {
-        rent_amount: rentAmount.toFixed(2),
-        late_fee_amount: lateFeeAmount.toFixed(2),
-      };
-
-      const { rows: pendingRows } = await client.query(
-        `SELECT id FROM payments
-          WHERE lease_id = $1 AND payment_type = 'rent'
-            AND period_start = $2 AND status = 'pending'
-          FOR UPDATE`,
-        [leaseId, monthStart]
-      );
-
-      if (pendingRows[0]) {
-        const { rows: [updated] } = await client.query(
-          `UPDATE payments
-              SET amount = $1, bank_account_id = $2,
-                  metadata = $3, updated_at = NOW()
-            WHERE id = $4
-           RETURNING id`,
-          [amountDollars, bankAccountId, JSON.stringify(chargeMeta), pendingRows[0].id]
-        );
-        payment = updated;
-      } else {
-        const { rows: [inserted] } = await client.query(
-          `INSERT INTO payments
-             (lease_id, tenant_id, bank_account_id, amount, currency,
-              status, payment_type, period_start, period_end, due_date, metadata)
-           VALUES ($1,$2,$3,$4,'USD','pending',$5,$6,$7,$8,$9)
-           RETURNING id`,
-          [
-            leaseId, req.user.id, bankAccountId, amountDollars,
-            paymentType, monthStart, monthEnd, dueDate.toISOString().split('T')[0],
-            JSON.stringify(chargeMeta),
-          ]
-        );
-        payment = inserted;
-      }
-    }
-
-    if (paymentType === 'security_deposit' && pendingPaymentId) {
-      await client.query(
-        `UPDATE payments
-            SET amount = $1, bank_account_id = $2, metadata = $3, updated_at = NOW()
-          WHERE id = $4`,
-        [amountDollars, bankAccountId, JSON.stringify(chargeMeta), pendingPaymentId]
-      );
-    }
+    const prep = await prepareTenantCharge(client, {
+      tenantId: req.user.id,
+      leaseId,
+      paymentType,
+      bankAccountId,
+      amount: paymentType === 'security_deposit' ? amount : null,
+      metadataExtra: {
+        payment_method: 'ach',
+        source: 'stripe_ach',
+      },
+    });
+    const {
+      payment,
+      amountDollars,
+      amountCents,
+      description,
+      chargeMeta,
+      rentAmount = null,
+      lateFeeAmount = null,
+    } = prep;
 
     // 6. Plaid Signal / Balance gates, then Stripe ACH debit
     const accessToken = decrypt(account.plaid_access_token_encrypted);
@@ -718,6 +622,7 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
         payment_id: payment.id,
         lease_id:   leaseId,
         tenant_id:  req.user.id,
+        payment_type: paymentType,
         ...chargeMeta,
       },
       ipAddress: req.ip,
@@ -753,7 +658,29 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
     }
 
     if (localStatus === 'succeeded' && paymentType === 'security_deposit') {
-      await activateNativeLeaseAfterDeposit(client, leaseId);
+      const { applyDepositCredit } = require('../services/security-deposit-partial.service');
+      const isInstallment = chargeMeta.partial_installment === true;
+      if (isInstallment) {
+        const credit = await applyDepositCredit(client, {
+          leaseId,
+          creditAmount: amountDollars,
+          installmentPaymentId: payment.id,
+          paidAt: new Date(),
+          partMeta: { source: 'stripe_ach', payment_method: 'ach' },
+        });
+        if (credit.completed) {
+          await activateNativeLeaseAfterDeposit(client, leaseId);
+        }
+      } else {
+        await client.query(
+          `UPDATE leases
+              SET deposit_paid_at = COALESCE(deposit_paid_at, NOW()),
+                  updated_at = NOW()
+            WHERE id = $1`,
+          [leaseId]
+        );
+        await activateNativeLeaseAfterDeposit(client, leaseId);
+      }
     }
 
     await client.query('COMMIT');
@@ -787,6 +714,12 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
     if (err.code === 'NO_DEPOSIT_DUE') {
       return res.status(404).json({ error: 'NO_DEPOSIT_DUE', message: err.message });
     }
+    if (err.code === 'LEASE_NOT_FOUND') {
+      return res.status(404).json({ error: 'LEASE_NOT_FOUND' });
+    }
+    if (err.code === 'INVALID_DEPOSIT_AMOUNT') {
+      return res.status(400).json({ error: 'INVALID_DEPOSIT_AMOUNT', message: err.message });
+    }
     console.error('[payments/charge]', err);
     res.status(500).json({ error: 'CHARGE_FAILED', message: 'Payment could not be initiated.' });
   } finally {
@@ -818,7 +751,7 @@ router.get('/config', Guards.tenantOnly, (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/payments/cashapp/create-intent — tenant: Cash App Pay for rent/deposit
-// Body: { leaseId, paymentType?: 'rent'|'security_deposit' }
+// Body: { leaseId, paymentType?: 'rent'|'security_deposit', amount?: number }
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
   if (blockManagerPaymentAccess(req, res)) return;
@@ -830,7 +763,7 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
     });
   }
 
-  const { leaseId, paymentType = 'rent' } = req.body;
+  const { leaseId, paymentType = 'rent', amount = null } = req.body;
   if (!leaseId) return res.status(400).json({ error: 'MISSING_PARAMS' });
   if (!CLIENT_INTENT_PAYMENT_TYPES.has(paymentType)) {
     return res.status(400).json({
@@ -848,6 +781,7 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
       leaseId,
       paymentType,
       bankAccountId: null,
+      amount: paymentType === 'security_deposit' ? amount : null,
       metadataExtra: {
         payment_method: 'cash_app',
         source: 'stripe_cashapp',
@@ -905,6 +839,7 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
       baseAmount: fee.baseAmount,
       processingFee: fee.processingFee,
       publishableKey: stripe.getPublishableKey(),
+      isPartialDeposit: prep.chargeMeta?.partial_installment === true,
     });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -916,6 +851,9 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
     }
     if (err.code === 'DUPLICATE_PAYMENT') {
       return res.status(409).json({ error: 'DUPLICATE_PAYMENT', message: err.message });
+    }
+    if (err.code === 'INVALID_DEPOSIT_AMOUNT') {
+      return res.status(400).json({ error: 'INVALID_DEPOSIT_AMOUNT', message: err.message });
     }
     console.error('[payments/cashapp/create-intent]', err);
     const message = err.message?.includes('cashapp')
@@ -929,12 +867,12 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/payments/card/create-intent — tenant: card payment for rent/deposit
-// Body: { leaseId, paymentType?: 'rent'|'security_deposit', includeFirstMonth?: boolean }
+// Body: { leaseId, paymentType?: 'rent'|'security_deposit', amount?: number, includeFirstMonth?: boolean }
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/card/create-intent', Guards.tenantOnly, async (req, res) => {
   if (blockManagerPaymentAccess(req, res)) return;
 
-  const { leaseId, paymentType = 'rent', includeFirstMonth = false } = req.body;
+  const { leaseId, paymentType = 'rent', amount = null, includeFirstMonth = false } = req.body;
   if (!leaseId) return res.status(400).json({ error: 'MISSING_PARAMS' });
   if (!CLIENT_INTENT_PAYMENT_TYPES.has(paymentType)) {
     return res.status(400).json({ error: 'UNSUPPORTED_TYPE' });
@@ -955,6 +893,7 @@ router.post('/card/create-intent', Guards.tenantOnly, async (req, res) => {
       leaseId,
       paymentType,
       bankAccountId: null,
+      amount: paymentType === 'security_deposit' ? amount : null,
       metadataExtra: {
         payment_method: 'card',
         source: 'stripe_card',
@@ -966,6 +905,13 @@ router.post('/card/create-intent', Guards.tenantOnly, async (req, res) => {
     let amountCents = prep.amountCents;
     const bundleMeta = {};
     if (includeFirstMonth) {
+      if (prep.chargeMeta?.partial_installment === true) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: 'UNSUPPORTED_BUNDLE',
+          message: 'First-month rent can only be bundled when paying the full remaining deposit.',
+        });
+      }
       const firstMonthRent = parseFloat(prep.lease.monthly_rent);
       amountDollars += firstMonthRent;
       amountCents += Math.round(firstMonthRent * 100);
@@ -1028,6 +974,7 @@ router.post('/card/create-intent', Guards.tenantOnly, async (req, res) => {
       baseAmount: fee.baseAmount,
       processingFee: fee.processingFee,
       publishableKey: stripe.getPublishableKey(),
+      isPartialDeposit: prep.chargeMeta?.partial_installment === true,
     });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -1039,6 +986,9 @@ router.post('/card/create-intent', Guards.tenantOnly, async (req, res) => {
     }
     if (err.code === 'DUPLICATE_PAYMENT') {
       return res.status(409).json({ error: 'DUPLICATE_PAYMENT', message: err.message });
+    }
+    if (err.code === 'INVALID_DEPOSIT_AMOUNT') {
+      return res.status(400).json({ error: 'INVALID_DEPOSIT_AMOUNT', message: err.message });
     }
     if (isStripeAccountRestrictionError(err)) {
       return res.status(503).json({
@@ -1062,7 +1012,7 @@ router.get('/cashapp/sync', Guards.tenantOnly, async (req, res) => {
 
   try {
     const { rows } = await pool.query(
-      `SELECT id, status, amount, payment_type, lease_id, tenant_id, failure_reason
+      `SELECT id, status, amount, payment_type, lease_id, tenant_id, failure_reason, metadata
          FROM payments
         WHERE stripe_payment_intent_id = $1 AND tenant_id = $2`,
       [paymentIntentId, req.user.id]
@@ -1075,30 +1025,67 @@ router.get('/cashapp/sync', Guards.tenantOnly, async (req, res) => {
     let failureReason = payment.failure_reason;
 
     if (pi.status === 'succeeded' && status !== 'succeeded') {
-      const { rowCount } = await pool.query(
-        `UPDATE payments
-            SET status = 'succeeded',
-                stripe_charge_id = $1,
-                paid_at = COALESCE(paid_at, NOW()),
-                metadata = COALESCE(metadata, '{}'::jsonb) || '{"payment_method":"cash_app","source":"stripe_cashapp"}'::jsonb,
-                updated_at = NOW()
-          WHERE id = $2 AND status <> 'succeeded'`,
-        [
-          typeof pi.latest_charge === 'string' ? pi.latest_charge : pi.latest_charge?.id ?? null,
-          payment.id,
-        ]
-      );
-      if (rowCount) {
-        status = 'succeeded';
-        await settleSuccessfulRentPayment(pool, {
-          paymentId: payment.id,
-          tenantId: payment.tenant_id,
-          leaseId: payment.lease_id,
-          amount: parseFloat(payment.amount),
-          paymentType: payment.payment_type,
-        });
-      } else {
-        status = 'succeeded';
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { rowCount } = await client.query(
+          `UPDATE payments
+              SET status = 'succeeded',
+                  stripe_charge_id = $1,
+                  paid_at = COALESCE(paid_at, NOW()),
+                  metadata = COALESCE(metadata, '{}'::jsonb) || '{"payment_method":"cash_app","source":"stripe_cashapp"}'::jsonb,
+                  updated_at = NOW()
+            WHERE id = $2 AND status <> 'succeeded'`,
+          [
+            typeof pi.latest_charge === 'string' ? pi.latest_charge : pi.latest_charge?.id ?? null,
+            payment.id,
+          ]
+        );
+        if (rowCount && payment.payment_type === 'security_deposit') {
+          const meta = payment.metadata || {};
+          const isInstallment = meta.partial_installment === true
+            || meta.partial_installment === 'true';
+          const { applyDepositCredit } = require('../services/security-deposit-partial.service');
+          if (isInstallment) {
+            const credit = await applyDepositCredit(client, {
+              leaseId: payment.lease_id,
+              creditAmount: parseFloat(payment.amount),
+              installmentPaymentId: payment.id,
+              paidAt: new Date(),
+              partMeta: { source: 'stripe_cashapp', payment_method: 'cash_app' },
+            });
+            if (credit.completed) {
+              await activateNativeLeaseAfterDeposit(client, payment.lease_id);
+            }
+          } else {
+            await client.query(
+              `UPDATE leases
+                  SET deposit_paid_at = COALESCE(deposit_paid_at, NOW()),
+                      updated_at = NOW()
+                WHERE id = $1`,
+              [payment.lease_id]
+            );
+            await activateNativeLeaseAfterDeposit(client, payment.lease_id);
+          }
+        }
+        await client.query('COMMIT');
+        if (rowCount) {
+          status = 'succeeded';
+          await settleSuccessfulRentPayment(pool, {
+            paymentId: payment.id,
+            tenantId: payment.tenant_id,
+            leaseId: payment.lease_id,
+            amount: parseFloat(payment.amount),
+            paymentType: payment.payment_type,
+          });
+        } else {
+          status = 'succeeded';
+        }
+      } catch (syncErr) {
+        await client.query('ROLLBACK');
+        throw syncErr;
+      } finally {
+        client.release();
       }
     } else if (pi.status === 'processing' && status === 'pending') {
       await pool.query(

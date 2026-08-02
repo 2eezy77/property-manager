@@ -356,6 +356,55 @@ async function settleSecurityDepositSuccess(client, {
   pi,
   eventId,
 }) {
+  const { applyDepositCredit } = require('../services/security-deposit-partial.service');
+
+  const { rows: [paymentRow] } = await client.query(
+    `SELECT id, amount, metadata FROM payments WHERE id = $1 FOR UPDATE`,
+    [paymentId]
+  );
+  const meta = paymentRow?.metadata || {};
+  const isInstallment = meta.partial_installment === true
+    || meta.partial_installment === 'true';
+
+  if (isInstallment) {
+    const credit = await applyDepositCredit(client, {
+      leaseId,
+      creditAmount: amount,
+      installmentPaymentId: paymentId,
+      paidAt: new Date(),
+      partMeta: {
+        source: meta.source || 'stripe',
+        payment_method: meta.payment_method || null,
+        payment_intent: pi?.id || null,
+      },
+    });
+
+    if (credit.completed) {
+      await activateNativeLeaseAfterDeposit(client, leaseId);
+    }
+
+    const title = credit.completed ? 'Security Deposit Confirmed' : 'Security Deposit Payment Received';
+    const body = credit.completed
+      ? `Your security deposit is paid in full ($${Number(credit.paidTotal).toFixed(2)}).`
+      : `We received $${parseFloat(amount).toFixed(2)} toward your security deposit. $${Number(credit.remaining).toFixed(2)} still owed.`;
+
+    await client.query(
+      `INSERT INTO notifications
+         (user_id, type, title, body, channel, related_entity_type, related_entity_id, sent_at)
+       VALUES ($1, 'rent_received', $2, $3, 'push', 'payment', $4, NOW())`,
+      [tenantId, title, body, paymentId]
+    );
+    return null;
+  }
+
+  // Full remaining balance paid on the pending deposit row.
+  await client.query(
+    `UPDATE leases
+        SET deposit_paid_at = COALESCE(deposit_paid_at, NOW()),
+            updated_at = NOW()
+      WHERE id = $1`,
+    [leaseId]
+  );
   await activateNativeLeaseAfterDeposit(client, leaseId);
 
   const bundledRentPayment = await insertBundledFirstMonthRent(client, {

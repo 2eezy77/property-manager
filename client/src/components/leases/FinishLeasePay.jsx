@@ -61,6 +61,12 @@ export default function FinishLeasePay({ lease, onPaid }) {
   const [autopayWanted, setAutopayWanted] = useState(false);
   const [autopaySaving, setAutopaySaving] = useState(false);
   const [autopayNote, setAutopayNote] = useState('');
+  const [depositRemaining, setDepositRemaining] = useState(Number(lease.security_deposit || 0));
+  const [depositPaidTotal, setDepositPaidTotal] = useState(0);
+  const [depositOriginal, setDepositOriginal] = useState(Number(lease.security_deposit || 0));
+  const [depositAmountInput, setDepositAmountInput] = useState(
+    Number(lease.security_deposit || 0).toFixed(2)
+  );
 
   const verifiedAccounts = useMemo(
     () => accounts.filter((account) => account.status === 'verified' && account.link_status !== 'needs_relink'),
@@ -83,6 +89,34 @@ export default function FinishLeasePay({ lease, onPaid }) {
 
   useEffect(() => {
     let cancelled = false;
+    async function loadDepositBalance() {
+      try {
+        const { data } = await api.get('/api/payments/balance');
+        if (cancelled) return;
+        const dep = data?.securityDepositPayment;
+        if (dep) {
+          const remaining = Number(dep.remaining ?? dep.amount ?? lease.security_deposit ?? 0);
+          const paid = Number(dep.paidTotal || 0);
+          const original = Number(
+            dep.originalAmount != null
+              ? dep.originalAmount
+              : (remaining + paid) || lease.security_deposit || 0
+          );
+          setDepositRemaining(remaining);
+          setDepositPaidTotal(paid);
+          setDepositOriginal(original);
+          setDepositAmountInput(remaining.toFixed(2));
+        }
+      } catch {
+        /* keep lease.security_deposit defaults */
+      }
+    }
+    loadDepositBalance();
+    return () => { cancelled = true; };
+  }, [lease.id, lease.security_deposit]);
+
+  useEffect(() => {
+    let cancelled = false;
     async function loadStripeConfig() {
       try {
         const { data } = await api.get('/api/payments/stripe-config');
@@ -94,6 +128,19 @@ export default function FinishLeasePay({ lease, onPaid }) {
     loadStripeConfig();
     return () => { cancelled = true; };
   }, []);
+
+  function resolveDepositAmount() {
+    const raw = depositAmountInput === '' || depositAmountInput == null
+      ? depositRemaining
+      : Number(depositAmountInput);
+    if (!Number.isFinite(raw) || raw <= 0) {
+      return { ok: false, message: 'Enter a valid deposit amount.' };
+    }
+    if (raw > depositRemaining + 0.001) {
+      return { ok: false, message: `Amount cannot exceed ${fmtMoney(depositRemaining)} still owed.` };
+    }
+    return { ok: true, amount: Math.round(raw * 100) / 100 };
+  }
 
   useEffect(() => {
     if (!selectedAccount && verifiedAccounts.length > 0) {
@@ -151,6 +198,19 @@ export default function FinishLeasePay({ lease, onPaid }) {
   }
 
   async function startCardPayment() {
+    const resolved = resolveDepositAmount();
+    if (!resolved.ok) {
+      setMessage({ success: false, text: resolved.message });
+      return;
+    }
+    const isPartial = resolved.amount < depositRemaining - 0.001;
+    if (includeFirstMonth && isPartial) {
+      setMessage({
+        success: false,
+        text: 'First-month rent can only be bundled when paying the full remaining deposit.',
+      });
+      return;
+    }
     setCardLoading(true);
     setMessage(null);
     setCardIntent(null);
@@ -158,7 +218,8 @@ export default function FinishLeasePay({ lease, onPaid }) {
       const { data } = await api.post('/api/payments/card/create-intent', {
         leaseId: lease.id,
         paymentType: 'security_deposit',
-        includeFirstMonth,
+        amount: resolved.amount,
+        includeFirstMonth: includeFirstMonth && !isPartial,
       }, { skipGlobalError: true });
       setCardIntent(data);
     } catch (err) {
@@ -173,6 +234,11 @@ export default function FinishLeasePay({ lease, onPaid }) {
       setMessage({ success: false, text: 'Connect and select a verified bank account first.' });
       return;
     }
+    const resolved = resolveDepositAmount();
+    if (!resolved.ok) {
+      setMessage({ success: false, text: resolved.message });
+      return;
+    }
 
     setAchLoading(true);
     setMessage(null);
@@ -181,6 +247,7 @@ export default function FinishLeasePay({ lease, onPaid }) {
         bankAccountId: selectedAccount.id,
         leaseId: lease.id,
         paymentType: 'security_deposit',
+        amount: resolved.amount,
       }, { skipGlobalError: true });
       if (autopayWanted) await tryEnableAutopay(selectedAccount, true);
       setMessage({
@@ -196,12 +263,18 @@ export default function FinishLeasePay({ lease, onPaid }) {
   }
 
   async function startCashAppPayment() {
+    const resolved = resolveDepositAmount();
+    if (!resolved.ok) {
+      setMessage({ success: false, text: resolved.message });
+      return;
+    }
     setCashAppLoading(true);
     setMessage(null);
     try {
       const { data } = await api.post('/api/payments/cashapp/create-intent', {
         leaseId: lease.id,
         paymentType: 'security_deposit',
+        amount: resolved.amount,
       }, { skipGlobalError: true });
       const publishableKey = data.publishableKey || stripeConfig?.publishableKey;
       if (!publishableKey || !data.clientSecret) {
@@ -273,10 +346,17 @@ export default function FinishLeasePay({ lease, onPaid }) {
       method === key ? 'border-indigo-300 bg-indigo-50 text-indigo-800' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
     }`
   );
-  const cardBaseTotal = Number(lease.security_deposit || 0) + (includeFirstMonth ? Number(lease.monthly_rent || 0) : 0);
+  const depositPayAmount = (() => {
+    const n = Number(depositAmountInput);
+    return Number.isFinite(n) && n > 0 ? n : depositRemaining;
+  })();
+  const isPartialSelection = depositPayAmount < depositRemaining - 0.001;
+  const cardBaseTotal = depositPayAmount + (
+    includeFirstMonth && !isPartialSelection ? Number(lease.monthly_rent || 0) : 0
+  );
   const cardEstimate = estimateCardCashAppTotal(cardBaseTotal);
-  const cashAppEstimate = estimateCardCashAppTotal(lease.security_deposit);
-  const awaitingIdentity = lease.status === 'awaiting_identity';
+  const cashAppEstimate = estimateCardCashAppTotal(depositPayAmount);
+  const awaitingIdentity = lease.status === 'awaiting_identity' && depositRemaining <= 0.01;
   const identityVerified = lease.identity_status === 'verified';
   const showIdentityWarning = !identityVerified;
 
@@ -303,11 +383,51 @@ export default function FinishLeasePay({ lease, onPaid }) {
           <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">Finish lease</p>
           <h2 className="mt-1 text-lg font-semibold text-slate-900">Pay your security deposit</h2>
           <p className="mt-1 text-sm text-slate-600">
-            Both signatures are complete. Pay {fmtMoney(lease.security_deposit)} to activate the lease.
+            Both signatures are complete.
+            {depositPaidTotal > 0.009
+              ? ` ${fmtMoney(depositPaidTotal)} paid of ${fmtMoney(depositOriginal)}; ${fmtMoney(depositRemaining)} remaining.`
+              : ` Pay ${fmtMoney(depositRemaining)} (or bit by bit) to activate the lease.`}
           </p>
         </div>
         <div className="hidden rounded-full bg-white px-3 py-1 text-xs font-semibold text-indigo-700 sm:block">
           Signed -&gt; Pay deposit -&gt; Active
+        </div>
+      </div>
+
+      <div className="mt-5 space-y-2 rounded-xl border border-indigo-100 bg-white p-4">
+        <label htmlFor="finish-deposit-amount" className="block text-sm font-semibold text-slate-900">
+          Amount to pay now
+        </label>
+        <p className="text-xs text-slate-500">
+          You can pay the full remaining balance or any smaller amount (minimum $1.00).
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">$</span>
+            <input
+              id="finish-deposit-amount"
+              type="number"
+              min="1"
+              step="0.01"
+              max={depositRemaining}
+              value={depositAmountInput}
+              onChange={(event) => {
+                setDepositAmountInput(event.target.value);
+                setCardIntent(null);
+              }}
+              className="w-40 rounded-lg border border-slate-300 py-2 pl-7 pr-3 text-sm font-medium text-slate-900 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setDepositAmountInput(depositRemaining.toFixed(2));
+              setCardIntent(null);
+            }}
+            className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-800 hover:bg-indigo-100"
+          >
+            Pay remaining
+          </button>
         </div>
       </div>
 
@@ -348,10 +468,11 @@ export default function FinishLeasePay({ lease, onPaid }) {
 
       {method === 'card' && (
         <div className="mt-5 rounded-xl border border-slate-200 bg-white p-4">
-          <label className="mb-4 flex items-start gap-2 text-sm text-slate-600">
+          <label className={`mb-4 flex items-start gap-2 text-sm ${isPartialSelection ? 'text-slate-400' : 'text-slate-600'}`}>
             <input
               type="checkbox"
-              checked={includeFirstMonth}
+              checked={includeFirstMonth && !isPartialSelection}
+              disabled={isPartialSelection}
               onChange={(event) => {
                 setIncludeFirstMonth(event.target.checked);
                 setCardIntent(null);
@@ -361,8 +482,9 @@ export default function FinishLeasePay({ lease, onPaid }) {
             <span>
               Include first month rent with this card payment
               <span className="block text-xs text-slate-400">
-                Base: {fmtMoney(cardBaseTotal)} · Charged: {fmtMoney(cardEstimate.totalAmount)}
-                {' '}(incl. {fmtMoney(cardEstimate.processingFee)} processing fee)
+                {isPartialSelection
+                  ? 'Available only when paying the full remaining deposit.'
+                  : `Base: ${fmtMoney(cardBaseTotal)} · Charged: ${fmtMoney(cardEstimate.totalAmount)} (incl. ${fmtMoney(cardEstimate.processingFee)} processing fee)`}
               </span>
             </span>
           </label>
@@ -463,7 +585,7 @@ export default function FinishLeasePay({ lease, onPaid }) {
             disabled={!selectedAccount || achLoading}
             className="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
           >
-            {achLoading ? 'Submitting deposit...' : `Pay ${fmtMoney(lease.security_deposit)} by ACH`}
+            {achLoading ? 'Submitting deposit...' : `Pay ${fmtMoney(depositPayAmount)} by ACH`}
           </button>
         </div>
       )}
