@@ -75,6 +75,29 @@ async function recordManualPayment(db, {
     return { skipped: true, reason: 'duplicate', paymentId: dupRows[0].id };
   }
 
+  // Global xref dedupe: same Cash App / Gmail txn must not create a second succeeded rent row
+  // on a different period (import used to re-create July when August already had the txn).
+  if (reference && !allowPartial) {
+    const refs = String(reference).split(',').map((s) => s.trim()).filter(Boolean);
+    for (const ref of refs) {
+      const { rows: xrefRows } = await db.query(
+        `SELECT id FROM payments
+          WHERE tenant_id = $1
+            AND payment_type = $2
+            AND status = 'succeeded'
+            AND (
+              metadata->>'external_reference' = $3
+              OR metadata->>'external_reference' LIKE $4
+            )
+          LIMIT 1`,
+        [tenantId, paymentType, ref, `%${ref}%`]
+      );
+      if (xrefRows[0]) {
+        return { skipped: true, reason: 'duplicate_external_reference', paymentId: xrefRows[0].id };
+      }
+    }
+  }
+
   if (allowPartial) {
     const { rows: partialDup } = await db.query(
       `SELECT id FROM payments

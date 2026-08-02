@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare, ArrowLeft } from 'lucide-react';
 import api from '@/api/axios';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -80,7 +80,7 @@ function MessageBubble({ msg }) {
   const isOutbound = msg.direction === 'outbound';
   return (
     <div className={`flex ${isOutbound ? 'justify-start' : 'justify-end'} mb-3`}>
-      <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed shadow-sm ${
+      <div className={`max-w-[min(75%,22rem)] rounded-2xl px-4 py-2.5 text-sm leading-relaxed shadow-sm break-words ${
         isOutbound
           ? 'bg-white border border-gray-200 text-gray-800'
           : 'bg-indigo-600 text-white'
@@ -254,31 +254,42 @@ export default function MessagesPage() {
     openThread(thread);
   }
 
-  return (
-    <div className="flex flex-col h-[calc(100vh-4rem)]">
+  function closeThreadView() {
+    setActiveThread(null);
+    setMessages([]);
+    setReplyBody('');
+    setThreadError('');
+  }
 
-      {/* Page header */}
-      <div className="px-6 py-4 border-b border-gray-200 bg-white flex items-center justify-between shrink-0">
-        <div>
+  const showList = !activeThread;
+  const showDetail = !!activeThread;
+
+  return (
+    <div className="-mx-4 -my-5 sm:-mx-6 sm:-my-8 lg:-mx-10 flex flex-col h-[calc(100dvh-3.5rem)] min-h-0 bg-white">
+
+      {/* Page header — hide on mobile when viewing a thread */}
+      <div className={`px-4 sm:px-6 py-4 border-b border-gray-200 bg-white flex items-center justify-between gap-3 shrink-0 ${showDetail ? 'hidden md:flex' : 'flex'}`}>
+        <div className="min-w-0">
           <h1 className="text-xl font-bold text-gray-900">Messages</h1>
           <p className="text-sm text-gray-500">Communicate with your property manager</p>
         </div>
         <button
           onClick={() => setShowCompose(true)}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm"
+          className="inline-flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm shrink-0"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
-          New Message
+          <span className="hidden xs:inline sm:inline">New Message</span>
+          <span className="sm:hidden">New</span>
         </button>
       </div>
 
-      {/* Body: 2-column layout */}
-      <div className="flex flex-1 min-h-0">
+      {/* Body: master-detail — list OR detail on mobile, both on md+ */}
+      <div className="flex flex-1 min-h-0 min-w-0">
 
         {/* Thread list */}
-        <div className="w-80 shrink-0 border-r border-gray-200 bg-white flex flex-col overflow-hidden">
+        <div className={`${showDetail ? 'hidden md:flex' : 'flex'} w-full md:w-80 md:shrink-0 border-r border-gray-200 bg-white flex-col overflow-hidden`}>
           <div className="px-4 py-2 border-b border-gray-100">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
               {threads.length} conversation{threads.length !== 1 ? 's' : ''}
@@ -309,7 +320,7 @@ export default function MessagesPage() {
         </div>
 
         {/* Message pane */}
-        <div className="flex-1 flex flex-col bg-gray-50 min-w-0">
+        <div className={`${showList ? 'hidden md:flex' : 'flex'} flex-1 flex-col bg-gray-50 min-w-0`}>
           {!activeThread ? (
             <div className="flex flex-col items-center justify-center h-full text-center px-8">
               <div className="w-16 h-16 rounded-full bg-indigo-100 flex items-center justify-center mb-4">
@@ -329,29 +340,39 @@ export default function MessagesPage() {
           ) : (
             <>
               {/* Thread header */}
-              <div className="px-6 py-3 bg-white border-b border-gray-200 shrink-0">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <h2 className="font-semibold text-gray-900 truncate">{activeThread.subject || '(no subject)'}</h2>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      {activeThread.category && (
-                        <span className="text-xs text-gray-400">{CATEGORY_LABEL[activeThread.category] || activeThread.category}</span>
-                      )}
-                      {activeThread.urgency && activeThread.urgency !== 'low' && (
-                        <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${URGENCY_BADGE[activeThread.urgency]}`}>
-                          {activeThread.urgency}
-                        </span>
-                      )}
-                      {!activeThread.is_open && (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-gray-200 text-gray-500">closed</span>
-                      )}
+              <div className="px-3 sm:px-6 py-3 bg-white border-b border-gray-200 shrink-0">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex items-start gap-2">
+                    <button
+                      type="button"
+                      onClick={closeThreadView}
+                      className="md:hidden mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                      aria-label="Back to messages"
+                    >
+                      <ArrowLeft size={18} />
+                    </button>
+                    <div className="min-w-0">
+                      <h2 className="font-semibold text-gray-900 truncate">{activeThread.subject || '(no subject)'}</h2>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        {activeThread.category && (
+                          <span className="text-xs text-gray-400">{CATEGORY_LABEL[activeThread.category] || activeThread.category}</span>
+                        )}
+                        {activeThread.urgency && activeThread.urgency !== 'low' && (
+                          <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${URGENCY_BADGE[activeThread.urgency]}`}>
+                            {activeThread.urgency}
+                          </span>
+                        )}
+                        {!activeThread.is_open && (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-gray-200 text-gray-500">closed</span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
 
               {/* Messages */}
-              <div className="flex-1 overflow-y-auto px-6 py-4">
+              <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4">
                 {loadingMessages ? (
                   <div className="flex items-center justify-center h-32">
                     <div className="animate-spin w-6 h-6 rounded-full border-2 border-indigo-500 border-t-transparent" />
@@ -368,8 +389,8 @@ export default function MessagesPage() {
 
               {/* Reply box */}
               {activeThread.is_open !== false ? (
-                <div className="shrink-0 bg-white border-t border-gray-200 px-4 py-3">
-                  <form onSubmit={handleReply} className="flex items-end gap-3">
+                <div className="shrink-0 bg-white border-t border-gray-200 px-3 sm:px-4 py-3">
+                  <form onSubmit={handleReply} className="flex items-end gap-2 sm:gap-3">
                     <textarea
                       value={replyBody}
                       onChange={e => setReplyBody(e.target.value)}
@@ -378,7 +399,7 @@ export default function MessagesPage() {
                       }}
                       rows={2}
                       placeholder="Type a reply… (Cmd+Enter to send)"
-                      className="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
+                      className="flex-1 min-w-0 border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
                     />
                     <button
                       type="submit"

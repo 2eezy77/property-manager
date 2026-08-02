@@ -78,10 +78,28 @@ const STATUS_BADGE = {
   refunded:   'bg-slate-100 text-slate-600',
 };
 
+const STATUS_LABEL = {
+  succeeded:  'paid',
+  processing: 'processing',
+  pending:    'pending',
+  failed:     'not completed',
+  refunded:   'refunded',
+};
+
+/** Soften Stripe/Cash App failure copy so abandoned attempts don't read as "declined forever". */
+function friendlyFailureReason(reason) {
+  if (!reason) return null;
+  const r = String(reason);
+  if (/customer declined/i.test(r)) return 'Payment was cancelled before it finished.';
+  if (/superseded/i.test(r)) return 'Replaced by another payment for this month.';
+  if (/canceled|cancelled/i.test(r)) return 'Payment was cancelled.';
+  return r;
+}
+
 function StatusBadge({ status }) {
   return (
     <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_BADGE[status] ?? 'bg-slate-100 text-slate-500'}`}>
-      {status}
+      {STATUS_LABEL[status] ?? status}
     </span>
   );
 }
@@ -1288,8 +1306,11 @@ export default function PaymentsPage() {
                             <p className="mt-0.5 text-xs text-blue-600">Settling (4–5 business days)</p>
                           )}
                           {p.failure_reason && (
-                            <p className="mt-0.5 max-w-[160px] truncate text-xs text-red-500" title={p.failure_reason}>
-                              {p.failure_reason}
+                            <p
+                              className="mt-0.5 max-w-[160px] truncate text-xs text-red-500"
+                              title={friendlyFailureReason(p.failure_reason)}
+                            >
+                              {friendlyFailureReason(p.failure_reason)}
                             </p>
                           )}
                         </td>

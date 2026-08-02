@@ -339,7 +339,16 @@ export default function ManagerPayments() {
                         <p className="mt-0.5 text-xs text-blue-600">ACH settling</p>
                       )}
                       {p.status === 'failed' && p.failure_reason && (
-                        <p className="mt-0.5 text-xs text-red-500 max-w-[12rem] truncate" title={p.failure_reason}>{p.failure_reason}</p>
+                        <p
+                          className="mt-0.5 text-xs text-red-500 max-w-[12rem] truncate"
+                          title={p.failure_reason}
+                        >
+                          {/customer declined/i.test(p.failure_reason)
+                            ? 'Cancelled before finish'
+                            : /superseded|duplicate import/i.test(p.failure_reason)
+                              ? 'Replaced / duplicate'
+                              : p.failure_reason}
+                        </p>
                       )}
                     </td>
                     <td className="px-4 py-3 text-xs text-gray-400">{fmtPeriod(p.period_start)}</td>
