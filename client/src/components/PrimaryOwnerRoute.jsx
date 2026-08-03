@@ -1,5 +1,5 @@
 import React from 'react';
-import { Navigate, Outlet } from 'react-router-dom';
+import { Navigate, Outlet } from 'react-router';
 import { useAuth } from '@/context/AuthContext';
 
 /** Platform settings — only the org's primary owner (organizations.owner_id). */

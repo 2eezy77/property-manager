@@ -1,5 +1,5 @@
 import React from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router';
 
 /** Re-mounts outlet on route change for page enter animation. */
 export default function AnimatedOutlet() {

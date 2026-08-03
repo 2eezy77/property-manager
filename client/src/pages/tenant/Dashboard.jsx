@@ -9,7 +9,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import {
   Wrench, MessageSquare, FileText, CreditCard,
   Zap, Droplet, Flame, Globe, Trash2, Receipt, Waves,

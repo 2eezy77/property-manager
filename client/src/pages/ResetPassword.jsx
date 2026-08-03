@@ -2,7 +2,7 @@
  * ResetPassword.jsx — set a new password from email link token.
  */
 import React, { useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { Eye, EyeOff, AlertTriangle } from 'lucide-react';
 import api from '@/api/axios';
 import AuthPageShell from '@/components/AuthPageShell';

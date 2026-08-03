@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 
 /**
  * Section panel — white card with header row (common in Dribbble SaaS dashboards).

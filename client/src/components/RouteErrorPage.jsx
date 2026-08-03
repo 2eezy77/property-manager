@@ -1,5 +1,5 @@
 import React from 'react';
-import { isRouteErrorResponse, useRouteError } from 'react-router-dom';
+import { isRouteErrorResponse, useRouteError } from 'react-router';
 import { Lock, SearchX, ShieldAlert, AlertTriangle, Home } from 'lucide-react';
 import ErrorShell from '@/components/errors/ErrorShell';
 

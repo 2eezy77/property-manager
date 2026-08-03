@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 
 /**
  * Circular quick-action dock — inspired by Dribbble tenant apps (Oshadhi / ePayRent).

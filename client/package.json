@@ -14,14 +14,14 @@
     "@stripe/stripe-js": "^9.8.0",
     "axios": "^1.19.0",
     "lucide-react": "^1.22.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-plaid-link": "^3.5.1",
-    "react-router-dom": "^7.18.2"
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-plaid-link": "^5.0.0",
+    "react-router": "^8.3.0"
   },
   "devDependencies": {
-    "@types/react": "^18.3.3",
-    "@types/react-dom": "^18.3.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.19",
     "postcss": "^8.5.25",

@@ -2,7 +2,7 @@
  * Sidebar — light SaaS layout inspired by Arche + Commercial RE dashboards on Dribbble.
  */
 import React from 'react';
-import { NavLink, Link, useNavigate } from 'react-router-dom';
+import { NavLink, Link, useNavigate } from 'react-router';
 import { Building2 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { meetsMinRole } from '@/utils/roles';

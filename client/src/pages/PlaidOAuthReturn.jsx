@@ -8,7 +8,7 @@
  *    localStorage so resume still works.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router';
 import api from '@/api/axios';
 import { useAuth } from '@/context/AuthContext';
 import { ROLE_HOME } from '@/utils/roles';

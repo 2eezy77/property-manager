@@ -2,7 +2,7 @@
  * PortalShell — shared layout with slide-out sidebar + toggle (mobile + desktop).
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import Sidebar from '@/components/Sidebar';
 import PortalTopBar from '@/components/PortalTopBar';
 import AnimatedOutlet from '@/components/AnimatedOutlet';

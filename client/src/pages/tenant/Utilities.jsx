@@ -2,7 +2,7 @@
  * Tenant utilities — open shares, dispute, history. Pay via Payments.
  */
 import React, { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { Zap, Droplet, Flame, Globe, Trash2, Waves, Receipt, X, CreditCard } from 'lucide-react';
 import api from '@/api/axios';
 import PageHeader from '@/components/ui/PageHeader';
