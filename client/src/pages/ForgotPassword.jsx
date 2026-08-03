@@ -2,7 +2,7 @@
  * ForgotPassword.jsx — request a password reset email.
  */
 import React, { useState, useEffect } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router';
 import { AlertTriangle } from 'lucide-react';
 import api from '@/api/axios';
 import AuthPageShell from '@/components/AuthPageShell';

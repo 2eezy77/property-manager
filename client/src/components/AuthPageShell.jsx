@@ -2,7 +2,7 @@
  * Shared left brand + right panel shell for login / forgot / reset pages.
  */
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { Building2 } from 'lucide-react';
 
 export default function AuthPageShell({ title, subtitle, children, footer }) {

@@ -9,7 +9,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import { Landmark, CheckCircle2, XCircle, CreditCard } from 'lucide-react';
 import { loadStripe } from '@stripe/stripe-js';
 import api from '@/api/axios';

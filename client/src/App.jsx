@@ -6,7 +6,7 @@
  */
 
 import React from 'react';
-import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { createBrowserRouter, Navigate } from 'react-router';
 
 import AppRoot from '@/components/AppRoot';
 import RouteErrorPage from '@/components/RouteErrorPage';

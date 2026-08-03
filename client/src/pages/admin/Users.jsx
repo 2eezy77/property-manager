@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router';
 import api from '@/api/axios';
 import { apiErrorMessage } from '@/utils/apiErrorMessage';
 import { useAuth } from '@/context/AuthContext';

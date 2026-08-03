@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import { loadStripe } from '@stripe/stripe-js';
 import {
   Check, Footprints, Banknote, User, Landmark, FileText, Clock, CheckCircle2, PenLine,

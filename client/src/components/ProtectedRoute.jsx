@@ -1,5 +1,5 @@
 import React from 'react';
-import { Navigate, Outlet, useLocation } from 'react-router-dom';
+import { Navigate, Outlet, useLocation } from 'react-router';
 import { Building2 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { meetsMinRole, ROLE_HOME } from '@/utils/roles';

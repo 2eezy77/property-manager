@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Users, X } from 'lucide-react';
 import api from '@/api/axios';
 import { apiErrorMessage } from '@/utils/apiErrorMessage';

@@ -1,5 +1,5 @@
 import React from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 
 const PORTAL_META = {
   admin:   { label: 'Owner Console', accent: 'text-violet-600' },

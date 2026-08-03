@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 
 const ICON_BG = {
   default: 'bg-slate-100 text-slate-600',

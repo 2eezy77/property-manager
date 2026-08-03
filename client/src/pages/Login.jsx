@@ -2,7 +2,7 @@
  * Login.jsx — Montero Rentals sign-in (roles revealed after login).
  */
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { useNavigate, useLocation, Link, useSearchParams } from 'react-router-dom';
+import { useNavigate, useLocation, Link, useSearchParams } from 'react-router';
 import { Eye, EyeOff, Check, AlertTriangle } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { ROLE_HOME } from '@/utils/roles';

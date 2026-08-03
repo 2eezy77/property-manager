@@ -2,7 +2,7 @@
  * Public terms of service — Google OAuth consent screen and tenant transparency.
  */
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 
 const EFFECTIVE = 'June 5, 2026';
 const CONTACT = 'josemontero2002@gmail.com';
