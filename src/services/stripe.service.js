@@ -22,25 +22,93 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   appInfo: { name: 'PropertyManager', version: '0.1.0' },
 });
 
+/** Human-readable person label for Stripe Dashboard / statements. */
+function personDisplayName({ firstName, lastName, email, name } = {}) {
+  if (name && String(name).trim()) return String(name).trim();
+  const full = [firstName, lastName].filter(Boolean).join(' ').trim();
+  return full || (email ? String(email).trim() : null);
+}
+
+/** "743 A Ave · Room 4" — avoid "URoom 4" when unit_number already has a word label. */
+function formatPropertyLabel(propertyName, unitNumber) {
+  const prop = String(propertyName || 'Property').trim() || 'Property';
+  const unit = String(unitNumber || '').trim();
+  if (!unit) return prop;
+  if (/^(u\d|room\b|master\b|unit\b)/i.test(unit)) return `${prop} · ${unit}`;
+  return `${prop} U${unit}`;
+}
+
+/**
+ * Append payer (+ optional property) to a PaymentIntent description so the
+ * Stripe Dashboard Payments list is readable (not just pi_… / bare "Rent").
+ */
+function withPayerLabel(description, { name, email, propertyLabel } = {}) {
+  const base = String(description || 'Payment').trim() || 'Payment';
+  const who = personDisplayName({ name, email });
+  let out = who ? `${base} — ${who}` : base;
+  if (propertyLabel) out = `${out} · ${propertyLabel}`;
+  return out.slice(0, 1000);
+}
+
+/** Metadata Stripe Dashboard search can filter on. */
+function payerMetadata({ name, email, userId, propertyLabel } = {}) {
+  const meta = {};
+  if (userId) meta.tenant_id = String(userId);
+  const who = personDisplayName({ name, email });
+  if (who) meta.tenant_name = who;
+  if (email) meta.tenant_email = String(email);
+  if (propertyLabel) meta.property_label = String(propertyLabel).slice(0, 500);
+  return meta;
+}
+
+/**
+ * Keep Stripe Customer.name / email filled so Dashboard "Customer" isn't blank.
+ */
+async function syncCustomerProfile(customerId, { name, email } = {}) {
+  if (!customerId) return null;
+  const updates = {};
+  if (name) updates.name = String(name).slice(0, 256);
+  if (email) updates.email = String(email).slice(0, 512);
+  if (name) updates.description = `Montero — ${String(name).slice(0, 200)}`;
+  if (!Object.keys(updates).length) return null;
+  return stripe.customers.update(customerId, updates);
+}
+
 /**
  * Look up a Stripe customer by metadata userId, or create one if not found.
  * This keeps Stripe customers in sync with our users table.
  *
  * @param {string} userId  — internal UUID
  * @param {string} email
+ * @param {{ name?: string, firstName?: string, lastName?: string }} [profile]
  * @returns {Promise<string>} stripeCustomerId
  */
-async function getOrCreateCustomer(userId, email) {
+async function getOrCreateCustomer(userId, email, profile = {}) {
+  const name = personDisplayName({ ...profile, email });
+
   // Search for existing customer by our userId metadata tag
   const existing = await stripe.customers.search({
     query: `metadata['userId']:'${userId}'`,
     limit: 1,
   });
 
-  if (existing.data.length > 0) return existing.data[0].id;
+  if (existing.data.length > 0) {
+    const c = existing.data[0];
+    const needsName = name && (!c.name || c.name !== name);
+    const needsEmail = email && c.email !== email;
+    if (needsName || needsEmail) {
+      await syncCustomerProfile(c.id, {
+        name: needsName ? name : undefined,
+        email: needsEmail ? email : undefined,
+      });
+    }
+    return c.id;
+  }
 
   const customer = await stripe.customers.create({
-    email,
+    email: email || undefined,
+    name: name || undefined,
+    description: name ? `Montero — ${name}` : undefined,
     metadata: { userId },
   });
   return customer.id;
@@ -580,4 +648,9 @@ module.exports = {
   retrieveIdentityVerificationSession,
   retrievePaymentIntent,
   cancelPaymentIntent,
+  personDisplayName,
+  formatPropertyLabel,
+  withPayerLabel,
+  payerMetadata,
+  syncCustomerProfile,
 };

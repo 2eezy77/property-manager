@@ -613,7 +613,10 @@ async function linkManagerPayoutBank({ managerId, publicToken, accountId }) {
       throw err;
     }
 
-    const stripeCustomerId = await stripe.getOrCreateCustomer(managerId, userRow.email);
+    const stripeCustomerId = await stripe.getOrCreateCustomer(managerId, userRow.email, {
+      firstName: userRow.first_name,
+      lastName: userRow.last_name,
+    });
     let connectAccountId;
     try {
       connectAccountId = await stripe.createConnectExpressPayoutAccount({
@@ -1022,7 +1025,10 @@ async function startCashAppPayroll({
     `SELECT first_name, last_name, email FROM users WHERE id = $1`,
     [ownerId]
   );
-  const customerId = await stripe.getOrCreateCustomer(ownerId, ownerRow.email);
+  const customerId = await stripe.getOrCreateCustomer(ownerId, ownerRow.email, {
+    firstName: ownerRow.first_name,
+    lastName: ownerRow.last_name,
+  });
 
   const client = await pool.connect();
   try {

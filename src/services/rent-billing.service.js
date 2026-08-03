@@ -162,14 +162,34 @@ async function processAutopayCharges(db = pool) {
       const holderName = [lease.first_name, lease.last_name].filter(Boolean).join(' ') || lease.email;
       const monthLabel = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
 
+      if (lease.stripe_customer_id) {
+        await stripe.syncCustomerProfile(lease.stripe_customer_id, {
+          name: holderName,
+          email: lease.email,
+        });
+      }
+
       const paymentIntent = await stripe.chargeACH({
         amountCents,
         customerId: lease.stripe_customer_id,
         routingNumber: routing,
         accountNumber: acctNum,
         accountHolderName: holderName,
-        description: lateFeeAmount > 0 ? `Autopay rent + late fees — ${monthLabel}` : `Autopay rent — ${monthLabel}`,
-        metadata: { payment_id: paymentId, lease_id: lease.lease_id, tenant_id: lease.tenant_id, autopay: 'true' },
+        description: stripe.withPayerLabel(
+          lateFeeAmount > 0 ? `Autopay rent + late fees — ${monthLabel}` : `Autopay rent — ${monthLabel}`,
+          { name: holderName, email: lease.email }
+        ),
+        metadata: {
+          payment_id: paymentId,
+          lease_id: lease.lease_id,
+          tenant_id: lease.tenant_id,
+          autopay: 'true',
+          ...stripe.payerMetadata({
+            name: holderName,
+            email: lease.email,
+            userId: lease.tenant_id,
+          }),
+        },
         ipAddress: '',
         userAgent: 'autopay-service',
       });
@@ -268,13 +288,23 @@ async function chargeUtilitySplitAutopay(db, split) {
     const holderName = [split.first_name, split.last_name].filter(Boolean).join(' ')
       || split.email;
 
+    if (split.stripe_customer_id) {
+      await stripe.syncCustomerProfile(split.stripe_customer_id, {
+        name: holderName,
+        email: split.email,
+      });
+    }
+
     const pi = await stripe.chargeACH({
       amountCents,
       customerId: split.stripe_customer_id,
       routingNumber: routing,
       accountNumber: acctNum,
       accountHolderName: holderName,
-      description: `Autopay utility (${split.service_type}) — ${split.period_start} to ${split.period_end}`,
+      description: stripe.withPayerLabel(
+        `Autopay utility (${split.service_type}) — ${split.period_start} to ${split.period_end}`,
+        { name: holderName, email: split.email }
+      ),
       metadata: {
         payment_id: payment.id,
         utility_bill_id: split.bill_id,
@@ -282,6 +312,11 @@ async function chargeUtilitySplitAutopay(db, split) {
         lease_id: split.lease_id,
         tenant_id: split.tenant_id,
         autopay: 'true',
+        ...stripe.payerMetadata({
+          name: holderName,
+          email: split.email,
+          userId: split.tenant_id,
+        }),
       },
       ipAddress: '',
       userAgent: 'utility-autopay-service',

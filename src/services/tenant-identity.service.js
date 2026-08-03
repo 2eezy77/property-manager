@@ -167,12 +167,21 @@ async function findReusableFeePayment(client, leaseId, tenantId) {
 }
 
 async function createPaymentIntentForFee({ lease, tenantId, paymentId, fee }) {
-  const customerId = await stripe.getOrCreateCustomer(tenantId, lease.tenant_email);
+  const payerName = stripe.personDisplayName({
+    name: lease.tenant_name,
+    email: lease.tenant_email,
+  });
+  const customerId = await stripe.getOrCreateCustomer(tenantId, lease.tenant_email, {
+    name: payerName,
+  });
   const meta = feeMetadata(fee);
   return stripe.createCardPaymentIntent({
     amountCents: fee.totalCents,
     customerId,
-    description: 'Stripe Identity verification fee',
+    description: stripe.withPayerLabel('Stripe Identity verification fee', {
+      name: payerName,
+      email: lease.tenant_email,
+    }),
     metadata: {
       payment_id: paymentId,
       lease_id: lease.id,
@@ -181,6 +190,11 @@ async function createPaymentIntentForFee({ lease, tenantId, paymentId, fee }) {
       payment_method: 'card',
       source: 'stripe_identity',
       ...meta,
+      ...stripe.payerMetadata({
+        name: payerName,
+        email: lease.tenant_email,
+        userId: tenantId,
+      }),
     },
   });
 }
