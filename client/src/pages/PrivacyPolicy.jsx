@@ -1,10 +1,10 @@
 /**
- * Public privacy policy — required for Plaid production diligence and tenant transparency.
+ * Public privacy policy — required for Plaid/Stripe diligence and tenant transparency.
  */
 import React from 'react';
 import { Link } from 'react-router-dom';
 
-const EFFECTIVE = 'June 5, 2026';
+const EFFECTIVE = 'August 3, 2026';
 const CONTACT = 'josemontero2002@gmail.com';
 
 function Section({ title, children }) {
@@ -55,23 +55,33 @@ export default function PrivacyPolicy() {
             <li>
               <strong className="font-medium text-slate-800">Account information</strong>
               {' '}
-              — name, email address, and role (tenant, property manager, or owner).
+              — name, email address, phone number (when provided), and role (tenant, property manager, or owner).
             </li>
             <li>
               <strong className="font-medium text-slate-800">Lease and property data</strong>
               {' '}
-              — unit assignment, rent amount, lease dates, maintenance requests, and messages.
+              — unit assignment, rent amount, security deposit, lease dates, maintenance requests, announcements,
+              and messages with property management.
             </li>
             <li>
               <strong className="font-medium text-slate-800">Payment information</strong>
               {' '}
-              — rent payment history, late fees, and utility bill splits. Bank account linking is handled
-              through Plaid; we store encrypted Plaid tokens and display bank name and last-four digits only.
+              — rent, deposits, late fees, utility shares, and payment history. Bank linking is handled through
+              Plaid; we store encrypted Plaid tokens and show bank name and last-four digits only. Card and
+              Cash App Pay are processed by Stripe; we do not store full card numbers.
+            </li>
+            <li>
+              <strong className="font-medium text-slate-800">Identity verification</strong>
+              {' '}
+              — when required for lease signing or related onboarding, Stripe Identity may collect government ID
+              images and related verification data. Sensitive identity numbers used for verification are handled
+              by Stripe and/or encrypted on our systems when retained for compliance.
             </li>
             <li>
               <strong className="font-medium text-slate-800">Technical data</strong>
               {' '}
-              — standard server logs (IP address, browser type, timestamps) for security and troubleshooting.
+              — standard server logs (IP address, browser type, timestamps) and session cookies needed to keep
+              you signed in, for security and troubleshooting.
             </li>
           </ul>
         </Section>
@@ -79,10 +89,14 @@ export default function PrivacyPolicy() {
         <Section title="How we use your information">
           <p>We use collected information to:</p>
           <ul className="list-disc space-y-2 pl-5">
-            <li>Operate the tenant and owner portal (rent, maintenance, messaging, utilities).</li>
-            <li>Process rent and related charges through Stripe ACH when you authorize payment.</li>
+            <li>Operate the tenant and owner portal (rent, deposits, maintenance, messaging, utilities, leases).</li>
+            <li>
+              Process payments you authorize through Stripe — including ACH (bank), card, and Cash App Pay —
+              and to record off-portal payments when management confirms them.
+            </li>
             <li>Link bank accounts through Plaid when you choose to connect an account.</li>
-            <li>Send transactional email (payment confirmations, maintenance updates) via our connected Gmail account.</li>
+            <li>Complete identity checks through Stripe Identity when required for leasing.</li>
+            <li>Send transactional email (payment confirmations, maintenance updates, lease notices) via our connected Gmail account.</li>
             <li>Meet legal, accounting, and property-management obligations.</li>
           </ul>
           <p>We do not sell your personal information.</p>
@@ -98,16 +112,28 @@ export default function PrivacyPolicy() {
             online banking username or password.
           </p>
           <p>
-            Plaid access tokens are encrypted at rest on our servers (AES-256-GCM). Rent debits are processed
-            by Stripe using the bank account you linked. Plaid and Stripe have their own privacy policies
-            governing their services.
+            Plaid access tokens are encrypted at rest on our servers (AES-256-GCM). ACH rent and related debits
+            are processed by Stripe using the bank account you linked. Card and Cash App Pay are also processed
+            by Stripe. Plaid and Stripe have their own privacy policies governing their services.
           </p>
           <p>
-            Linking a bank account is
+            Linking a bank account or paying by card / Cash App is
             {' '}
             <strong className="font-medium text-slate-800">voluntary</strong>
-            . By completing Plaid Link, you consent to us collecting and using bank connection data for rent
-            collection and related property payments described in this policy.
+            {' '}
+            for portal checkout, but your lease may still require rent to be paid by an accepted method. By
+            completing Plaid Link or a Stripe checkout, you consent to us collecting and using payment data
+            for rent collection and related property payments described in this policy.
+          </p>
+        </Section>
+
+        <Section title="Identity verification (Stripe Identity)">
+          <p>
+            For some lease workflows we use Stripe Identity to verify that applicants or tenants are who they
+            say they are. That may include uploading a photo of a government ID and capturing a selfie.
+            Stripe processes that verification; we receive status results (for example, verified or needs more
+            information) and limited identity fields needed for leasing compliance. We do not use identity
+            documents for marketing.
           </p>
         </Section>
 
@@ -121,7 +147,7 @@ export default function PrivacyPolicy() {
             <li>
               <strong className="font-medium text-slate-800">Property manager</strong>
               {' '}
-              — operational data for the property (not tenant bank login credentials).
+              — operational data for the property (not tenant bank login credentials or full card numbers).
             </li>
             <li>
               <strong className="font-medium text-slate-800">Owners</strong>
@@ -131,8 +157,8 @@ export default function PrivacyPolicy() {
             <li>
               <strong className="font-medium text-slate-800">Service providers</strong>
               {' '}
-              — Railway (hosting), Supabase (database), Plaid, Stripe, Cloudflare, and Google (Gmail API) process
-              data on our behalf under their terms.
+              — Railway (hosting), Supabase (database), Plaid, Stripe (payments and Identity), Cloudflare, and
+              Google (Gmail API) process data on our behalf under their terms.
             </li>
           </ul>
         </Section>
@@ -140,8 +166,9 @@ export default function PrivacyPolicy() {
         <Section title="Security">
           <p>
             We protect data in transit with HTTPS (TLS). Passwords are hashed with bcrypt. Sensitive tokens
-            (Plaid, Gmail) are encrypted at rest. Access is limited by role-based permissions. Administrative
-            accounts for hosting and payment providers require multi-factor authentication where supported.
+            (Plaid, Gmail) and certain identity fields are encrypted at rest. Access is limited by role-based
+            permissions. Administrative accounts for hosting and payment providers require multi-factor
+            authentication where supported.
           </p>
         </Section>
 
@@ -159,7 +186,7 @@ export default function PrivacyPolicy() {
             <a href={`mailto:${CONTACT}`} className="font-medium text-violet-700 hover:underline">
               {CONTACT}
             </a>
-            .
+            . Some records may need to be kept longer when law or open disputes require it.
           </p>
         </Section>
 
@@ -185,6 +212,8 @@ export default function PrivacyPolicy() {
             <a href={`mailto:${CONTACT}`} className="font-medium text-violet-700 hover:underline">
               {CONTACT}
             </a>
+            <br />
+            Property: 743 A Ave, Norfolk, VA
           </p>
         </Section>
 
