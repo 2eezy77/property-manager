@@ -594,7 +594,10 @@ async function startCashAppLeaseSigningFee({ orgId, ownerId, feeId, note }) {
     `SELECT first_name, last_name, email FROM users WHERE id = $1`,
     [ownerId]
   );
-  const customerId = await stripe.getOrCreateCustomer(ownerId, ownerRow.email);
+  const customerId = await stripe.getOrCreateCustomer(ownerId, ownerRow.email, {
+    firstName: ownerRow.first_name,
+    lastName: ownerRow.last_name,
+  });
 
   let paymentIntent;
   try {

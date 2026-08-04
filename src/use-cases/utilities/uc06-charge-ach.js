@@ -126,19 +126,34 @@ async function executeChargeBill({ userId, role, billId, force = false, ipAddres
       const holderName = [split.first_name, split.last_name].filter(Boolean).join(' ')
         || split.email;
 
+      if (split.stripe_customer_id) {
+        await stripe.syncCustomerProfile(split.stripe_customer_id, {
+          name: holderName,
+          email: split.email,
+        });
+      }
+
       const pi = await stripe.chargeACH({
         amountCents,
         customerId: split.stripe_customer_id,
         routingNumber: routing,
         accountNumber: acctNum,
         accountHolderName: holderName,
-        description: `Utility (${bill.service_type}) — ${bill.period_start} to ${bill.period_end}`,
+        description: stripe.withPayerLabel(
+          `Utility (${bill.service_type}) — ${bill.period_start} to ${bill.period_end}`,
+          { name: holderName, email: split.email }
+        ),
         metadata: {
           payment_id: payment.id,
           utility_bill_id: billId,
           utility_split_id: split.split_id,
           lease_id: split.lease_id,
           tenant_id: split.tenant_id,
+          ...stripe.payerMetadata({
+            name: holderName,
+            email: split.email,
+            userId: split.tenant_id,
+          }),
         },
         ipAddress,
         userAgent,

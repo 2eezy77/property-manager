@@ -239,10 +239,13 @@ router.post('/plaid/exchange', async (req, res) => {
     );
     // Fetch the user's email directly for customer creation
     const { rows: [userRow] } = await client.query(
-      'SELECT email FROM users WHERE id = $1', [req.user.id]
+      'SELECT email, first_name, last_name FROM users WHERE id = $1', [req.user.id]
     );
 
-    const stripeCustomerId = await stripe.getOrCreateCustomer(req.user.id, userRow.email);
+    const stripeCustomerId = await stripe.getOrCreateCustomer(req.user.id, userRow.email, {
+      firstName: userRow.first_name,
+      lastName: userRow.last_name,
+    });
 
     // 5. Attach bank account to Stripe
     const stripeBankAccount = await stripe.attachBankAccount(stripeCustomerId, bankAccountToken);
@@ -619,19 +622,50 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
     const holderName = [userRow.first_name, userRow.last_name].filter(Boolean).join(' ')
       || userRow.email;
 
+    // Keep Stripe Customer.name filled so Dashboard doesn't show blank/unknown.
+    if (account.stripe_customer_id) {
+      await stripe.syncCustomerProfile(account.stripe_customer_id, {
+        name: holderName,
+        email: userRow.email,
+      });
+    }
+
+    const { rows: [loc] } = await client.query(
+      `SELECT p.name AS property_name, u.unit_number
+         FROM leases l
+         JOIN units u ON u.id = l.unit_id
+         JOIN properties p ON p.id = u.property_id
+        WHERE l.id = $1`,
+      [leaseId]
+    );
+    const propertyLabel = loc
+      ? stripe.formatPropertyLabel(loc.property_name, loc.unit_number)
+      : null;
+    const labeledDescription = stripe.withPayerLabel(description, {
+      name: holderName,
+      email: userRow.email,
+      propertyLabel,
+    });
+
     const paymentIntent = await stripe.chargeACH({
       amountCents,
       customerId:        account.stripe_customer_id,
       routingNumber:     routing,
       accountNumber:     acctNum,
       accountHolderName: holderName,
-      description,
+      description: labeledDescription,
       metadata: {
         payment_id: payment.id,
         lease_id:   leaseId,
         tenant_id:  req.user.id,
         payment_type: paymentType,
         ...chargeMeta,
+        ...stripe.payerMetadata({
+          name: holderName,
+          email: userRow.email,
+          userId: req.user.id,
+          propertyLabel,
+        }),
       },
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'] ?? '',
@@ -809,7 +843,27 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
       `SELECT first_name, last_name, email FROM users WHERE id = $1`,
       [req.user.id]
     );
-    const customerId = await stripe.getOrCreateCustomer(req.user.id, userRow.email);
+    const customerId = await stripe.getOrCreateCustomer(req.user.id, userRow.email, {
+      firstName: userRow.first_name,
+      lastName: userRow.last_name,
+    });
+    const payerName = stripe.personDisplayName({
+      firstName: userRow.first_name,
+      lastName: userRow.last_name,
+      email: userRow.email,
+    });
+
+    const { rows: [loc] } = await client.query(
+      `SELECT p.name AS property_name, u.unit_number
+         FROM leases l
+         JOIN units u ON u.id = l.unit_id
+         JOIN properties p ON p.id = u.property_id
+        WHERE l.id = $1`,
+      [leaseId]
+    );
+    const propertyLabel = loc
+      ? stripe.formatPropertyLabel(loc.property_name, loc.unit_number)
+      : null;
 
     // Tenant pays 2.9%+$0.30; ledger payment.amount stays base rent.
     const fee = computeCardCashAppFee(prep.amountCents);
@@ -818,7 +872,11 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
     const paymentIntent = await stripe.createCashAppPaymentIntent({
       amountCents: fee.totalCents,
       customerId,
-      description: `${prep.description} (incl. processing fee)`,
+      description: stripe.withPayerLabel(`${prep.description} (incl. processing fee)`, {
+        name: payerName,
+        email: userRow.email,
+        propertyLabel,
+      }),
       metadata: {
         payment_id: prep.payment.id,
         lease_id: leaseId,
@@ -826,6 +884,12 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
         payment_type: paymentType,
         ...prep.chargeMeta,
         ...feeMeta,
+        ...stripe.payerMetadata({
+          name: payerName,
+          email: userRow.email,
+          userId: req.user.id,
+          propertyLabel,
+        }),
       },
     });
 
@@ -943,18 +1007,44 @@ router.post('/card/create-intent', Guards.tenantOnly, async (req, res) => {
       `SELECT first_name, last_name, email FROM users WHERE id = $1`,
       [req.user.id]
     );
-    const customerId = await stripe.getOrCreateCustomer(req.user.id, userRow.email);
+    const customerId = await stripe.getOrCreateCustomer(req.user.id, userRow.email, {
+      firstName: userRow.first_name,
+      lastName: userRow.last_name,
+    });
+    const payerName = stripe.personDisplayName({
+      firstName: userRow.first_name,
+      lastName: userRow.last_name,
+      email: userRow.email,
+    });
+
+    const { rows: [loc] } = await client.query(
+      `SELECT p.name AS property_name, u.unit_number
+         FROM leases l
+         JOIN units u ON u.id = l.unit_id
+         JOIN properties p ON p.id = u.property_id
+        WHERE l.id = $1`,
+      [leaseId]
+    );
+    const propertyLabel = loc
+      ? stripe.formatPropertyLabel(loc.property_name, loc.unit_number)
+      : null;
 
     // Tenant pays 2.9%+$0.30 on card; ledger payment.amount stays base.
     const fee = computeCardCashAppFee(amountCents);
     const feeMeta = feeMetadata(fee);
 
+    const baseDescription = includeFirstMonth
+      ? `${prep.description} + first month rent (incl. processing fee)`
+      : `${prep.description} (incl. processing fee)`;
+
     const paymentIntent = await stripe.createCardPaymentIntent({
       amountCents: fee.totalCents,
       customerId,
-      description: includeFirstMonth
-        ? `${prep.description} + first month rent (incl. processing fee)`
-        : `${prep.description} (incl. processing fee)`,
+      description: stripe.withPayerLabel(baseDescription, {
+        name: payerName,
+        email: userRow.email,
+        propertyLabel,
+      }),
       metadata: {
         payment_id: prep.payment.id,
         lease_id: leaseId,
@@ -963,6 +1053,12 @@ router.post('/card/create-intent', Guards.tenantOnly, async (req, res) => {
         ...prep.chargeMeta,
         ...bundleMeta,
         ...feeMeta,
+        ...stripe.payerMetadata({
+          name: payerName,
+          email: userRow.email,
+          userId: req.user.id,
+          propertyLabel,
+        }),
       },
     });
 
