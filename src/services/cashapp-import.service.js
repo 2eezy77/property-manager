@@ -119,6 +119,43 @@ function monthLabel(year, monthIndex0) {
   return new Date(year, monthIndex0, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
+const MONTH_NAME_TO_INDEX = {
+  jan: 0, january: 0,
+  feb: 1, february: 1,
+  mar: 2, march: 2,
+  apr: 3, april: 3,
+  may: 4,
+  jun: 5, june: 5,
+  jul: 6, july: 6,
+  aug: 7, august: 7,
+  sep: 8, sept: 8, september: 8,
+  oct: 9, october: 9,
+  nov: 10, november: 10,
+  dec: 11, december: 11,
+};
+
+/**
+ * Prefer an explicit rent month in Cash App notes ("rent for August", "August rent")
+ * over the payment date month — late Jul payments for Aug rent are common.
+ */
+function rentYmFromPayment(p) {
+  const notes = String(p?.notes || '').toLowerCase();
+  const m = notes.match(
+    /\b(?:for|towards?|toward)\s+(?:the\s+)?(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b|\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+rent\b/
+  );
+  const token = (m && (m[1] || m[2])) || null;
+  if (!token || !p?.date) return p.dateIso.slice(0, 7);
+
+  const namedIdx = MONTH_NAME_TO_INDEX[token];
+  if (namedIdx == null) return p.dateIso.slice(0, 7);
+
+  let year = p.date.getFullYear();
+  const payMonth = p.date.getMonth();
+  // Dec → Jan (next year) style: named month early in year, payment late in year
+  if (payMonth >= 10 && namedIdx <= 2) year += 1;
+  return monthKey(year, namedIdx);
+}
+
 function mapCashAppPart(p) {
   return {
     transactionId: p.transactionId,
@@ -130,13 +167,13 @@ function mapCashAppPart(p) {
 }
 
 /**
- * Allocate by calendar month (payment date). Matches how tenants think about "June rent".
+ * Allocate by rent month (notes when present, else payment date).
  * Months with total > monthlyRent close at monthlyRent; excess is reported, not rolled forward.
  */
 function allocateCalendarMonths(payments, monthlyRent) {
   const byYm = new Map();
   for (const p of payments) {
-    const ym = p.dateIso.slice(0, 7);
+    const ym = rentYmFromPayment(p);
     if (!byYm.has(ym)) byYm.set(ym, []);
     byYm.get(ym).push(p);
   }
@@ -394,6 +431,35 @@ async function removeCashAppPeriods(client, tenantId, periodStarts) {
   return del.rowCount;
 }
 
+/** True if any txn id is already recorded on a succeeded payment for this tenant (any period). */
+async function findSucceededByExternalRefs(client, tenantId, refs) {
+  const ids = [...new Set((refs || []).map((r) => String(r || '').trim()).filter(Boolean))];
+  if (!ids.length) return null;
+
+  for (const ref of ids) {
+    const { rows } = await client.query(
+      `SELECT id, period_start
+         FROM payments
+        WHERE tenant_id = $1
+          AND status = 'succeeded'
+          AND (
+            metadata->>'external_reference' = $2
+            OR metadata->>'external_reference' LIKE $3
+            OR EXISTS (
+              SELECT 1
+                FROM jsonb_array_elements(COALESCE(metadata->'cash_app_parts', '[]'::jsonb)) part
+               WHERE part->>'transactionId' = $2
+            )
+          )
+        ORDER BY paid_at DESC NULLS LAST
+        LIMIT 1`,
+      [tenantId, ref, `%${ref}%`]
+    );
+    if (rows[0]) return rows[0];
+  }
+  return null;
+}
+
 async function removeSupersededPartials(client, leaseId, periodStart) {
   await client.query(
     `DELETE FROM payments
@@ -541,11 +607,24 @@ async function applyCashAppImportPlan(db, plan) {
   try {
     for (const t of plan.tenants) {
       for (const m of t.months) {
+        const txnIds = m.parts.map((p) => p.transactionId).filter(Boolean);
+        const already = await findSucceededByExternalRefs(client, t.tenantId, txnIds);
+        if (already) {
+          // Same Cash App txn already applied (often to the note-named month). Do not
+          // delete/recreate another period — that was recreating fake July rows for Lily.
+          skipped++;
+          if (String(already.period_start).slice(0, 10) === String(m.periodStart).slice(0, 10)) {
+            await syncExistingImports(client, t, m, already.id);
+            synced++;
+          }
+          continue;
+        }
+
         const removed = await removeCashAppPeriods(client, t.tenantId, [m.periodStart]);
         cleared += removed;
 
         await client.query('BEGIN');
-        const refs = m.parts.map((p) => p.transactionId).filter(Boolean).join(', ');
+        const refs = txnIds.join(', ');
         const result = await recordManualPayment(client, {
           leaseId: t.leaseId,
           tenantId: t.tenantId,
@@ -735,6 +814,7 @@ module.exports = {
   parseCashAppCsv,
   allocateRentMonths,
   allocateCalendarMonths,
+  rentYmFromPayment,
   buildImportPlan,
   buildImportPlanFromRows,
   load743CashAppTenants,

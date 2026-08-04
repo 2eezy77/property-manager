@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { CheckCircle2, MessageSquare } from 'lucide-react';
+import { CheckCircle2, MessageSquare, ArrowLeft } from 'lucide-react';
 import api from '@/api/axios';
 
 const URGENCY_COLOR = { emergency:'bg-red-100 text-red-700', high:'bg-orange-100 text-orange-700', medium:'bg-yellow-100 text-yellow-700', low:'bg-gray-100 text-gray-500' };
@@ -35,7 +35,7 @@ function MsgBubble({ msg }) {
   const out = msg.direction === 'outbound';
   return (
     <div className={`flex ${out ? 'justify-start' : 'justify-end'} mb-3`}>
-      <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm shadow-sm ${out ? 'bg-white border border-gray-200 text-gray-800' : 'bg-indigo-600 text-white'}`}>
+      <div className={`max-w-[min(75%,22rem)] rounded-2xl px-4 py-2.5 text-sm shadow-sm break-words ${out ? 'bg-white border border-gray-200 text-gray-800' : 'bg-indigo-600 text-white'}`}>
         {out && <p className="text-[10px] font-semibold text-indigo-500 mb-1 uppercase tracking-wide">{msg.is_ai_generated ? 'AI Auto-Reply' : 'Tenant'}</p>}
         {!out && msg.is_internal && <p className="text-[10px] font-semibold text-indigo-200 mb-1 uppercase tracking-wide">Internal Note</p>}
         <p className="whitespace-pre-wrap">{msg.body}</p>
@@ -82,6 +82,13 @@ export default function ManagerInbox() {
     } catch(e) { console.error(e); } finally { setLoadingM(false); }
   }
 
+  function closeThreadView() {
+    setActive(null);
+    setMessages([]);
+    setSummary('');
+    setReply('');
+  }
+
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:'smooth' }); }, [messages]);
 
   async function handleReply(e) {
@@ -103,7 +110,7 @@ export default function ManagerInbox() {
     if (!active) return;
     await api.patch(`/api/messages/threads/${active.id}/close`);
     setThreads(prev => prev.filter(t => t.id !== active.id));
-    setActive(null); setMessages([]);
+    closeThreadView();
   }
 
   async function handleUrgencyChange(val) {
@@ -121,10 +128,13 @@ export default function ManagerInbox() {
     } catch(e) { console.error(e); }
   }
 
+  const showList = !active;
+  const showDetail = !!active;
+
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)]">
-      {/* Header */}
-      <div className="px-6 py-4 border-b border-gray-200 bg-white shrink-0">
+    <div className="-mx-4 -my-5 sm:-mx-6 sm:-my-8 lg:-mx-10 flex flex-col h-[calc(100dvh-3.5rem)] min-h-0 bg-white">
+      {/* Header — hide on mobile when viewing a thread to maximize space */}
+      <div className={`px-4 sm:px-6 py-4 border-b border-gray-200 bg-white shrink-0 ${showDetail ? 'hidden md:block' : ''}`}>
         <h1 className="text-xl font-bold text-gray-900">Inbox</h1>
         <div className="flex gap-2 mt-2 flex-wrap">
           {[['pending','Pending'],['triaged','Triaged'],['','All Open']].map(([v,l]) => (
@@ -140,9 +150,9 @@ export default function ManagerInbox() {
         </div>
       </div>
 
-      <div className="flex flex-1 min-h-0">
-        {/* Thread list */}
-        <div className="w-80 shrink-0 border-r border-gray-200 bg-white overflow-y-auto">
+      <div className="flex flex-1 min-h-0 min-w-0">
+        {/* Thread list — full width on mobile until a thread is opened */}
+        <div className={`${showDetail ? 'hidden md:flex' : 'flex'} w-full md:w-80 md:shrink-0 border-r border-gray-200 bg-white overflow-y-auto flex-col`}>
           {loadingT ? (
             <div className="flex items-center justify-center h-32"><div className="animate-spin w-6 h-6 rounded-full border-2 border-indigo-500 border-t-transparent" /></div>
           ) : threads.length === 0 ? (
@@ -155,8 +165,8 @@ export default function ManagerInbox() {
           ))}
         </div>
 
-        {/* Message pane */}
-        <div className="flex-1 flex flex-col bg-gray-50 min-w-0">
+        {/* Message pane — full width on mobile when a thread is open */}
+        <div className={`${showList ? 'hidden md:flex' : 'flex'} flex-1 flex-col bg-gray-50 min-w-0`}>
           {!active ? (
             <div className="flex flex-col items-center justify-center h-full text-center px-8">
               <div className="mb-3 text-slate-300"><MessageSquare size={36} strokeWidth={1.5} /></div>
@@ -165,21 +175,31 @@ export default function ManagerInbox() {
           ) : (
             <>
               {/* Thread header */}
-              <div className="px-6 py-3 bg-white border-b border-gray-200 shrink-0">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="min-w-0">
-                    <h2 className="font-semibold text-gray-900 truncate">{active.subject || '(no subject)'}</h2>
-                    <p className="text-xs text-gray-400">{active.tenant_name} · {active.property_name} Unit {active.unit_number}</p>
+              <div className="px-3 sm:px-6 py-3 bg-white border-b border-gray-200 shrink-0">
+                <div className="flex items-start sm:items-center justify-between gap-2 sm:gap-4">
+                  <div className="min-w-0 flex items-start gap-2">
+                    <button
+                      type="button"
+                      onClick={closeThreadView}
+                      className="md:hidden mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                      aria-label="Back to inbox"
+                    >
+                      <ArrowLeft size={18} />
+                    </button>
+                    <div className="min-w-0">
+                      <h2 className="font-semibold text-gray-900 truncate">{active.subject || '(no subject)'}</h2>
+                      <p className="text-xs text-gray-400 truncate">{active.tenant_name} · {active.property_name} Unit {active.unit_number}</p>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <select value={urgency} onChange={e => handleUrgencyChange(e.target.value)} className="border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                  <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap justify-end">
+                    <select value={urgency} onChange={e => handleUrgencyChange(e.target.value)} className="border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 max-w-[7rem]">
                       <option value="low">Low</option>
                       <option value="medium">Medium</option>
                       <option value="high">High</option>
                       <option value="emergency">Emergency</option>
                     </select>
-                    <button onClick={loadSummary} className="text-xs px-3 py-1 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors">AI Summary</button>
-                    <button onClick={handleClose} className="text-xs px-3 py-1 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors">Close</button>
+                    <button onClick={loadSummary} className="text-xs px-2 sm:px-3 py-1 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors">AI Summary</button>
+                    <button onClick={handleClose} className="text-xs px-2 sm:px-3 py-1 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors">Close</button>
                   </div>
                 </div>
                 {summary && (
@@ -190,7 +210,7 @@ export default function ManagerInbox() {
               </div>
 
               {/* Messages */}
-              <div className="flex-1 overflow-y-auto px-6 py-4">
+              <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4">
                 {loadingM ? (
                   <div className="flex items-center justify-center h-32"><div className="animate-spin w-6 h-6 rounded-full border-2 border-indigo-500 border-t-transparent" /></div>
                 ) : messages.map(m => <MsgBubble key={m.id} msg={m} />)}
@@ -198,15 +218,15 @@ export default function ManagerInbox() {
               </div>
 
               {/* Reply */}
-              <div className="shrink-0 bg-white border-t border-gray-200 px-4 py-3">
+              <div className="shrink-0 bg-white border-t border-gray-200 px-3 sm:px-4 py-3 safe-pb">
                 <div className="flex items-center gap-3 mb-2">
                   <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
                     <input type="checkbox" checked={internal} onChange={e => setInternal(e.target.checked)} className="rounded" />
                     Internal note
                   </label>
                 </div>
-                <form onSubmit={handleReply} className="flex items-end gap-3">
-                  <textarea value={reply} onChange={e => setReply(e.target.value)} onKeyDown={e => { if (e.key==='Enter' && (e.metaKey||e.ctrlKey)) handleReply(e); }} rows={2} placeholder={internal ? 'Add an internal note…' : 'Reply to tenant… (Cmd+Enter to send)'} className={`flex-1 border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 resize-none ${internal ? 'border-yellow-300 bg-yellow-50 focus:ring-yellow-400' : 'border-gray-300 focus:ring-indigo-400'}`} />
+                <form onSubmit={handleReply} className="flex items-end gap-2 sm:gap-3">
+                  <textarea value={reply} onChange={e => setReply(e.target.value)} onKeyDown={e => { if (e.key==='Enter' && (e.metaKey||e.ctrlKey)) handleReply(e); }} rows={2} placeholder={internal ? 'Add an internal note…' : 'Reply to tenant… (Cmd+Enter to send)'} className={`flex-1 min-w-0 border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 resize-none ${internal ? 'border-yellow-300 bg-yellow-50 focus:ring-yellow-400' : 'border-gray-300 focus:ring-indigo-400'}`} />
                   <button type="submit" disabled={sending || !reply.trim()} className="shrink-0 px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors">{sending ? '…' : 'Send'}</button>
                 </form>
               </div>
