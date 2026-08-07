@@ -20,7 +20,6 @@ const EMAIL_CASHAPP_KEY = [
   [/buckley|stone/i, 'stone'],
   [/isaiah/i, 'isaiah'],
   [/lily/i, 'lily'],
-  [/davontay|gara/i, 'davontaye'],
   [/osanin/i, 'osanin'],
 ];
 

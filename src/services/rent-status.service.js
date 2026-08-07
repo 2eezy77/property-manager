@@ -5,7 +5,7 @@
 
 const pool = require('../db/client');
 const { accessiblePropertyIds } = require('../utils/property-access');
-const { ledgerPaymentWhere } = require('../utils/payment-ledger');
+const { ledgerPaymentWhere, notArchivedFormerTenantWhere } = require('../utils/payment-ledger');
 
 function monthBounds(date = new Date()) {
   const start = new Date(date.getFullYear(), date.getMonth(), 1);
@@ -164,6 +164,10 @@ function classifyRow(row, monthLabel) {
 
 async function queryCollectionsRows(propIds) {
   if (!propIds.length) return [];
+  // Only open pending invoices (not failed attempts) and late fees. Failed charges from
+  // terminated leases — e.g. Davontaye archived under archive/rent-by-month/2026-06 — are
+  // not "who is paying rent" and must not clutter Collections.
+  const notArchived = notArchivedFormerTenantWhere('p');
   const { rows } = await pool.query(
     `SELECT u.id AS tenant_id, u.email,
             TRIM(u.first_name || ' ' || u.last_name) AS name,
@@ -175,7 +179,8 @@ async function queryCollectionsRows(propIds) {
                 FROM payments p
                WHERE p.lease_id = l.id
                  AND p.payment_type IN ('rent', 'security_deposit')
-                 AND p.status IN ('failed', 'pending')
+                 AND p.status = 'pending'
+                 AND ${notArchived}
             ), 0) AS unpaid_payments,
             COALESCE((
               SELECT SUM(lf.amount)::numeric
@@ -192,7 +197,8 @@ async function queryCollectionsRows(propIds) {
             SELECT 1 FROM payments p
              WHERE p.lease_id = l.id
                AND p.payment_type IN ('rent', 'security_deposit')
-               AND p.status IN ('failed', 'pending')
+               AND p.status = 'pending'
+               AND ${notArchived}
           )
           OR EXISTS (
             SELECT 1 FROM late_fees lf
