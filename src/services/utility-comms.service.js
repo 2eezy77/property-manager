@@ -4,7 +4,7 @@
  * Workers never ACH — bill and remind only.
  */
 const pool = require('../db/client');
-const { sendOperationalStaffEmail, getOperationalStaff } = require('./email.service');
+const { getOperationalStaff } = require('./email.service');
 const { BRAND } = require('./email-templates/brand');
 
 const REVIEW_URL = `${String(BRAND.portalUrl).replace(/\/$/, '')}/tenant/utilities`;
