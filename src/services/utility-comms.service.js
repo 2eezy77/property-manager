@@ -333,6 +333,7 @@ async function autoNotifyEligibleDrafts({ userId, role }) {
   }
 
   const { isElectricBillChargeable } = require('./dominion-billing.service');
+  const { isCalendarMonthPeriod } = require('../use-cases/utilities/period-utils');
   const { executeNotifyTenants } = require('../use-cases/utilities/uc03-notify-tenants');
   const { accessiblePropertyIds } = require('../use-cases/utilities/access');
 
@@ -340,13 +341,29 @@ async function autoNotifyEligibleDrafts({ userId, role }) {
   if (!propIds.length) return { notified: 0, skipped: 0 };
 
   const { rows: drafts } = await pool.query(
-    `SELECT id, service_type, chargeable_after, period_end, status, amount_source,
-            tenant_charge_amount, statement_balance, total_amount
+    `SELECT id, property_id, service_type, chargeable_after, period_start, period_end, status,
+            amount_source, tenant_charge_amount, statement_balance, total_amount
        FROM utility_bills
       WHERE property_id = ANY($1)
         AND status = 'draft'`,
     [propIds]
   );
+
+  // Preload open provider-period bills so calendar phantoms are not notified beside them
+  const { rows: openProvider } = await pool.query(
+    `SELECT property_id, service_type::text AS service_type, period_start, period_end
+       FROM utility_bills
+      WHERE property_id = ANY($1)
+        AND status::text IN ('draft', 'notified', 'charging')`,
+    [propIds]
+  );
+  const hasProviderOpen = (propertyId, serviceType) =>
+    openProvider.some(
+      (b) =>
+        b.property_id === propertyId &&
+        b.service_type === serviceType &&
+        !isCalendarMonthPeriod(b.period_start, b.period_end)
+    );
 
   let notified = 0;
   let skipped = 0;
@@ -355,13 +372,22 @@ async function autoNotifyEligibleDrafts({ userId, role }) {
       skipped += 1;
       continue;
     }
-    // Hold Dominion Amount Due fallbacks until Current Charges are confirmed
     if (
       bill.service_type === 'electric' &&
       (bill.amount_source === 'amount_due_fallback' || bill.amount_source === 'parsed_total')
     ) {
       console.warn(
         `[utility-comms] hold notify ${bill.id}: amount_source=${bill.amount_source} (need Current Charges)`
+      );
+      skipped += 1;
+      continue;
+    }
+    if (
+      isCalendarMonthPeriod(bill.period_start, bill.period_end) &&
+      hasProviderOpen(bill.property_id, bill.service_type)
+    ) {
+      console.warn(
+        `[utility-comms] hold notify ${bill.id}: calendar-month phantom while provider-period bill is open`
       );
       skipped += 1;
       continue;

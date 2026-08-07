@@ -73,6 +73,31 @@ async function findMonthlyDraft(client, propertyId, serviceType, periodEnd) {
   return rows[0] || null;
 }
 
+/**
+ * When Gmail falls back to a calendar month, prefer an already-open provider-period
+ * bill for the same property/service (same amount ±$0.02) instead of creating a phantom.
+ */
+async function findOpenProviderBill(client, propertyId, serviceType, amount) {
+  const { isCalendarMonthPeriod, dayOnly } = require('./period-utils');
+  const { rows } = await client.query(
+    `SELECT *
+       FROM utility_bills
+      WHERE property_id = $1
+        AND service_type = $2
+        AND status::text IN ('draft', 'notified', 'charging')
+      ORDER BY period_end DESC, created_at DESC`,
+    [propertyId, serviceType]
+  );
+  const amt = Number(amount);
+  return (
+    rows.find((b) => {
+      if (isCalendarMonthPeriod(b.period_start, b.period_end)) return false;
+      const billAmt = Number(b.tenant_charge_amount ?? b.total_amount);
+      return Number.isFinite(amt) && Math.abs(billAmt - amt) < 0.02;
+    }) || null
+  );
+}
+
 function electricAmountFields(parsed) {
   const tenant = parsed.tenant_charge_amount ?? parsed.total_amount;
   return {
@@ -105,7 +130,16 @@ async function upsertMonthlyDraft(client, {
     amount_pulled_at: parsed.service_type === 'electric' ? new Date() : null,
   };
 
-  const existing = await findMonthlyDraft(client, propertyId, parsed.service_type, parsed.period_end);
+  // Calendar-default imports must not create a second open bill beside a real cycle.
+  let existing = await findMonthlyDraft(client, propertyId, parsed.service_type, parsed.period_end);
+  if (!existing && !parsed.period_parsed) {
+    existing = await findOpenProviderBill(
+      client,
+      propertyId,
+      parsed.service_type,
+      electricMeta.total_amount
+    );
+  }
 
   if (existing) {
     const total = Math.max(Number(existing.total_amount), Number(electricMeta.total_amount));
@@ -114,15 +148,23 @@ async function upsertMonthlyDraft(client, {
       Number(electricMeta.tenant_charge_amount)
     );
     // Prefer real provider service dates when the email parser extracted them.
-    // Only snap to calendar-month bounds for fallback/defaulted periods.
+    // Never let a calendar-default import overwrite an existing mid-month provider period.
+    const { isCalendarMonthPeriod } = require('./period-utils');
     const existingStart = String(existing.period_start).slice(0, 10);
     const existingEnd = String(existing.period_end).slice(0, 10);
-    const periodStart = parsed.period_parsed && parsed.period_start
-      ? minDate(existingStart, parsed.period_start)
-      : (bounds?.start || minDate(existingStart, parsed.period_start));
-    const periodEnd = parsed.period_parsed && parsed.period_end
-      ? maxDate(existingEnd, parsed.period_end)
-      : (bounds?.end || maxDate(existingEnd, parsed.period_end));
+    const existingIsProvider = !isCalendarMonthPeriod(existingStart, existingEnd);
+    let periodStart;
+    let periodEnd;
+    if (parsed.period_parsed && parsed.period_start && parsed.period_end) {
+      periodStart = minDate(existingStart, parsed.period_start);
+      periodEnd = maxDate(existingEnd, parsed.period_end);
+    } else if (existingIsProvider) {
+      periodStart = existingStart;
+      periodEnd = existingEnd;
+    } else {
+      periodStart = bounds?.start || minDate(existingStart, parsed.period_start);
+      periodEnd = bounds?.end || maxDate(existingEnd, parsed.period_end);
+    }
     const dueDate = maxDate(existing.due_date, parsed.due_date);
     const notes = [
       existing.notes,
