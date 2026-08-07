@@ -75,9 +75,10 @@ async function recordManualPayment(db, {
     return { skipped: true, reason: 'duplicate', paymentId: dupRows[0].id };
   }
 
-  // Global xref dedupe: same Cash App / Gmail txn must not create a second succeeded rent row
-  // on a different period (import used to re-create July when August already had the txn).
-  if (reference && !allowPartial) {
+  // Global xref dedupe: same Cash App / Gmail txn must not create a second rent row
+  // (full or partial) after a succeeded credit OR an owner-rejected/withdrawn off-site row.
+  // Partial imports previously skipped this and re-credited Isaiah's voided Aug Cash App.
+  if (reference) {
     const refs = String(reference).split(',').map((s) => s.trim()).filter(Boolean);
     for (const ref of refs) {
       const { rows: xrefRows } = await db.query(
@@ -106,7 +107,11 @@ async function recordManualPayment(db, {
     const { rows: partialDup } = await db.query(
       `SELECT id FROM payments
         WHERE lease_id = $1 AND payment_type = $2 AND period_start = $3::date
-          AND status = 'succeeded'
+          AND (
+            status = 'succeeded'
+            OR COALESCE(metadata->>'owner_rejected_offsite', 'false') = 'true'
+            OR COALESCE(metadata->>'withdrawn_offsite', 'false') = 'true'
+          )
           AND metadata->>'partial_rent' = 'true'
           AND metadata->>'external_reference' = $4`,
       [leaseId, paymentType, pStart, reference || '']
