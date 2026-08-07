@@ -377,10 +377,6 @@ async function buildPlaybookInsights(userId, role) {
       offboardingTenants(propIds),
     ]);
 
-  const unpaidRent = rentRoster.tenants.filter(
-    (t) => ['late', 'due', 'partial'].includes(t.status)
-  );
-
   const byCategory = {
     tenant_passwords: onboardingRows(
       roster,
@@ -468,22 +464,6 @@ async function buildPlaybookInsights(userId, role) {
         )
       );
     })(),
-    cashapp_imports:
-      unpaidRent.length > 0
-        ? insight(
-            'watch',
-            `${unpaidRent.length} tenant${unpaidRent.length === 1 ? '' : 's'} with no rent logged this month — record Cash App/check if paid offline.`,
-            unpaidRent.map((t) =>
-              row(
-                t.name,
-                t.remainingAmount > 0
-                  ? `${t.detail} · record remainder under Payments`
-                  : `${t.detail} · Payments → Record`,
-                'warn'
-              )
-            )
-          )
-        : insight('ok', 'Rent ledger matches this month for all active tenants.'),
     tenant_offboarding: (() => {
       if (!offboarding.length) {
         return insight('ok', 'No active move-out checklists.');
