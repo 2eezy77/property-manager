@@ -54,6 +54,9 @@ function classifyRow(row, monthLabel) {
   const lateFees = Number(row.late_fees_pending || 0);
   const unit = row.unit_number ? `Unit ${row.unit_number}` : '';
   const { rent, paid, pending, remaining, fullyPaid, hasPartial } = rentBalances(row);
+  // Owner can waive late fees (late_fee_amount=0) and/or give a full-month grace window.
+  const lateFeesWaived = Number(row.late_fee_amount ?? 0) <= 0;
+  const flexibleMonth = Number(row.grace_period_days ?? 5) >= 28;
 
   const needsRelink = row.bank_link_status === 'needs_relink';
   const base = {
@@ -72,7 +75,10 @@ function classifyRow(row, monthLabel) {
   const overdueDays = Number(row.max_days_overdue || 0);
   const pastGrace = isPastGrace(row.invoice_due_date, row.grace_period_days);
   const hasLateFee = lateFees > 0;
-  const isLate = hasLateFee || overdueDays > 0 || pastGrace;
+  // Flexible-pay leases (e.g. Stone): balance due is fine mid-month — do not flag Late / email.
+  const isLate = lateFeesWaived || flexibleMonth
+    ? hasLateFee
+    : (hasLateFee || overdueDays > 0 || pastGrace);
 
   if (fullyPaid) {
     return {
@@ -90,8 +96,11 @@ function classifyRow(row, monthLabel) {
   if (hasPartial) {
     const extra = [];
     if (hasLateFee) extra.push(`${money(lateFees)} late fee`);
-    if (overdueDays > 0) extra.push(`${overdueDays} days overdue`);
+    if (overdueDays > 0 && !lateFeesWaived && !flexibleMonth) extra.push(`${overdueDays} days overdue`);
     if (pending > 0) extra.push(`${money(pending)} ACH in progress`);
+    if ((lateFeesWaived || flexibleMonth) && !isLate) {
+      extra.push('flexible pay — no late fees');
+    }
     return {
       ...base,
       status: isLate ? 'late' : 'partial',
@@ -243,6 +252,7 @@ async function queryRentRows(propIds, monthStart, monthEnd) {
             un.unit_number,
             l.monthly_rent::numeric AS monthly_rent,
             COALESCE(l.grace_period_days, 5) AS grace_period_days,
+            COALESCE(l.late_fee_amount, 0)::numeric AS late_fee_amount,
             COALESCE((
               SELECT SUM(p.amount)::numeric
                 FROM payments p

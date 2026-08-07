@@ -20,6 +20,9 @@ The Jul 29 txn was **also** recorded as an August partial (`37a7ffd5-…`), so A
 | July 2026 | $450 | **$450 still owed** |
 | August 2026 | $450 | **$450 still owed** |
 
+## Owner policy (2026-08-07)
+Stone may pay anytime during the month — **no late fees**. Lease set to `grace_period_days=31`, `late_fee_amount=0`. Roster treats him as partial/balance-due, not Late.
+
 ## Other notes (not changed)
 - **April 2026** still shows ~$1,359 succeeded (full $900 + partial $459) — historical overcount; left alone.
 - No linked bank account on file (portal ACH unavailable until he links).
