@@ -139,6 +139,17 @@ for (const c of cases) {
   }
 }
 
+{
+  const { periodFromDominionStatement } = require('../src/services/dominion-billing.service');
+  const p = periodFromDominionStatement({ statementDate: '2026-07-17', billingDays: 30 });
+  if (p.period_start === '2026-06-18' && p.period_end === '2026-07-17') {
+    console.log('  ✓ periodFromDominionStatement 30-day cycle');
+  } else {
+    failed++;
+    console.log('  ✗ periodFromDominionStatement', p);
+  }
+}
+
 const { accountsMatch } = require('../src/use-cases/utilities/domain');
 if (!accountsMatch('210005533430', '3430')) {
   failed++;

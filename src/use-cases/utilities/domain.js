@@ -289,11 +289,13 @@ async function loadPropertyHouseCover(client, propertyId) {
 }
 
 async function listBillsForPropertyMonth(client, propertyId, yearMonth) {
+  // Key the house-cover month by period_end (Dominion/HRSD cycles are mid-month;
+  // statement/end date is the cycle's billing month, not period_start).
   const { rows } = await client.query(
     `SELECT *
        FROM utility_bills
       WHERE property_id = $1
-        AND to_char(COALESCE(period_start, created_at), 'YYYY-MM') = $2
+        AND to_char(COALESCE(period_end, period_start, created_at), 'YYYY-MM') = $2
         AND status IN ('draft', 'notified', 'charging')
       ORDER BY service_type ASC, created_at ASC`,
     [propertyId, yearMonth]
@@ -458,7 +460,7 @@ async function insertBillWithSplits(client, {
     ]
   );
 
-  const ym = billingMonthKey(period_start || bill.created_at);
+  const ym = billingMonthKey(period_end || period_start || bill.created_at);
   if (ym) {
     await refreshPropertyMonthSplits(client, { propertyId, yearMonth: ym });
   } else {
@@ -470,7 +472,7 @@ async function insertBillWithSplits(client, {
 }
 
 async function refreshBillSplitsForBill(client, bill, { preserveStatuses: _preserveStatuses = ['paid', 'waived'] } = {}) {
-  const ym = billingMonthKey(bill.period_start || bill.created_at);
+  const ym = billingMonthKey(bill.period_end || bill.period_start || bill.created_at);
   if (ym) {
     await refreshPropertyMonthSplits(client, {
       propertyId: bill.property_id,

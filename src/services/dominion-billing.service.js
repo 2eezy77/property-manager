@@ -93,6 +93,24 @@ function computeChargeableAfter(periodEnd) {
   return dayOnly(periodEnd) || null;
 }
 
+/**
+ * Dominion cycles are mid-month, not calendar months.
+ * period_end = statement date; period_start = statement − (billingDays − 1).
+ */
+function periodFromDominionStatement({ statementDate, billingDays }) {
+  const end = dayOnly(statementDate);
+  const days = Number(billingDays);
+  if (!end || !Number.isFinite(days) || days < 1) {
+    return { period_start: null, period_end: end || null };
+  }
+  const d = new Date(`${end}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - (days - 1));
+  return {
+    period_start: d.toISOString().slice(0, 10),
+    period_end: end,
+  };
+}
+
 function isElectricBillChargeable(bill) {
   if (!bill || bill.service_type !== 'electric') return true;
   const after = dayOnly(bill.chargeable_after || bill.period_end);
@@ -132,6 +150,7 @@ module.exports = {
   parseDominionAmounts,
   resolveElectricChargeAmount,
   computeChargeableAfter,
+  periodFromDominionStatement,
   isElectricBillChargeable,
   validateElectricAmount,
   isDominionProvider,
