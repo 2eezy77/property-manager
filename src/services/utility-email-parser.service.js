@@ -70,14 +70,16 @@ function parseIsoDate(raw) {
 
 function parseDueDate(text) {
   const patterns = [
-    /due\s+date[:\s]+([A-Za-z]+\s+\d{1,2},?\s+\d{4})/i,
-    /due\s+date[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
+    /due\s+date[:\s,]+([A-Za-z]+\s+\d{1,2},?\s+\d{4})/i,
+    /due\s+date[:\s,]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
+    /on\s+due\s+date[:\s,]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
+    /deducted[^.]*?due\s+date[:\s,]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
     /payment\s+date[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
     /payment\s+date[:\s]+([A-Za-z]+\s+\d{1,2},?\s+\d{4})/i,
     /payment\s+due\s+on[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
     /payment\s+due\s+by[:\s]+([A-Za-z]+\s+\d{1,2},?\s+\d{4})/i,
     /pay\s+by[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
-    /upcoming\s+on[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
+    /debit\s+on[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
     /transaction\s+is\s+upcoming\s+on[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
   ];
   for (const re of patterns) {
@@ -89,17 +91,23 @@ function parseDueDate(text) {
 
 function parseBillingPeriod(text) {
   const patterns = [
-    /(?:billing|service)\s+period[:\s]+([A-Za-z]+\s+\d{1,2},?\s+\d{4})\s*[-–—to]+\s*([A-Za-z]+\s+\d{1,2},?\s+\d{4})/i,
-    /(?:billing|service)\s+period[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})\s*[-–—to]+\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
+    // Norfolk / HRSD portal: "Your Billing Period: 06/06/2026 - 07/09/2026"
+    /(?:your\s+)?(?:billing|service)\s+period[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})\s*[-–—to]+\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
+    /(?:your\s+)?(?:billing|service)\s+period[:\s]+([A-Za-z]+\s+\d{1,2},?\s+\d{4})\s*[-–—to]+\s*([A-Za-z]+\s+\d{1,2},?\s+\d{4})/i,
+    /for\s+the\s+period\s+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})\s*[-–—to]+\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
     /for\s+the\s+period\s+([A-Za-z]+\s+\d{1,2},?\s+\d{4})\s*[-–—to]+\s*([A-Za-z]+\s+\d{1,2},?\s+\d{4})/i,
   ];
   for (const re of patterns) {
     const m = text.match(re);
     if (m) {
-      return { period_start: parseIsoDate(m[1]), period_end: parseIsoDate(m[2]) };
+      const period_start = parseIsoDate(m[1]);
+      const period_end = parseIsoDate(m[2]);
+      if (period_start && period_end) {
+        return { period_start, period_end, period_parsed: true };
+      }
     }
   }
-  return { period_start: null, period_end: null };
+  return { period_start: null, period_end: null, period_parsed: false };
 }
 
 function parseAccountNumber(text) {
@@ -182,7 +190,8 @@ function detectProvider(from, subject, text) {
 
   if (hay.includes('hrsd') || hay.includes('hrub')
     || (hay.includes('norfolk') && hay.includes('util'))
-    || sub.includes('bill is ready')) {
+    || sub.includes('bill is ready')
+    || sub.includes('bill is due')) {
     return {
       provider_name: 'HRSD / Norfolk Utilities',
       service_type: 'water',
@@ -192,13 +201,22 @@ function detectProvider(from, subject, text) {
   return null;
 }
 
+/** Previous full calendar month (UTC) — never use the email date as period_end. */
 function defaultPeriodFromMessage(messageDate) {
-  const end = messageDate || new Date().toISOString().slice(0, 10);
-  const d = new Date(end);
-  d.setMonth(d.getMonth() - 1);
-  d.setDate(1);
-  const start = d.toISOString().slice(0, 10);
-  return { period_start: start, period_end: end };
+  const raw = messageDate || new Date().toISOString().slice(0, 10);
+  const d = new Date(`${String(raw).slice(0, 10)}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) {
+    const today = new Date();
+    d.setTime(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+  }
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth(); // 0-based current month of message
+  const prevY = m === 0 ? y - 1 : y;
+  const prevM = m === 0 ? 12 : m; // 1-based previous month
+  const start = `${prevY}-${String(prevM).padStart(2, '0')}-01`;
+  const lastDay = new Date(Date.UTC(prevY, prevM, 0)).getUTCDate();
+  const end = `${prevY}-${String(prevM).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+  return { period_start: start, period_end: end, period_parsed: false };
 }
 
 function parseAmountsForProvider(text, provider, from) {
@@ -241,27 +259,22 @@ function parseUtilityEmail(message) {
   }
 
   const due_date = parseDueDate(text);
-  let { period_start, period_end } = parseBillingPeriod(text);
+  let { period_start, period_end, period_parsed } = parseBillingPeriod(text);
   const account_number = parseAccountNumber(text);
 
   const messageDate = parseIsoDate(message.date) || new Date().toISOString().slice(0, 10);
-  if (!period_end) {
+  if (!period_end || !period_start) {
     const fallback = defaultPeriodFromMessage(messageDate);
     period_start = period_start || fallback.period_start;
-    period_end = fallback.period_end;
-  }
-  if (!period_start) {
-    const d = new Date(period_end);
-    d.setMonth(d.getMonth() - 1);
-    d.setDate(1);
-    period_start = d.toISOString().slice(0, 10);
+    period_end = period_end || fallback.period_end;
+    period_parsed = false;
   }
 
   const chargeable_after = computeChargeableAfter(period_end);
 
   const dueFallback = (() => {
-    const d = new Date(messageDate);
-    d.setDate(d.getDate() + 21);
+    const d = new Date(`${messageDate}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 21);
     return d.toISOString().slice(0, 10);
   })();
 
@@ -281,6 +294,7 @@ function parseUtilityEmail(message) {
     due_date: due_date || dueFallback,
     period_start,
     period_end,
+    period_parsed: !!period_parsed,
     account_number,
     notes: `Imported from Gmail: ${message.subject} (${messageDate})`,
     bill_document_url: `https://mail.google.com/mail/u/0/#inbox/${message.id}`,
@@ -295,6 +309,9 @@ module.exports = {
   emailText,
   stripHtml,
   parseMoney,
+  parseDueDate,
+  parseBillingPeriod,
+  defaultPeriodFromMessage,
   detectProvider,
   shouldSkipBillImport,
   parseAmountsForProvider,

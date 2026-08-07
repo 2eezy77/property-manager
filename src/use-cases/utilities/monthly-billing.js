@@ -113,8 +113,16 @@ async function upsertMonthlyDraft(client, {
       Number(existing.tenant_charge_amount ?? existing.total_amount),
       Number(electricMeta.tenant_charge_amount)
     );
-    const periodStart = bounds?.start || minDate(existing.period_start, parsed.period_start);
-    const periodEnd = bounds?.end || maxDate(existing.period_end, parsed.period_end);
+    // Prefer real provider service dates when the email parser extracted them.
+    // Only snap to calendar-month bounds for fallback/defaulted periods.
+    const existingStart = String(existing.period_start).slice(0, 10);
+    const existingEnd = String(existing.period_end).slice(0, 10);
+    const periodStart = parsed.period_parsed && parsed.period_start
+      ? minDate(existingStart, parsed.period_start)
+      : (bounds?.start || minDate(existingStart, parsed.period_start));
+    const periodEnd = parsed.period_parsed && parsed.period_end
+      ? maxDate(existingEnd, parsed.period_end)
+      : (bounds?.end || maxDate(existingEnd, parsed.period_end));
     const dueDate = maxDate(existing.due_date, parsed.due_date);
     const notes = [
       existing.notes,
@@ -161,8 +169,12 @@ async function upsertMonthlyDraft(client, {
     return { bill: updated, merged: true, billing_month: ym };
   }
 
-  const periodStart = bounds?.start || parsed.period_start;
-  const periodEnd = bounds?.end || parsed.period_end;
+  const periodStart = parsed.period_parsed && parsed.period_start
+    ? parsed.period_start
+    : (bounds?.start || parsed.period_start);
+  const periodEnd = parsed.period_parsed && parsed.period_end
+    ? parsed.period_end
+    : (bounds?.end || parsed.period_end);
 
   const { rows: [bill] } = await client.query(
     `INSERT INTO utility_bills

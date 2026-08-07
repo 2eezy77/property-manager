@@ -61,6 +61,29 @@ const cases = [
     acct: 'PP-1055175',
   },
   {
+    name: 'HRSD / Norfolk portal billing period + due date',
+    msg: {
+      id: 'hrsd-portal',
+      from: 'HRSD <noreply@hrsd.com>',
+      subject: 'Your HRSD Bill Is Due',
+      date: 'Tue, 05 Aug 2026 12:00:00 -0400',
+      body: [
+        'Welcome, Jose Montero',
+        '3491396160: 743 A AVE NORFOLK, VA 23504',
+        'Your Billing Period: 06/06/2026 - 07/09/2026',
+        'Total Amount Due $165.74',
+        'You are enrolled in Auto Pay and $165.74 will be deducted from your account on due date, 08/04/2026.',
+      ].join('\n'),
+    },
+    expectOk: true,
+    amount: 165.74,
+    service: 'water',
+    periodStart: '2026-06-06',
+    periodEnd: '2026-07-09',
+    dueDate: '2026-08-04',
+    periodParsed: true,
+  },
+  {
     name: 'Dominion disconnection (skip)',
     msg: {
       id: '4',
@@ -85,11 +108,34 @@ for (const c of cases) {
     || (c.expectWarning ? (r.parse_warnings?.length > 0) : true);
   const svcOk = c.service == null || r.service_type === c.service;
   const acctOk = c.acct == null || r.account_number === c.acct;
-  if (ok && amtOk && tenantOk && stmtOk && srcOk && warnOk && svcOk && acctOk) {
+  const psOk = c.periodStart == null || r.period_start === c.periodStart;
+  const peOk = c.periodEnd == null || r.period_end === c.periodEnd;
+  const dueOk = c.dueDate == null || r.due_date === c.dueDate;
+  const parsedOk = c.periodParsed == null || r.period_parsed === c.periodParsed;
+  if (ok && amtOk && tenantOk && stmtOk && srcOk && warnOk && svcOk && acctOk && psOk && peOk && dueOk && parsedOk) {
     console.log(`  ✓ ${c.name}`);
   } else {
     failed++;
-    console.log(`  ✗ ${c.name}`, r);
+    console.log(`  ✗ ${c.name}`, {
+      ok: r.ok,
+      total_amount: r.total_amount,
+      period_start: r.period_start,
+      period_end: r.period_end,
+      due_date: r.due_date,
+      period_parsed: r.period_parsed,
+      reason: r.reason,
+    });
+  }
+}
+
+{
+  const { defaultPeriodFromMessage } = require('../src/services/utility-email-parser.service');
+  const fb = defaultPeriodFromMessage('2026-08-05');
+  if (fb.period_start === '2026-07-01' && fb.period_end === '2026-07-31') {
+    console.log('  ✓ defaultPeriodFromMessage uses previous calendar month');
+  } else {
+    failed++;
+    console.log('  ✗ defaultPeriodFromMessage', fb);
   }
 }
 
