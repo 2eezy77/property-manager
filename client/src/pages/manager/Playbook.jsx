@@ -42,7 +42,7 @@ const STEP_GUIDE = {
   rent_collection: {
     phase: 'ongoing',
     title: 'Rent payments are on track this month',
-    help: 'Check who has paid, who is late, and any failed bank payments. Tenants pay rent via ACH or Cash App Pay in their portal.',
+    help: 'Check who has paid, who is late, and any failed bank payments. Tenants pay rent via ACH, card, or Cash App Pay in their portal.',
     where: { label: 'Open Payments', path: '/manager/payments' },
   },
   utilities: {
@@ -66,7 +66,7 @@ const STEP_GUIDE = {
   cashapp_imports: {
     phase: 'ongoing',
     title: 'Offline payments are recorded in the ledger',
-    help: 'Prefer tenants pay in the portal (ACH or Cash App Pay). If someone paid outside the app (Cash App, Zelle, check), record or sync it under Payments so the ledger matches.',
+    help: 'Prefer portal pay (ACH, card, or Cash App Pay). Off-app Cash App/cashtag import is retired — historical rows are under archive/.',
     where: { label: 'Open Payments', path: '/manager/payments' },
   },
   tenant_offboarding: {

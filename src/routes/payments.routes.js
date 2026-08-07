@@ -1576,8 +1576,15 @@ router.post('/run-billing', Guards.staffOnly, async (req, res) => {
   }
 });
 
-// POST /api/payments/cashapp/sync-gmail — staff: import Cash App rent from org Gmail
+// POST /api/payments/cashapp/sync-gmail — retired (off-app Cash App archived)
 router.post('/cashapp/sync-gmail', Guards.staffOnly, async (req, res) => {
+  if (process.env.CASHAPP_GMAIL_SYNC_ENABLED !== 'true') {
+    return res.status(410).json({
+      error: 'CASHAPP_IMPORT_DISABLED',
+      message:
+        'Off-app Cash App (cashtag) import is retired. Historical off-app rows are in archive/cash-app-payments-*.csv. Tenants should pay in the portal (ACH, card, or Cash App Pay).',
+    });
+  }
   try {
     const dryRun = req.body?.dryRun === true;
     const newerThanDays = Number(req.body?.newerThanDays) || 400;

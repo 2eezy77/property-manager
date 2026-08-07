@@ -62,8 +62,8 @@ const DEFAULT_ITEMS = [
   },
   {
     category: 'cashapp_imports',
-    label: 'Sync Cash App rent from Gmail',
-    notes: 'Portal Cash App Pay posts automatically. For off-app Cash App receipts, run Sync Cash App from Gmail on Manager → Payments.',
+    label: 'Off-app Cash App import retired',
+    notes: 'Portal Cash App Pay / ACH / card post automatically. Off-app cashtag Gmail sync is disabled; historical off-app rows are archived under archive/cash-app-payments-*.csv.',
     sort_order: 10,
   },
   {
