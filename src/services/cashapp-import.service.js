@@ -431,7 +431,11 @@ async function removeCashAppPeriods(client, tenantId, periodStarts) {
   return del.rowCount;
 }
 
-/** True if any txn id is already recorded on a succeeded payment for this tenant (any period). */
+/**
+ * True if any txn id is already recorded for this tenant (any period) on a
+ * succeeded payment OR an owner-rejected/withdrawn off-site Cash App row.
+ * Rejected rows must stay deduped so Gmail sync does not re-apply after void.
+ */
 async function findSucceededByExternalRefs(client, tenantId, refs) {
   const ids = [...new Set((refs || []).map((r) => String(r || '').trim()).filter(Boolean))];
   if (!ids.length) return null;
@@ -441,7 +445,11 @@ async function findSucceededByExternalRefs(client, tenantId, refs) {
       `SELECT id, period_start
          FROM payments
         WHERE tenant_id = $1
-          AND status = 'succeeded'
+          AND (
+            status = 'succeeded'
+            OR COALESCE(metadata->>'owner_rejected_offsite', 'false') = 'true'
+            OR COALESCE(metadata->>'withdrawn_offsite', 'false') = 'true'
+          )
           AND (
             metadata->>'external_reference' = $2
             OR metadata->>'external_reference' LIKE $3
