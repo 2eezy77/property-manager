@@ -1,6 +1,9 @@
 /**
  * Utilities.jsx — Manager / Owner utility bill splitter.
  *
+ * Balances board: one card per tenant (service shares nested inside).
+ * Bill detail: TenantCard per split on that bill.
+ *
  * Use cases: src/use-cases/utilities/catalog.js (Sommerville model)
  *   UC1  Create bill                 → CreateBillModal
  *   UC2  Preview equal split          (server returns splits in create response)
