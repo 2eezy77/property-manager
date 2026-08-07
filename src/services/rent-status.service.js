@@ -285,7 +285,11 @@ async function queryRentRows(propIds, monthStart, monthEnd) {
             (
               SELECT string_agg(DISTINCT
                 CASE
-                  WHEN COALESCE(p.metadata->>'payment_method', '') = 'cash_app' THEN 'Cash App'
+                  WHEN COALESCE(p.metadata->>'source', '') = 'stripe_card'
+                    OR COALESCE(p.metadata->>'payment_method', '') = 'card' THEN 'Card'
+                  WHEN COALESCE(p.metadata->>'source', '') = 'stripe_cashapp' THEN 'Cash App Pay'
+                  WHEN COALESCE(p.metadata->>'source', '') IN ('cash_app_import', 'manual')
+                    OR COALESCE(p.metadata->>'payment_method', '') = 'cash_app' THEN 'Cash App'
                   WHEN p.stripe_payment_intent_id IS NOT NULL THEN 'ACH'
                   ELSE NULL
                 END, ', ')

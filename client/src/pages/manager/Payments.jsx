@@ -21,8 +21,14 @@ function fmtPeriod(ts) {
 function fmtMoney(v) { return v != null ? '$'+Number(v).toLocaleString('en-US',{minimumFractionDigits:2}) : '—'; }
 
 function paymentMethodLabel(p) {
-  if (p.source === 'cash_app_import') return 'Cash App (archived off-app)';
+  // Prefer source so Stripe card is never mislabeled as ACH.
+  if (p.source === 'stripe_card' || p.payment_method === 'card') {
+    return p.partial_rent === 'true' ? 'Card (partial)' : 'Card';
+  }
   if (p.source === 'stripe_cashapp') return 'Cash App Pay';
+  if (p.source === 'cash_app_import') {
+    return p.partial_rent === 'true' ? 'Cash App (off-site, partial)' : 'Cash App (archived off-app)';
+  }
   if (p.payment_method) {
     const base = METHOD_LABEL[p.payment_method] || p.payment_method;
     return p.partial_rent === 'true' ? `${base} (partial)` : base;
