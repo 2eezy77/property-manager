@@ -1,10 +1,10 @@
 /**
- * Utility bill tenant emails + staff ops alerts (notify / remind / dispute).
+ * Utility bill tenant in-app notify + staff ops alerts.
+ * Tenant channel is in-app only (no utility emails to tenants).
  * Workers never ACH — bill and remind only.
  */
 const pool = require('../db/client');
-const { sendEmail, sendOperationalStaffEmail, getOperationalStaff } = require('./email.service');
-const templates = require('./email-templates');
+const { sendOperationalStaffEmail, getOperationalStaff } = require('./email.service');
 const { BRAND } = require('./email-templates/brand');
 
 const REVIEW_URL = `${String(BRAND.portalUrl).replace(/\/$/, '')}/tenant/utilities`;
@@ -60,13 +60,14 @@ function tenantDisplayName(row) {
 }
 
 /**
- * Email + in-app for each split on a newly notified bill.
+ * In-app notify for each split on a newly notified bill (no tenant email).
  * related_entity_id = split id for reminder dedupe later.
+ * UC03 usually already inserts in_app rows; this backfills any missing ones.
  */
 async function sendUtilityBillNotifyEmails(billId) {
   const { rows: splits } = await pool.query(
     `SELECT s.id AS split_id, s.tenant_id, s.amount,
-            ub.id AS bill_id, ub.service_type, ub.period_start, ub.period_end, ub.org_id,
+            ub.id AS bill_id, ub.service_type, ub.period_start, ub.period_end,
             p.org_id AS property_org_id,
             u.email, u.first_name, u.last_name
        FROM utility_bill_splits s
@@ -78,53 +79,33 @@ async function sendUtilityBillNotifyEmails(billId) {
     [billId]
   );
 
-  let emailed = 0;
+  let inApp = 0;
   for (const s of splits) {
     if (await alreadyNotified(pool, {
       userId: s.tenant_id,
       type: 'utility_bill',
       relatedEntityId: s.split_id,
-      channel: 'email',
+      channel: 'in_app',
     })) {
       continue;
     }
 
-    const tenantName = tenantDisplayName(s);
-    const { html, text } = templates.utilityBillNotify.render({
-      tenantName,
-      amount: s.amount,
-      serviceType: s.service_type,
-      periodStart: s.period_start,
-      periodEnd: s.period_end,
-      disputeHours: 48,
-    });
-    // Prefer tenant utilities page in CTA (template uses BRAND.utilitiesUrl)
     const subject = `Utility bill — your ${s.service_type} share`;
-    const orgId = s.org_id || s.property_org_id;
-
-    const result = await sendEmail({
-      orgId,
-      to: s.email,
-      subject,
-      text: text.replace(BRAND.utilitiesUrl, REVIEW_URL),
-      html: html.replaceAll(String(BRAND.utilitiesUrl), REVIEW_URL),
-    });
+    const body = `Your share is $${Number(s.amount).toFixed(2)} for ${s.period_start} to ${s.period_end}. Dispute within 48 hours if anything looks wrong. Pay in the portal when ready.`;
 
     await recordNotification(pool, {
       userId: s.tenant_id,
       type: 'utility_bill',
       title: subject,
-      body: text,
-      channel: result.sent ? 'email' : 'in_app',
+      body,
+      channel: 'in_app',
       relatedEntityType: 'utility_bill_split',
       relatedEntityId: s.split_id,
-      externalId: result.id,
     });
-
-    if (result.sent) emailed += 1;
+    inApp += 1;
   }
 
-  return { emailed, tenants: splits.length };
+  return { emailed: 0, inApp, tenants: splits.length };
 }
 
 async function alertStaffUtilityEvent({
@@ -140,30 +121,28 @@ async function alertStaffUtilityEvent({
     const { all: staff } = await getOperationalStaff(pool, orgId);
     if (!staff.length) return { sent: false, skipped: 'no_staff' };
 
-    if (relatedEntityId && await alreadyNotified(pool, {
-      userId: staff[0].id,
-      type,
-      relatedEntityId,
-    })) {
-      return { sent: false, skipped: 'already_sent' };
-    }
-
-    const result = await sendOperationalStaffEmail(pool, { orgId, subject, text });
-    if (result.sent) {
-      for (const person of staff) {
-        await recordNotification(pool, {
-          userId: person.id,
-          type,
-          title: subject,
-          body: text,
-          channel: 'email',
-          relatedEntityType,
-          relatedEntityId,
-          externalId: result.id,
-        });
+    let recorded = 0;
+    for (const person of staff) {
+      if (relatedEntityId && await alreadyNotified(pool, {
+        userId: person.id,
+        type,
+        relatedEntityId,
+        channel: 'in_app',
+      })) {
+        continue;
       }
+      await recordNotification(pool, {
+        userId: person.id,
+        type,
+        title: subject,
+        body: text,
+        channel: 'in_app',
+        relatedEntityType,
+        relatedEntityId,
+      });
+      recorded += 1;
     }
-    return result;
+    return { sent: recorded > 0, emailed: false, inApp: recorded };
   } catch (err) {
     console.warn('[utility-comms] staff alert:', err.message);
     return { sent: false, error: err.message };
@@ -244,7 +223,7 @@ async function alertStaffUtilityDispute(splitId) {
 }
 
 /**
- * Day-3 and day-7 unpaid reminders. Never charges.
+ * Day-3 and day-7 unpaid reminders — in-app only (no tenant email). Never charges.
  */
 async function sendUtilityReminders() {
   const { rows: splits } = await pool.query(
@@ -270,7 +249,6 @@ async function sendUtilityReminders() {
     const ageMs = Date.now() - notifiedAt.getTime();
     const day3 = 3 * 24 * 60 * 60 * 1000;
     const day7 = 7 * 24 * 60 * 60 * 1000;
-    const tenantName = tenantDisplayName(s);
     const amountStr = `$${Number(s.amount).toFixed(2)}`;
     const period = `${s.period_start} – ${s.period_end}`;
 
@@ -279,31 +257,18 @@ async function sendUtilityReminders() {
         userId: s.tenant_id,
         type: 'utility_reminder_7d',
         relatedEntityId: s.split_id,
+        channel: 'in_app',
       }))) {
         const subject = `Reminder: ${s.service_type} share still unpaid (${amountStr})`;
-        const text = [
-          `Hi ${tenantName},`,
-          '',
-          `Your ${s.service_type} share of ${amountStr} for ${period} is still open.`,
-          `Please pay in the portal when you can: ${REVIEW_URL}`,
-          '',
-          '— Montero Rentals',
-        ].join('\n');
-        const result = await sendEmail({
-          orgId: s.org_id,
-          to: s.email,
-          subject,
-          text,
-        });
+        const body = `Your ${s.service_type} share of ${amountStr} for ${period} is still open. Pay in the portal when you can.`;
         await recordNotification(pool, {
           userId: s.tenant_id,
           type: 'utility_reminder_7d',
           title: subject,
-          body: text,
-          channel: result.sent ? 'email' : 'in_app',
+          body,
+          channel: 'in_app',
           relatedEntityType: 'utility_bill_split',
           relatedEntityId: s.split_id,
-          externalId: result.id,
         });
         reminded7 += 1;
         overdueForStaff.push(s);
@@ -313,31 +278,18 @@ async function sendUtilityReminders() {
         userId: s.tenant_id,
         type: 'utility_reminder_3d',
         relatedEntityId: s.split_id,
+        channel: 'in_app',
       }))) {
         const subject = `Reminder: ${s.service_type} share due (${amountStr})`;
-        const text = [
-          `Hi ${tenantName},`,
-          '',
-          `Friendly reminder — your ${s.service_type} share is ${amountStr} for ${period}.`,
-          `Review and pay: ${REVIEW_URL}`,
-          '',
-          '— Montero Rentals',
-        ].join('\n');
-        const result = await sendEmail({
-          orgId: s.org_id,
-          to: s.email,
-          subject,
-          text,
-        });
+        const body = `Friendly reminder — your ${s.service_type} share is ${amountStr} for ${period}. Review and pay in the portal.`;
         await recordNotification(pool, {
           userId: s.tenant_id,
           type: 'utility_reminder_3d',
           title: subject,
-          body: text,
-          channel: result.sent ? 'email' : 'in_app',
+          body,
+          channel: 'in_app',
           relatedEntityType: 'utility_bill_split',
           relatedEntityId: s.split_id,
-          externalId: result.id,
         });
         reminded3 += 1;
       }
