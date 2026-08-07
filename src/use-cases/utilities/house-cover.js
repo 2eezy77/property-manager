@@ -9,8 +9,15 @@
 
 function billingMonthKey(dateStr) {
   if (!dateStr) return null;
-  const s = String(dateStr).slice(0, 10);
-  return s.length >= 7 ? s.slice(0, 7) : null;
+  if (dateStr instanceof Date && !Number.isNaN(dateStr.getTime())) {
+    return dateStr.toISOString().slice(0, 7);
+  }
+  const s = String(dateStr);
+  // ISO / YYYY-MM-DD…
+  if (/^\d{4}-\d{2}/.test(s)) return s.slice(0, 7);
+  const d = new Date(s);
+  if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 7);
+  return null;
 }
 
 function monthBounds(yearMonth) {
@@ -24,7 +31,14 @@ function monthBounds(yearMonth) {
 
 function dayOnly(value) {
   if (!value) return '';
-  return String(value).slice(0, 10);
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  const s = String(value);
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const d = new Date(s);
+  if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  return s.slice(0, 10);
 }
 
 /** Lease overlaps calendar month if start <= monthEnd AND end >= monthStart. */
