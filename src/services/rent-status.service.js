@@ -167,6 +167,8 @@ async function queryCollectionsRows(propIds) {
   // Only open pending invoices (not failed attempts) and late fees. Failed charges from
   // terminated leases — e.g. Davontaye archived under archive/rent-by-month/2026-06 — are
   // not "who is paying rent" and must not clutter Collections.
+  // Also skip leases whose rent/deposit rows are all marked archived_former_tenant (late fees
+  // on those leases should be waived when archiving).
   const notArchived = notArchivedFormerTenantWhere('p');
   const { rows } = await pool.query(
     `SELECT u.id AS tenant_id, u.email,
@@ -186,6 +188,11 @@ async function queryCollectionsRows(propIds) {
               SELECT SUM(lf.amount)::numeric
                 FROM late_fees lf
                WHERE lf.lease_id = l.id AND lf.status IN ('pending', 'applied')
+                 AND NOT EXISTS (
+                   SELECT 1 FROM payments p
+                    WHERE p.id = lf.payment_id
+                      AND COALESCE(p.metadata->>'archived_former_tenant', '') = 'true'
+                 )
             ), 0) AS late_fees_pending
        FROM leases l
        JOIN users u ON u.id = l.tenant_id AND u.role = 'tenant'
@@ -203,6 +210,11 @@ async function queryCollectionsRows(propIds) {
           OR EXISTS (
             SELECT 1 FROM late_fees lf
              WHERE lf.lease_id = l.id AND lf.status IN ('pending', 'applied')
+               AND NOT EXISTS (
+                 SELECT 1 FROM payments p
+                  WHERE p.id = lf.payment_id
+                    AND COALESCE(p.metadata->>'archived_former_tenant', '') = 'true'
+               )
           )
         )
       ORDER BY u.last_name, u.first_name`,
