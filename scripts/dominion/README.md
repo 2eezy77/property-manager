@@ -2,32 +2,38 @@
 
 Monthly cloud-agent workflow to pull the latest Dominion Energy bill and sync tenant electric shares.
 
-## Secrets (required)
+## Auth reality check
+
+**Dominion does not support authenticator-app TOTP** (Google Authenticator / Authy / raw secrets).
+Login MFA is **SMS text** or **email verification code** only.
 
 | Env var | Purpose |
 |---|---|
 | `DOMINION_USERNAME` | Dominion Energy customer portal username |
 | `DOMINION_PASSWORD` | Portal password |
-| `DOMINION_TOTP_SECRET` | Base32 TOTP seed for MFA |
+
+Prefer **email OTP** during login so the agent can read the code from the org Gmail connection (same token used for utility e-bill import). SMS OTP requires a human in the Desktop pane.
 
 ## Steps
 
-1. **TOTP**
+1. **Browser login** (computer-use / Desktop): open Dominion customer portal → username/password → choose **email** verification (not SMS when possible).
+2. **Fetch MFA code**
    ```bash
-   pip install pyotp
-   python3 scripts/dominion/generate-totp.py
+   # Start this right after requesting the email code
+   railway run -s property-manager -e production -- \
+     env WAIT_SECONDS=120 AFTER_EPOCH_MS=$(date +%s000) \
+     node scripts/dominion/fetch-email-otp.js
    ```
-2. **Browser login** (computer-use / Desktop): open Dominion customer portal → username/password → paste TOTP. Prefer semantic labels (“Amount Due”, “Current Charges”, “View Bill / PDF”) over CSS selectors.
-3. **Extract** into JSON (see schema below). Prefer **Current Charges** for tenant billing; keep Total Amount Due as `total_amount_due` / statement balance only.
-4. **Download** the latest PDF into `archive/utilities/dominion-bills/`.
-5. **Sync**
+3. Enter the printed 6-digit code in the browser.
+4. **Extract** using semantic labels (“Current Charges”, “Amount Due”, “Due Date”, “kWh”, “View Bill” / PDF) — avoid brittle CSS selectors.
+5. **Download** the latest PDF into `archive/utilities/dominion-bills/`.
+6. **Sync**
    ```bash
-   # dry-run
    node scripts/dominion/sync-portal-extract.js path/to/extract.json
-   # write + notify tenants
    APPLY=1 NOTIFY=1 node scripts/dominion/sync-portal-extract.js path/to/extract.json
-   # or via Railway prod DB
-   railway run -s property-manager -e production -- env APPLY=1 NOTIFY=1 node scripts/dominion/sync-portal-extract.js path/to/extract.json
+   # prod DB
+   railway run -s property-manager -e production -- \
+     env APPLY=1 NOTIFY=1 node scripts/dominion/sync-portal-extract.js path/to/extract.json
    ```
 
 ## Extract JSON schema
@@ -44,10 +50,19 @@ Monthly cloud-agent workflow to pull the latest Dominion Energy bill and sync te
 }
 ```
 
-There is **no kWh column** on `utility_bills`; usage is stored in bill notes + the archived JSON. PDFs are **not** BLOBs in Postgres — archive on disk and set `bill_document_url` to an `archive:…` pointer.
+Tenant charge = **Current Charges** only. Total Amount Due / account balance is stored as `statement_balance`, never billed to tenants alone.
+
+There is **no kWh column** on `utility_bills`; usage goes in notes + archived JSON. PDFs are archived on disk (`bill_document_url` text pointer) — not Postgres BLOBs.
+
+## Always-on alternative (no portal MFA)
+
+Gmail e-bill import + `BillingHistory.xlsx` export remain the reliable paths when portal MFA is SMS-only or the UI changes:
+
+- Manager → Utilities → Import from Gmail
+- `npm run import:dominion:apply` with a fresh portal xlsx export
 
 ## Resilience
 
-- Locate fields by visible text (“Current Charges”, “Amount Due”, “Due Date”, “kWh”) rather than brittle selectors.
-- If only Amount Due is visible, do **not** bill tenants that balance — pull Billing History / statement PDF for Current Charges first.
-- Existing Gmail e-bill import remains the always-on path; this portal workflow is the monthly source-of-truth check.
+- Locate fields by visible text, not CSS selectors.
+- If only Amount Due is visible, open Billing History / the PDF for **Current Charges** before syncing.
+- If email OTP never arrives, complete MFA in the Desktop pane, then continue extraction.

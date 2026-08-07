@@ -35,7 +35,7 @@
     "import:cashapp:apply": "node scripts/import-cashapp-payments.js --apply",
     "import:dominion": "node scripts/import-dominion-billing-history.js",
     "import:dominion:apply": "node scripts/import-dominion-billing-history.js --apply",
-    "dominion:totp": "python3 scripts/dominion/generate-totp.py",
+    "dominion:otp": "node scripts/dominion/fetch-email-otp.js",
     "dominion:sync-portal": "node scripts/dominion/sync-portal-extract.js",
     "dominion:sync-portal:apply": "APPLY=1 node scripts/dominion/sync-portal-extract.js",
     "utilities:recalc-splits": "node scripts/recalculate-utility-splits.js",
