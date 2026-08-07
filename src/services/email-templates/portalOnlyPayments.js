@@ -25,6 +25,7 @@ function renderPortalOnlyPayments({
     '',
     'How to pay in the portal:',
     '• Bank (ACH) — no processing fee. Best for monthly rent; enable Autopay to waive late fees.',
+    '• Card — includes a 2.9% + $0.30 processing fee.',
     '• Cash App Pay inside the Payments page — includes a 2.9% + $0.30 processing fee.',
     '',
     unitLabel ? `Your unit: ${unitLabel}` : '',
@@ -57,6 +58,7 @@ function renderPortalOnlyPayments({
       sectionHeading('How to pay'),
       bulletList([
         '<strong>Bank (ACH)</strong> — <strong>no processing fee</strong>. Best for monthly rent; turn on Autopay to waive late fees.',
+        '<strong>Card</strong> — includes a <strong>2.9% + $0.30</strong> processing fee (paid by you).',
         '<strong>Cash App Pay</strong> on the Payments page — includes a <strong>2.9% + $0.30</strong> processing fee (paid by you).',
       ]),
       paragraph([

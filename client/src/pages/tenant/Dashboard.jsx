@@ -352,8 +352,9 @@ export default function TenantDashboard() {
           >
             <p className="text-sm font-semibold text-blue-950">Pay rent in the portal only</p>
             <p className="mt-1 text-xs leading-relaxed text-blue-900/80">
-              Off-app Cash App, Venmo, and Zelle are not accepted. Bank ACH has no processing fee;
-              Cash App Pay in Payments includes 2.9% + $0.30. Autopay waives late fees and is the only auto-debit.
+              Off-app Cash App, Venmo, and Zelle are not accepted. Pay in Payments with bank ACH
+              (no processing fee), card, or Cash App Pay (card/Cash App include 2.9% + $0.30).
+              Autopay waives late fees and is the only auto-debit.
               {balance?.securityDepositPayment
                 ? ` Security deposit still due (${fmt(balance.securityDepositPayment.amount)}).`
                 : ''}
