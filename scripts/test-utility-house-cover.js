@@ -19,6 +19,7 @@ function getAmount(b) {
 
 assert.strictEqual(billingMonthKey('2026-07-01'), '2026-07');
 assert.strictEqual(billingMonthKey('2026-07-15T12:00:00Z'), '2026-07');
+assert.strictEqual(billingMonthKey(new Date('2026-07-01T00:00:00.000Z')), '2026-07');
 assert.strictEqual(billingMonthKey(null), null);
 
 assert.strictEqual(

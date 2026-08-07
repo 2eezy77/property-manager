@@ -304,7 +304,7 @@ async function listBillsForPropertyMonth(client, propertyId, yearMonth) {
 async function billHasFrozenSplits(client, billId) {
   const { rows } = await client.query(
     `SELECT 1 FROM utility_bill_splits
-      WHERE bill_id = $1 AND status = ANY($2::text[])
+      WHERE bill_id = $1 AND status::text = ANY($2::text[])
       LIMIT 1`,
     [billId, ['paid', 'waived', 'charging']]
   );
