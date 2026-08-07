@@ -13,14 +13,13 @@
  *   UC9  Import from Gmail           → header Import from Gmail
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Zap, Droplet, Flame, Globe, Trash2, Waves, Receipt,
   X, AlertTriangle, ExternalLink,
 } from 'lucide-react';
 import api from '@/api/axios';
 import PageHeader from '@/components/ui/PageHeader';
-import TableScroll from '@/components/ui/TableScroll';
 import { useAuth } from '@/context/AuthContext';
 
 // ── Formatting helpers (match conventions in sibling manager pages) ───────────
@@ -79,6 +78,128 @@ function fmtPeriodRange(start, end) {
   const a = start ? fmt(start) : '—';
   const b = end ? fmt(end) : '—';
   return a === b ? a : `${a} – ${b}`;
+}
+
+/** Roll-up status for a tenant's open shares (worst actionable first). */
+function rollupSplitStatus(splits) {
+  const statuses = splits.map((s) => s.split_status);
+  if (statuses.some((s) => s === 'disputed')) return 'disputed';
+  if (statuses.some((s) => s === 'failed')) return 'failed';
+  if (statuses.some((s) => s === 'charging')) return 'charging';
+  if (statuses.every((s) => s === 'paid' || s === 'waived')) {
+    return statuses.some((s) => s === 'paid') ? 'paid' : 'waived';
+  }
+  if (statuses.some((s) => s === 'notified')) return 'notified';
+  if (statuses.some((s) => s === 'pending')) return 'pending';
+  return statuses[0] || 'pending';
+}
+
+/** One card per tenant — nest service/period lines instead of ledger rows. */
+function groupBalancesByTenant(rows) {
+  const map = new Map();
+  for (const r of rows || []) {
+    const key = r.tenant_id || r.email || r.split_id;
+    if (!map.has(key)) {
+      map.set(key, {
+        tenant_id: r.tenant_id,
+        first_name: r.first_name,
+        last_name: r.last_name,
+        email: r.email,
+        unit_number: r.unit_number,
+        splits: [],
+      });
+    }
+    const t = map.get(key);
+    if (!t.unit_number && r.unit_number) t.unit_number = r.unit_number;
+    t.splits.push(r);
+  }
+
+  return [...map.values()].map((t) => {
+    const openSplits = t.splits.filter((s) => !['paid', 'waived'].includes(s.split_status));
+    const amountFocus = openSplits.length ? openSplits : t.splits;
+    const total = amountFocus.reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
+    const maxDays = t.splits.reduce((m, s) => Math.max(m, Number(s.days_open) || 0), 0);
+    return {
+      ...t,
+      total,
+      openCount: openSplits.length,
+      maxDaysOpen: maxDays || null,
+      rollupStatus: rollupSplitStatus(t.splits),
+    };
+  }).sort((a, b) => {
+    const an = `${a.last_name || ''} ${a.first_name || ''}`.trim();
+    const bn = `${b.last_name || ''} ${b.first_name || ''}`.trim();
+    return an.localeCompare(bn);
+  });
+}
+
+function TenantBalanceCard({ tenant, selectedBillId, onOpenBill }) {
+  const name = `${tenant.first_name || ''} ${tenant.last_name || ''}`.trim() || tenant.email;
+  const meta = SPLIT_STATUS_META[tenant.rollupStatus];
+  const hasSelected = tenant.splits.some((s) => s.bill_id === selectedBillId);
+
+  return (
+    <article
+      className={`rounded-xl border bg-white p-4 shadow-sm transition ${
+        hasSelected ? 'border-indigo-300 ring-1 ring-indigo-200' : 'border-slate-200'
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-semibold text-slate-900 truncate">{name}</p>
+          <p className="text-xs text-slate-500 truncate">
+            {tenant.unit_number ? `Unit ${tenant.unit_number}` : '—'}
+            {tenant.email ? ` · ${tenant.email}` : ''}
+          </p>
+        </div>
+        <Badge meta={meta} fallback={tenant.rollupStatus} />
+      </div>
+
+      <div className="mt-3 flex items-end justify-between gap-2">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+            {tenant.openCount ? 'Open total' : 'Total'}
+          </p>
+          <p className="text-2xl font-bold tabular-nums text-slate-900">{fmtMoney(tenant.total)}</p>
+        </div>
+        <p className="text-xs text-slate-500 tabular-nums">
+          {tenant.splits.length} share{tenant.splits.length === 1 ? '' : 's'}
+          {tenant.maxDaysOpen != null ? ` · ${tenant.maxDaysOpen}d open` : ''}
+        </p>
+      </div>
+
+      <ul className="mt-3 divide-y divide-slate-100 rounded-lg border border-slate-100 bg-slate-50/60">
+        {tenant.splits.map((s) => (
+          <li key={s.split_id}>
+            <button
+              type="button"
+              onClick={() => onOpenBill(s.bill_id)}
+              className={`flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-white ${
+                selectedBillId === s.bill_id ? 'bg-indigo-50' : ''
+              }`}
+            >
+              <span className="inline-flex shrink-0 text-slate-500">
+                <ServiceGlyph type={s.service_type} size={16} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium capitalize text-slate-800">
+                  {SERVICE_LABEL[s.service_type] || s.service_type}
+                </span>
+                <span className="block text-[11px] text-slate-500">
+                  {fmtPeriodRange(s.period_start, s.period_end)}
+                  {' · '}
+                  {SPLIT_STATUS_META[s.split_status]?.label || s.split_status}
+                </span>
+              </span>
+              <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-900">
+                {fmtMoney(s.amount)}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </article>
+  );
 }
 
 /** Build a readable calculate-splits result for the status banner. */
@@ -802,6 +923,10 @@ export default function UtilitiesPage() {
   }
 
   const draftCount = bills.filter((b) => b.status === 'draft').length;
+  const tenantCards = useMemo(
+    () => groupBalancesByTenant(balances.rows),
+    [balances.rows],
+  );
   const headerActions = (
     <>
       {gmail.connected && (
@@ -821,10 +946,6 @@ export default function UtilitiesPage() {
       </button>
     </>
   );
-
-  function tenantName(row) {
-    return `${row.first_name || ''} ${row.last_name || ''}`.trim() || row.email;
-  }
 
   return (
     <div className="space-y-6">
@@ -853,12 +974,14 @@ export default function UtilitiesPage() {
         </div>
       </div>
 
-      {/* Balances board */}
+      {/* Balances — one card per tenant */}
       <div className="space-y-3">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold text-slate-900">Balances</h2>
-            <p className="text-xs text-slate-500">Who owes what — auto-refreshes while this tab is open.</p>
+            <p className="text-xs text-slate-500">
+              One card per tenant — shares nested inside. Auto-refreshes while this tab is open.
+            </p>
           </div>
           <div className="scroll-x-touch max-w-full rounded-lg border border-gray-200">
             <div className="flex w-max min-w-full text-sm">
@@ -883,47 +1006,22 @@ export default function UtilitiesPage() {
           <div className="flex items-center justify-center h-40">
             <div className="animate-spin w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent" />
           </div>
-        ) : !balances.rows?.length ? (
+        ) : !tenantCards.length ? (
           <div className="rounded-xl border border-dashed border-gray-300 bg-white p-10 text-center">
-            <p className="font-medium text-gray-700">No rows for this filter</p>
+            <p className="font-medium text-gray-700">No tenants for this filter</p>
             <p className="text-sm text-gray-400 mt-1">Import bills or switch filters. Draft bills appear after notify.</p>
           </div>
         ) : (
-          <TableScroll className="bg-white rounded-xl border border-gray-200 portal-table">
-            <table className="w-full text-sm min-w-[40rem]">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  {['Tenant', 'Unit', 'Service', 'Period', 'Amount', 'Status', 'Days open', ''].map((h) => (
-                    <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {balances.rows.map((r) => (
-                  <tr
-                    key={r.split_id}
-                    onClick={() => setSelectedId(r.bill_id)}
-                    className={`hover:bg-gray-50 cursor-pointer ${selectedId === r.bill_id ? 'bg-indigo-50' : ''}`}
-                  >
-                    <td className="px-4 py-3">
-                      <p className="font-medium text-gray-900">{tenantName(r)}</p>
-                      <p className="text-xs text-gray-400 truncate max-w-[10rem]">{r.email}</p>
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">{r.unit_number || '—'}</td>
-                    <td className="px-4 py-3 capitalize text-gray-700">
-                      <span className="mr-1.5 inline-flex align-middle text-slate-500"><ServiceGlyph type={r.service_type} size={16} /></span>
-                      {r.service_type}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{fmt(r.period_start)} – {fmt(r.period_end)}</td>
-                    <td className="px-4 py-3 font-semibold tabular-nums text-gray-900">{fmtMoney(r.amount)}</td>
-                    <td className="px-4 py-3"><Badge meta={SPLIT_STATUS_META[r.split_status]} fallback={r.split_status} /></td>
-                    <td className="px-4 py-3 tabular-nums text-gray-600">{r.days_open != null ? r.days_open : '—'}</td>
-                    <td className="px-4 py-3 text-right text-xs text-indigo-600 font-medium">Open</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableScroll>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {tenantCards.map((t) => (
+              <TenantBalanceCard
+                key={t.tenant_id || t.email}
+                tenant={t}
+                selectedBillId={selectedId}
+                onOpenBill={setSelectedId}
+              />
+            ))}
+          </div>
         )}
       </div>
 
