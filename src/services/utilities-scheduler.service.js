@@ -50,11 +50,15 @@ async function runUtilitiesSync({ force = false } = {}) {
 
     const actor = await resolveGmailActor();
     if (!actor) {
-      // Still run reminders if Gmail missing (existing notified bills)
+      // No Gmail actor → skip import/notify. Reminders still gated by auto-notify flag
+      // so we don't ping tenants while UTILITIES_AUTO_NOTIFY_ENABLED is off.
       const {
+        autoNotifyEnabled,
         sendUtilityReminders,
       } = require('./utility-comms.service');
-      const reminders = await sendUtilityReminders();
+      const reminders = !autoNotifyEnabled()
+        ? { reminded3: 0, reminded7: 0, overdueStaff: 0, disabled: true }
+        : await sendUtilityReminders();
       return { skipped: false, reason: 'no_gmail', import: null, reminders };
     }
 
@@ -104,12 +108,17 @@ async function runUtilitiesSync({ force = false } = {}) {
       role: actor.role,
     });
 
-    const reminders = await sendUtilityReminders();
+    // Reminders only for already-notified bills; skip entirely while auto-notify is off
+    // so we don't ping tenants after an accidental notify + rollback.
+    const reminders = notify.disabled
+      ? { reminded3: 0, reminded7: 0, overdueStaff: 0, disabled: true }
+      : await sendUtilityReminders();
 
     console.log(
       `[utilities-sync] org=${actor.org_id} ` +
         `import=${imported?.created ?? imported?.imported ?? 0} ` +
-        `notify=${notify.notified} remind3=${reminders.reminded3} remind7=${reminders.reminded7}`
+        `notify=${notify.disabled ? 'DISABLED' : notify.notified} ` +
+        `remind3=${reminders.reminded3} remind7=${reminders.reminded7}`
     );
 
     return {
