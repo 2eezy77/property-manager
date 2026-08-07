@@ -42,6 +42,7 @@
     "utilities:unnotify:apply": "APPLY=1 node scripts/unnotify-utility-bills.js",
     "utilities:ensure-cycles": "node scripts/ensure-utility-cycles.js",
     "test:uc10-combine": "node scripts/test-uc10-combine-periods.js",
+    "test:collectible-priority": "node scripts/test-collectible-provider-priority.js",
     "utilities:recalc-splits": "node scripts/recalculate-utility-splits.js",
     "utilities:recalc-splits:apply": "node scripts/recalculate-utility-splits.js --apply",
     "import:mortgage": "node scripts/import-mortgage-statements.js",

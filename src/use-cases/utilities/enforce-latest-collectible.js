@@ -1,12 +1,18 @@
 /**
- * Only the newest bill per property + service_type may be collectible by tenants.
- * Older bills are settled; non-paid splits are waived (historical / owner resolved).
+ * Only one bill per property + service_type may be collectible by tenants.
+ * Prefer real provider cycles (mid-month HRSD/Dominion) over calendar-month
+ * phantoms from Gmail emails that lacked a billing period — otherwise an
+ * Aug 1–31 snap (period_end later) wrongly supersedes a Jun 6–Jul 9 HRSD cycle.
+ * Older / phantom bills are settled; non-paid splits are waived.
  */
 
 const { loadActiveLeases, computeOccupancySplits } = require('./domain');
+const { pickLatestCollectibleBill, isCalendarMonthPeriod } = require('./period-utils');
 
 const OPEN_BILL_STATUSES = ['draft', 'notified', 'charging'];
 const RESOLVED_NOTE = 'Resolved — superseded by a newer bill or owner prepaid history';
+const CALENDAR_PHANTOM_NOTE =
+  'Resolved — calendar-month phantom superseded by provider service period bill';
 
 async function resolveOwnerId(client, propertyId) {
   const { rows } = await client.query(
@@ -33,11 +39,13 @@ async function waiveOpenSplits(client, billId, waivedBy) {
   return rowCount ?? 0;
 }
 
-async function settleBill(client, billId) {
+async function settleBill(client, billId, note = RESOLVED_NOTE) {
   await client.query(
     `UPDATE utility_bills
         SET status = 'settled',
             settled_at = COALESCE(settled_at, NOW()),
+            notified_at = NULL,
+            dispute_deadline_at = NULL,
             updated_at = NOW(),
             notes = CASE
               WHEN COALESCE(notes, '') = '' THEN $2
@@ -46,7 +54,7 @@ async function settleBill(client, billId) {
             END
       WHERE id = $1
         AND status NOT IN ('settled', 'cancelled')`,
-    [billId, RESOLVED_NOTE]
+    [billId, note]
   );
 }
 
@@ -135,20 +143,27 @@ async function enforceLatestCollectible(client, opts = {}) {
 
     const { rows: bills } = await client.query(
       `SELECT id, property_id, service_type, period_start, period_end,
-              total_amount, status, settled_at
+              total_amount, status, settled_at, created_at
          FROM utility_bills
         WHERE property_id = $1
           AND service_type = $2
-        ORDER BY period_end DESC, created_at DESC`,
+          AND status <> 'cancelled'`,
       [g.property_id, g.service_type]
     );
     if (!bills.length) continue;
 
-    const [latest, ...older] = bills;
+    const latest = pickLatestCollectibleBill(bills);
+    if (!latest) continue;
+    const older = bills.filter((b) => b.id !== latest.id);
 
     for (const bill of older) {
+      const phantomNote =
+        isCalendarMonthPeriod(bill.period_start, bill.period_end) &&
+        !isCalendarMonthPeriod(latest.period_start, latest.period_end)
+          ? CALENDAR_PHANTOM_NOTE
+          : RESOLVED_NOTE;
       if (!['settled', 'cancelled'].includes(bill.status)) {
-        await settleBill(client, bill.id);
+        await settleBill(client, bill.id, phantomNote);
         summary.settled_older += 1;
       }
       summary.splits_waived += await waiveOpenSplits(client, bill.id, waivedBy);
@@ -196,4 +211,6 @@ async function enforceLatestCollectible(client, opts = {}) {
 module.exports = {
   enforceLatestCollectible,
   RESOLVED_NOTE,
+  CALENDAR_PHANTOM_NOTE,
+  pickLatestCollectibleBill,
 };

@@ -16,39 +16,19 @@ const {
   maxDate,
   refreshBillSplits,
 } = require('./monthly-billing');
-
-function dayOnly(value) {
-  if (!value) return '';
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 10);
-  }
-  const s = String(value);
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  return s.slice(0, 10);
-}
-
-/** True when period exactly matches the calendar month of period_end. */
-function isCalendarMonthPeriod(periodStart, periodEnd) {
-  const end = dayOnly(periodEnd);
-  const start = dayOnly(periodStart);
-  const ym = billingMonth(end);
-  if (!ym || !start || !end) return false;
-  const bounds = calendarMonthBounds(ym);
-  if (!bounds) return false;
-  return start === bounds.start && end === bounds.end;
-}
-
-function groupHasProviderPeriod(bills) {
-  return bills.some((b) => !isCalendarMonthPeriod(b.period_start, b.period_end));
-}
+const {
+  dayOnly,
+  isCalendarMonthPeriod,
+  groupHasProviderPeriod,
+} = require('./period-utils');
 
 /** Prefer trusted electric Current Charges over Amount Due fallbacks when merging. */
 function pickMergeAmount(bills) {
   const electricTrusted = bills.filter(
     (b) => b.service_type === 'electric' && b.amount_source === 'current_charges'
   );
-  const pool = electricTrusted.length ? electricTrusted : bills;
-  return Math.max(...pool.map((b) => Number(b.tenant_charge_amount ?? b.total_amount) || 0));
+  const poolBills = electricTrusted.length ? electricTrusted : bills;
+  return Math.max(...poolBills.map((b) => Number(b.tenant_charge_amount ?? b.total_amount) || 0));
 }
 
 /** Prefer a bill that carries a real provider period as keeper. */
@@ -124,7 +104,6 @@ async function executeCombineMonthlyDrafts({ userId, role }) {
           removed += 1;
         }
 
-        // Only snap to calendar bounds when every draft was already a calendar default.
         const writeStart = preserveProvider ? periodStart : bounds.start;
         const writeEnd = preserveProvider ? periodEnd : bounds.end;
 
@@ -163,7 +142,6 @@ async function executeCombineMonthlyDrafts({ userId, role }) {
           preserved_provider_period: preserveProvider,
         });
       } else {
-        // Single draft: never rewrite a provider-parsed mid-month period to calendar bounds.
         const [bill] = bills;
         if (preserveProvider) {
           continue;
