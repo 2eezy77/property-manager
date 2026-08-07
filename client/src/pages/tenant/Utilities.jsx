@@ -131,6 +131,13 @@ function SplitRow({ split, onDispute }) {
       </div>
       <div className="flex-none text-right space-y-1">
         <p className="font-semibold tabular-nums text-slate-900">{fmt(split.amount)}</p>
+        {Number(split.utility_house_cover_per_tenant) > 0 && (
+          <p className="text-xs text-slate-500 mt-0.5 max-w-[10rem]">
+            {Number(split.amount) === 0
+              ? 'Fully covered by house this month'
+              : `Includes house utility allowance ($${Number(split.utility_house_cover_per_tenant).toFixed(0)}/tenant)`}
+          </p>
+        )}
         {canDispute && (
           <button
             type="button"

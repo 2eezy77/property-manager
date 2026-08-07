@@ -3,15 +3,12 @@
  */
 
 const {
-  computeSplitsForBill,
-  getBillSplitAmount,
-  loadActiveLeases,
+  refreshBillSplitsForBill,
 } = require('./domain');
+const { billingMonthKey } = require('./house-cover');
 
 function billingMonth(dateStr) {
-  if (!dateStr) return null;
-  const s = String(dateStr).slice(0, 10);
-  return s.length >= 7 ? s.slice(0, 7) : null;
+  return billingMonthKey(dateStr);
 }
 
 function calendarMonthBounds(ym) {
@@ -38,31 +35,22 @@ function monthLabel(ym) {
 }
 
 async function refreshBillSplits(client, bill, totalAmount) {
-  await client.query('DELETE FROM utility_bill_splits WHERE bill_id = $1', [bill.id]);
-  const leases = await loadActiveLeases(
-    client,
-    bill.property_id,
-    bill.period_start,
-    bill.period_end
-  );
-  const splitAmount = totalAmount ?? getBillSplitAmount(bill);
-  const splits = await computeSplitsForBill(client, {
-    propertyId: bill.property_id,
-    service_type: bill.service_type,
-    leases,
-    bill: { ...bill, tenant_charge_amount: splitAmount, total_amount: bill.total_amount },
-    splitAmount,
-    period_start: bill.period_start,
-    period_end: bill.period_end,
-  });
-  for (const s of splits) {
+  // If caller overrides total, sync tenant_charge_amount then month-refresh (house cover).
+  if (totalAmount != null) {
     await client.query(
-      `INSERT INTO utility_bill_splits (bill_id, lease_id, tenant_id, amount, status)
-       VALUES ($1,$2,$3,$4,'pending')`,
-      [bill.id, s.leaseId, s.tenantId, s.amount]
+      `UPDATE utility_bills
+          SET tenant_charge_amount = $2, updated_at = NOW()
+        WHERE id = $1`,
+      [bill.id, totalAmount]
     );
+    bill = { ...bill, tenant_charge_amount: totalAmount };
   }
-  return leases.length;
+  await refreshBillSplitsForBill(client, bill);
+  const { rows } = await client.query(
+    `SELECT COUNT(DISTINCT lease_id)::int AS n FROM utility_bill_splits WHERE bill_id = $1`,
+    [bill.id]
+  );
+  return rows[0]?.n || 0;
 }
 
 /**
@@ -206,22 +194,7 @@ async function upsertMonthlyDraft(client, {
     ]
   );
 
-  const splits = await computeSplitsForBill(client, {
-    propertyId,
-    service_type: parsed.service_type,
-    leases,
-    bill,
-    period_start: periodStart,
-    period_end: periodEnd,
-  });
-  for (const s of splits) {
-    await client.query(
-      `INSERT INTO utility_bill_splits (bill_id, lease_id, tenant_id, amount, status)
-       VALUES ($1,$2,$3,$4,'pending')`,
-      [bill.id, s.leaseId, s.tenantId, s.amount]
-    );
-  }
-
+  await refreshBillSplits(client, bill, electricMeta.tenant_charge_amount);
   return { bill, merged: false, billing_month: ym };
 }
 

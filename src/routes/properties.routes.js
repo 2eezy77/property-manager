@@ -142,7 +142,15 @@ router.patch('/:id', async (req, res) => {
   const allowed = [
     'name', 'address_line1', 'address_line2', 'city', 'state', 'zip', 'country',
     'dominion_account_number', 'norfolk_utilities_account_number',
+    'utility_house_cover_per_tenant',
   ];
+  if (Object.prototype.hasOwnProperty.call(req.body, 'utility_house_cover_per_tenant')) {
+    const v = Number(req.body.utility_house_cover_per_tenant);
+    if (!Number.isFinite(v) || v < 0) {
+      return res.status(400).json({ error: 'utility_house_cover_per_tenant must be a number ≥ 0' });
+    }
+    req.body.utility_house_cover_per_tenant = v;
+  }
   const updates = Object.entries(req.body).filter(([k]) => allowed.includes(k));
   if (!updates.length) return res.status(400).json({ error: 'No updatable fields' });
   try {
