@@ -270,13 +270,16 @@ app.listen(PORT, HOST, () => {
     const { scheduleDailyRentBilling } = require('./services/rent-billing.service');
     scheduleDailyRentBilling();
   }
-  if (process.env.CASHAPP_GMAIL_SYNC_ENABLED !== 'false') {
+  // Off-app Cash App Gmail import is retired (opt-in only via CASHAPP_GMAIL_SYNC_ENABLED=true).
+  if (process.env.CASHAPP_GMAIL_SYNC_ENABLED === 'true') {
     try {
       const { scheduleCashAppGmailSync } = require('./services/cashapp-gmail-scheduler.service');
       scheduleCashAppGmailSync();
     } catch (err) {
       console.warn('[cashapp-gmail-sync] scheduler not started:', err.message);
     }
+  } else {
+    console.log('[cashapp-gmail-sync] disabled (off-app Cash App import retired; portal Cash App Pay still available)');
   }
   if (process.env.UTILITIES_SYNC_ENABLED !== 'false') {
     try {

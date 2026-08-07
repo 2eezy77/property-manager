@@ -59,9 +59,22 @@ mustContain(
   'charging status shown as Processing in UI'
 );
 
+
+// Off-app Cash App Gmail sync UI retired
+mustNotContain(
+  'client/src/pages/manager/Payments.jsx',
+  ['Sync Cash App from Gmail', 'syncCashApp'],
+  'off-app Cash App Gmail sync must not appear in Manager Payments'
+);
+mustContain(
+  'src/services/cashapp-gmail-scheduler.service.js',
+  ["process.env.CASHAPP_GMAIL_SYNC_ENABLED === 'true'"],
+  'off-app Cash App Gmail sync must be opt-in (default off)'
+);
+
 // Cash App source labels before generic payment_method (Manager Payments)
 const paymentsSrc = read('client/src/pages/manager/Payments.jsx');
-const cashAppImportCheck = "if (p.source === 'cash_app_import') return 'Cash App (off-app)';";
+const cashAppImportCheck = "if (p.source === 'cash_app_import') return 'Cash App (archived off-app)';";
 const stripeCashAppCheck = "if (p.source === 'stripe_cashapp') return 'Cash App Pay';";
 const paymentMethodBranch = 'if (p.payment_method)';
 if (!paymentsSrc.includes(cashAppImportCheck)) {

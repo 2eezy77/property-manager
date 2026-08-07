@@ -21,7 +21,7 @@ function fmtPeriod(ts) {
 function fmtMoney(v) { return v != null ? '$'+Number(v).toLocaleString('en-US',{minimumFractionDigits:2}) : '—'; }
 
 function paymentMethodLabel(p) {
-  if (p.source === 'cash_app_import') return 'Cash App (off-app)';
+  if (p.source === 'cash_app_import') return 'Cash App (archived off-app)';
   if (p.source === 'stripe_cashapp') return 'Cash App Pay';
   if (p.payment_method) {
     const base = METHOD_LABEL[p.payment_method] || p.payment_method;
@@ -116,7 +116,6 @@ export default function ManagerPayments() {
   const [page, setPage]         = useState(1);
   const [hasMore, setHasMore]   = useState(false);
   const [runningBilling, setRunningBilling] = useState(false);
-  const [syncingCashApp, setSyncingCashApp] = useState(false);
   const [healthLoading, setHealthLoading] = useState(false);
   const [healthReport, setHealthReport] = useState(null);
   const [rentStatus, setRentStatus] = useState(null);
@@ -198,34 +197,10 @@ export default function ManagerPayments() {
     }
   }
 
-  async function syncCashApp() {
-    setSyncingCashApp(true);
-    try {
-      const { data } = await api.post('/api/payments/cashapp/sync-gmail', {}, { skipGlobalError: true });
-      const parts = [];
-      if (data.inserted != null) parts.push(`${data.inserted} imported`);
-      if (data.synced) parts.push(`${data.synced} updated`);
-      if (data.cleared) parts.push(`${data.cleared} replaced`);
-      showToast(
-        parts.length
-          ? `Cash App sync complete: ${parts.join(', ')} from ${data.paymentEmails} email(s).`
-          : `Cash App sync complete (${data.paymentEmails} email(s) scanned).`,
-        'success'
-      );
-      setPage(1);
-      load(1, false);
-      api.get('/api/payments/rent-status').then(({ data: rs }) => setRentStatus(rs)).catch(() => {});
-    } catch (err) {
-      showToast(apiErrorMessage(err, 'Cash App sync failed.'));
-    } finally {
-      setSyncingCashApp(false);
-    }
-  }
-
   return (
     <div className="space-y-6">
       <PageIntro
-        subtitle="Rent collection and payment history for your properties."
+        subtitle="Rent collection and payment history for your properties. Tenants pay in the portal (ACH, card, or Cash App Pay) — off-app Cash App is disabled."
         actions={
           <div className="flex flex-wrap gap-2">
             <button
@@ -244,17 +219,6 @@ export default function ManagerPayments() {
             >
               {healthLoading ? 'Checking…' : 'Payment health'}
             </button>
-            <div className="flex flex-col items-end gap-1">
-              <button
-                type="button"
-                onClick={syncCashApp}
-                disabled={syncingCashApp}
-                className="rounded-xl border border-emerald-200 bg-white px-4 py-2.5 text-sm font-semibold text-emerald-800 shadow-sm transition hover:bg-emerald-50 disabled:opacity-50"
-              >
-                {syncingCashApp ? 'Syncing Cash App…' : 'Sync Cash App from Gmail'}
-              </button>
-              <p className="text-xs text-slate-500">Safety net for off-app Cash App emails — prefer tenants pay in the portal.</p>
-            </div>
           </div>
         }
       />
@@ -309,7 +273,7 @@ export default function ManagerPayments() {
         <div className="rounded-xl border border-dashed border-gray-300 bg-white p-12 text-center">
           <div className="mb-3 flex justify-center text-slate-300"><Banknote size={40} strokeWidth={1.5} /></div>
           <p className="font-medium text-gray-700">No payments found</p>
-          <p className="text-sm text-gray-400 mt-1">Payments appear here after tenants pay through the portal (ACH or Cash App Pay).</p>
+          <p className="text-sm text-gray-400 mt-1">Payments appear here after tenants pay through the portal (ACH, card, or Cash App Pay).</p>
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-gray-200">

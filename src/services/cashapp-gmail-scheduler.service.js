@@ -8,8 +8,9 @@ const { syncCashAppFromGmail } = require('./cashapp-gmail.service');
 /** Stable int lock key for pg_try_advisory_lock (cashapp-gmail-sync). */
 const ADVISORY_LOCK_KEY = 742031517;
 
+/** Opt-in only — off-app Cash App Gmail import is retired (default off). */
 function syncEnabled() {
-  return process.env.CASHAPP_GMAIL_SYNC_ENABLED !== 'false';
+  return process.env.CASHAPP_GMAIL_SYNC_ENABLED === 'true';
 }
 
 function intervalMs() {
