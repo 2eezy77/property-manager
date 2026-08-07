@@ -40,7 +40,7 @@ const STATUS_META = {
   refunded:   { label:'Refunded',  color:'bg-gray-100 text-gray-500' },
 };
 
-const TYPE_LABEL = { rent:'Rent', late_fee:'Late Fee', security_deposit:'Security Deposit', other:'Other' };
+const TYPE_LABEL = { rent:'Rent', late_fee:'Late Fee', security_deposit:'Security Deposit', utility:'Utility', other:'Other' };
 
 const METHOD_LABEL = {
   cash_app: 'Cash App', check: 'Check', zelle: 'Zelle', venmo: 'Venmo',

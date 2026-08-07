@@ -46,6 +46,11 @@ const { getRentStatusRoster } = require('../services/rent-status.service');
 const { syncCashAppFromGmail } = require('../services/cashapp-gmail.service');
 const { runPaymentsHealth } = require('../services/payments-health.service');
 const { prepareTenantCharge, assertNoInFlightDeposit, cancelReplacedDepositPaymentIntent } = require('../services/rent-charge.service');
+const {
+  listOpenUtilitySplits,
+  summarizeOpenUtilities,
+  prepareUtilityPortalCharge,
+} = require('../services/utility-portal-charge.service');
 const { activateNativeLeaseAfterDeposit } = require('../services/native-lease-activate.service');
 const {
   computeCardCashAppFee,
@@ -60,7 +65,7 @@ const {
 } = require('../services/plaid-bank-link.service');
 
 const MANUAL_METHODS = new Set(['cash_app', 'check', 'zelle', 'venmo', 'wire', 'cash', 'other']);
-const CLIENT_INTENT_PAYMENT_TYPES = new Set(['rent', 'security_deposit']);
+const CLIENT_INTENT_PAYMENT_TYPES = new Set(['rent', 'security_deposit', 'utility']);
 
 async function accessiblePropertyIds(userId, role) {
   if (['super_admin', 'owner'].includes(role)) {
@@ -495,6 +500,11 @@ router.get('/balance', Guards.tenantOnly, async (req, res) => {
       };
     }
 
+    const openUtilitySplits = await listOpenUtilitySplits(pool, req.user.id, {
+      leaseId: lease.lease_id,
+    });
+    const utilitySummary = summarizeOpenUtilities(openUtilitySplits);
+
     res.json({
       lease: {
         id:           lease.lease_id,
@@ -522,6 +532,8 @@ router.get('/balance', Guards.tenantOnly, async (req, res) => {
       rentRemaining,
       paidThisMonth,
       totalDue: Math.round((rentRemaining + lateFeeBalance) * 100) / 100,
+      utilityDue: utilitySummary.utilityDue,
+      utilitySplits: utilitySummary.utilitySplits,
       cashAppPayAvailable: stripe.isCashAppPayConfigured(),
     });
   } catch (err) {
@@ -537,7 +549,7 @@ router.get('/balance', Guards.tenantOnly, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/charge', Guards.tenantOnly, async (req, res) => {
   if (blockManagerPaymentAccess(req, res)) return;
-  const { bankAccountId, leaseId, paymentType = 'rent', amount = null } = req.body;
+  const { bankAccountId, leaseId, paymentType = 'rent', amount = null, utilitySplitId = null } = req.body;
 
   if (!bankAccountId || !leaseId) {
     return res.status(400).json({ error: 'MISSING_PARAMS' });
@@ -574,17 +586,28 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
       });
     }
 
-    const prep = await prepareTenantCharge(client, {
-      tenantId: req.user.id,
-      leaseId,
-      paymentType,
-      bankAccountId,
-      amount: ['rent', 'security_deposit'].includes(paymentType) ? amount : null,
-      metadataExtra: {
-        payment_method: 'ach',
-        source: 'stripe_ach',
-      },
-    });
+    const prep = paymentType === 'utility'
+      ? await prepareUtilityPortalCharge(client, {
+        tenantId: req.user.id,
+        leaseId,
+        splitId: utilitySplitId || null,
+        bankAccountId,
+        metadataExtra: {
+          payment_method: 'ach',
+          source: 'stripe_ach',
+        },
+      })
+      : await prepareTenantCharge(client, {
+        tenantId: req.user.id,
+        leaseId,
+        paymentType,
+        bankAccountId,
+        amount: ['rent', 'security_deposit'].includes(paymentType) ? amount : null,
+        metadataExtra: {
+          payment_method: 'ach',
+          source: 'stripe_ach',
+        },
+      });
     const {
       payment,
       amountDollars,
@@ -593,6 +616,7 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
       chargeMeta,
       rentAmount = null,
       lateFeeAmount = null,
+      billIds = [],
     } = prep;
 
     // 6. Plaid Signal / Balance gates, then Stripe ACH debit
@@ -705,6 +729,15 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
       });
     }
 
+    if (localStatus === 'succeeded' && paymentType === 'utility') {
+      await client.query(
+        `UPDATE utility_bill_splits
+            SET status = 'paid', updated_at = NOW()
+          WHERE payment_id = $1`,
+        [payment.id]
+      );
+    }
+
     if (localStatus === 'succeeded' && paymentType === 'security_deposit') {
       const { applyDepositCredit } = require('../services/security-deposit-partial.service');
       const isInstallment = chargeMeta.partial_installment === true;
@@ -732,6 +765,15 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
     }
 
     await client.query('COMMIT');
+
+    if (localStatus === 'succeeded' && paymentType === 'utility' && billIds.length) {
+      const { maybeSettleBill } = require('../use-cases/utilities');
+      for (const billId of billIds) {
+        await maybeSettleBill(pool, billId).catch((e) =>
+          console.error('[payments/charge] settle utility bill', billId, e.message)
+        );
+      }
+    }
 
     if (localStatus === 'succeeded') {
       settleSuccessfulRentPayment(pool, {
@@ -815,12 +857,12 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
     });
   }
 
-  const { leaseId, paymentType = 'rent', amount = null } = req.body;
+  const { leaseId, paymentType = 'rent', amount = null, utilitySplitId = null } = req.body;
   if (!leaseId) return res.status(400).json({ error: 'MISSING_PARAMS' });
   if (!CLIENT_INTENT_PAYMENT_TYPES.has(paymentType)) {
     return res.status(400).json({
       error: 'UNSUPPORTED_TYPE',
-      message: 'Cash App Pay is available for rent and security deposits.',
+      message: 'Cash App Pay is available for rent, security deposits, and utilities.',
     });
   }
 
@@ -828,17 +870,28 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const prep = await prepareTenantCharge(client, {
-      tenantId: req.user.id,
-      leaseId,
-      paymentType,
-      bankAccountId: null,
-      amount: ['rent', 'security_deposit'].includes(paymentType) ? amount : null,
-      metadataExtra: {
-        payment_method: 'cash_app',
-        source: 'stripe_cashapp',
-      },
-    });
+    const prep = paymentType === 'utility'
+      ? await prepareUtilityPortalCharge(client, {
+        tenantId: req.user.id,
+        leaseId,
+        splitId: utilitySplitId || null,
+        bankAccountId: null,
+        metadataExtra: {
+          payment_method: 'cash_app',
+          source: 'stripe_cashapp',
+        },
+      })
+      : await prepareTenantCharge(client, {
+        tenantId: req.user.id,
+        leaseId,
+        paymentType,
+        bankAccountId: null,
+        amount: ['rent', 'security_deposit'].includes(paymentType) ? amount : null,
+        metadataExtra: {
+          payment_method: 'cash_app',
+          source: 'stripe_cashapp',
+        },
+      });
 
     const { rows: [userRow] } = await client.query(
       `SELECT first_name, last_name, email FROM users WHERE id = $1`,
@@ -957,7 +1010,7 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
 router.post('/card/create-intent', Guards.tenantOnly, async (req, res) => {
   if (blockManagerPaymentAccess(req, res)) return;
 
-  const { leaseId, paymentType = 'rent', amount = null, includeFirstMonth = false } = req.body;
+  const { leaseId, paymentType = 'rent', amount = null, includeFirstMonth = false, utilitySplitId = null } = req.body;
   if (!leaseId) return res.status(400).json({ error: 'MISSING_PARAMS' });
   if (!CLIENT_INTENT_PAYMENT_TYPES.has(paymentType)) {
     return res.status(400).json({ error: 'UNSUPPORTED_TYPE' });
@@ -973,18 +1026,29 @@ router.post('/card/create-intent', Guards.tenantOnly, async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const prep = await prepareTenantCharge(client, {
-      tenantId: req.user.id,
-      leaseId,
-      paymentType,
-      bankAccountId: null,
-      amount: ['rent', 'security_deposit'].includes(paymentType) ? amount : null,
-      metadataExtra: {
-        payment_method: 'card',
-        source: 'stripe_card',
-        ...(includeFirstMonth ? { include_first_month: 'true' } : {}),
-      },
-    });
+    const prep = paymentType === 'utility'
+      ? await prepareUtilityPortalCharge(client, {
+        tenantId: req.user.id,
+        leaseId,
+        splitId: utilitySplitId || null,
+        bankAccountId: null,
+        metadataExtra: {
+          payment_method: 'card',
+          source: 'stripe_card',
+        },
+      })
+      : await prepareTenantCharge(client, {
+        tenantId: req.user.id,
+        leaseId,
+        paymentType,
+        bankAccountId: null,
+        amount: ['rent', 'security_deposit'].includes(paymentType) ? amount : null,
+        metadataExtra: {
+          payment_method: 'card',
+          source: 'stripe_card',
+          ...(includeFirstMonth ? { include_first_month: 'true' } : {}),
+        },
+      });
 
     let amountDollars = prep.amountDollars;
     let amountCents = prep.amountCents;

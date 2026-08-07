@@ -256,6 +256,7 @@ export default function PaymentsPage() {
   const [rentAmountInput, setRentAmountInput] = useState('');
   const [cashAppPayType, setCashAppPayType] = useState('rent');
   const [payLoading,    setPayLoading]    = useState(false);
+  const [utilityPayLoading, setUtilityPayLoading] = useState(false);
   const [payResult,     setPayResult]     = useState(null);  // { success, message }
   const [histPage,      setHistPage]      = useState(1);
   const [connectingBank, setConnectingBank] = useState(false);
@@ -601,6 +602,31 @@ export default function PaymentsPage() {
     }
   }
 
+  async function handleUtilityAchPay() {
+    if (!selectedAcct || !balance?.lease) return;
+    setUtilityPayLoading(true);
+    setPayResult(null);
+    try {
+      await api.post('/api/payments/charge', {
+        bankAccountId: selectedAcct.id,
+        leaseId: balance.lease.id,
+        paymentType: 'utility',
+      });
+      setPayResult({
+        success: true,
+        message: 'Utility payment submitted! ACH transfers settle in 4–5 business days.',
+      });
+      await load(1);
+    } catch (err) {
+      setPayResult({
+        success: false,
+        message: apiErrorMessage(err, 'Utility payment failed. Please try again.'),
+      });
+    } finally {
+      setUtilityPayLoading(false);
+    }
+  }
+
   async function startCardPayment(paymentType) {
     if (!balance?.lease) return;
     let amount;
@@ -640,16 +666,20 @@ export default function PaymentsPage() {
   }
 
   async function handleCardSuccess(paymentIntent) {
-    const isDeposit = cardIntent?.paymentType === 'security_deposit';
+    const kind = cardIntent?.paymentType === 'security_deposit'
+      ? 'Security deposit'
+      : cardIntent?.paymentType === 'utility'
+        ? 'Utility payment'
+        : 'Card payment';
     setCardIntent(null);
     setShowPayFlow(false);
     setPayResult({
       success: true,
       message: paymentIntent?.status === 'processing'
-        ? `${isDeposit ? 'Security deposit' : 'Card payment'} submitted — confirmation may take a moment.`
-        : `${isDeposit ? 'Security deposit' : 'Card payment'} confirmed. We will update your balance shortly.`,
+        ? `${kind} submitted — confirmation may take a moment.`
+        : `${kind} confirmed. We will update your balance shortly.`,
     });
-    showToast(`${isDeposit ? 'Security deposit' : 'Card payment'} submitted.`, 'success');
+    showToast(`${kind} submitted.`, 'success');
     notifyCheckinRefresh();
     await load(1);
   }
@@ -719,6 +749,9 @@ export default function PaymentsPage() {
   );
   const noBankLinked = verifiedAccounts.length === 0;
   const rentDue = balance?.lease?.status === 'active' && Number(balance?.totalDue || 0) > 0;
+  const utilityDueAmount = Number(balance?.utilityDue || 0);
+  const utilityDue = !managerPreview && utilityDueAmount > 0.009 && !!balance?.lease;
+  const utilitySplits = Array.isArray(balance?.utilitySplits) ? balance.utilitySplits : [];
   const depositDue = !managerPreview && balance?.securityDepositPayment;
   const depositRemaining = Number(
     balance?.securityDepositPayment?.remaining
@@ -870,6 +903,24 @@ export default function PaymentsPage() {
         </button>
       )}
 
+      {utilityDue && !showPayFlow && (
+        <button
+          type="button"
+          onClick={() => { setShowPayFlow(true); setCardIntent(null); setPayResult(null); }}
+          className="portal-card hover-lift flex w-full items-center justify-between gap-3 border border-amber-200 px-4 py-3 text-left ring-1 ring-amber-100"
+        >
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Utilities due — pay in the portal</p>
+            <p className="text-xs text-slate-500">
+              {fmt(utilityDueAmount)} open
+              {utilitySplits.length > 1 ? ` across ${utilitySplits.length} shares` : ''}
+              {' · '}ACH (no fee), card, or Cash App
+            </p>
+          </div>
+          <span className="shrink-0 text-sm font-semibold text-amber-800">Pay →</span>
+        </button>
+      )}
+
       {!managerPreview && showPayFlow && (
         <section aria-labelledby="pay-flow-heading" className="portal-card space-y-4 p-5">
           <div className="flex items-center justify-between">
@@ -881,7 +932,20 @@ export default function PaymentsPage() {
             Preferred: bank ACH — no processing fee (Autopay also waives late fees).
             Card and Cash App include a 2.9% + $0.30 processing fee.
             Rent and security deposits can be paid in full or bit by bit.
+            Open utility shares are paid in full in one charge.
           </p>
+
+          {utilityDue && (
+            <div className="space-y-1 rounded-xl border border-amber-100 bg-amber-50/60 p-4">
+              <p className="text-sm font-semibold text-slate-900">Utilities due</p>
+              <p className="text-xs text-slate-600">
+                {fmt(utilityDueAmount)} total
+                {utilitySplits.length
+                  ? ` — ${utilitySplits.map((s) => `${s.serviceType || 'utility'} ${fmt(s.amount)}`).join(', ')}`
+                  : ''}
+              </p>
+            </div>
+          )}
 
           {rentDue && (
             <div className="space-y-2 rounded-xl border border-blue-100 bg-blue-50/60 p-4">
@@ -968,7 +1032,7 @@ export default function PaymentsPage() {
             </div>
           )}
 
-          {(rentDue || depositDue) && (
+          {(rentDue || depositDue || utilityDue) && (
             <div className="space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
               <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <CreditCard size={16} aria-hidden />
@@ -999,6 +1063,18 @@ export default function PaymentsPage() {
                       : `Pay deposit ${fmt(estimateCardCashAppTotal(depositPayAmount).totalAmount)} with Card`}
                   </button>
                 )}
+                {utilityDue && (
+                  <button
+                    type="button"
+                    onClick={() => startCardPayment('utility')}
+                    disabled={!!cardLoadingType}
+                    className="rounded-xl border border-amber-300 bg-white py-2.5 text-sm font-semibold text-amber-900 hover:bg-amber-50 disabled:opacity-50"
+                  >
+                    {cardLoadingType === 'utility'
+                      ? 'Preparing card form…'
+                      : `Pay utilities ${fmt(estimateCardCashAppTotal(utilityDueAmount).totalAmount)} with Card`}
+                  </button>
+                )}
               </div>
               {cardIntent && (
                 <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
@@ -1024,7 +1100,7 @@ export default function PaymentsPage() {
             </div>
           )}
 
-          {cashAppAvailable && (rentDue || depositDue) && (
+          {cashAppAvailable && (rentDue || depositDue || utilityDue) && (
             <div className="space-y-2">
               {rentDue && (
                 <>
@@ -1058,13 +1134,25 @@ export default function PaymentsPage() {
                     : `Pay deposit ${fmt(estimateCardCashAppTotal(depositPayAmount).totalAmount)} with Cash App`}
                 </button>
               )}
+              {utilityDue && (
+                <button
+                  type="button"
+                  onClick={() => handleCashAppPay('utility')}
+                  disabled={cashAppLoading}
+                  className="w-full rounded-xl border border-[#00D632] bg-white py-2.5 text-sm font-bold text-[#008c22] hover:bg-emerald-50 disabled:opacity-50"
+                >
+                  {cashAppLoading && cashAppPayType === 'utility'
+                    ? 'Opening Cash App…'
+                    : `Pay utilities ${fmt(estimateCardCashAppTotal(utilityDueAmount).totalAmount)} with Cash App`}
+                </button>
+              )}
             </div>
           )}
 
           {verifiedAccounts.length === 0 ? (
             <p className="text-sm text-slate-500">
               Connect a bank below for ACH and Autopay
-              {rentDue || depositDue ? ' — or use card above.' : '.'}
+              {rentDue || depositDue || utilityDue ? ' — or use card above.' : '.'}
             </p>
           ) : (
             <div className="space-y-2">
@@ -1098,6 +1186,18 @@ export default function PaymentsPage() {
                   className="w-full rounded-xl border border-violet-300 bg-violet-50 py-2.5 text-sm font-semibold text-violet-900 hover:bg-violet-100 transition-colors"
                 >
                   Pay deposit ({fmt(depositPayAmount)}) by ACH
+                </button>
+              )}
+              {utilityDue && (
+                <button
+                  type="button"
+                  onClick={handleUtilityAchPay}
+                  disabled={utilityPayLoading}
+                  className="w-full rounded-xl border border-amber-300 bg-amber-50 py-2.5 text-sm font-semibold text-amber-900 hover:bg-amber-100 transition-colors disabled:opacity-50"
+                >
+                  {utilityPayLoading
+                    ? 'Submitting…'
+                    : `Pay utilities (${fmt(utilityDueAmount)}) by ACH`}
                 </button>
               )}
             </div>
@@ -1280,7 +1380,9 @@ export default function PaymentsPage() {
                     return (
                       <tr key={p.id} className="transition-colors hover:bg-slate-50">
                         <td className="whitespace-nowrap px-4 py-3 font-medium capitalize text-slate-900">
-                          {p.payment_type.replace('_', ' ')}
+                          {p.payment_type === 'utility'
+                            ? 'utility'
+                            : p.payment_type.replace('_', ' ')}
                           {p.period_start && (
                             <span className="ml-1.5 text-xs font-normal text-slate-400">
                               {new Date(p.period_start).toLocaleString('en-US', { month: 'short', year: 'numeric' })}

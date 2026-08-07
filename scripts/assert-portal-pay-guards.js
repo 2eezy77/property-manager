@@ -94,6 +94,28 @@ if (importIdx === -1 || stripeIdx === -1 || methodIdx === -1) {
   );
 }
 
+// Portal utility pay: link splits → payments.payment_type = utility (not landlord ACH)
+mustContain(
+  'src/services/utility-portal-charge.service.js',
+  ["payment_type", "'utility'", 'prepareUtilityPortalCharge', 'listOpenUtilitySplits'],
+  'utility portal charge service must create utility payments linked to splits'
+);
+mustContain(
+  'src/routes/payments.routes.js',
+  ["'utility'", 'utilityDue', 'prepareUtilityPortalCharge'],
+  'balance/charge intents must support utility portal pay'
+);
+mustContain(
+  'client/src/pages/tenant/Payments.jsx',
+  ['utilityDue', "paymentType: 'utility'", 'handleUtilityAchPay'],
+  'tenant Payments must surface utility portal pay'
+);
+mustContain(
+  'client/src/pages/manager/Payments.jsx',
+  ["utility:'Utility'"],
+  'manager Payments must label utility payment type'
+);
+
 if (failures.length) {
   console.error('assert:portal-pay FAILED:\n' + failures.map((f) => `  - ${f}`).join('\n'));
   process.exit(1);
