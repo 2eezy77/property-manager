@@ -63,8 +63,9 @@ const METHOD_LABEL = {
 
 function paymentSourceLabel(p) {
   if (p.payment_method) return METHOD_LABEL[p.payment_method] || p.payment_method;
-  if (p.metadata?.source === 'cash_app_import' || p.metadata?.source === 'stripe_cashapp') return 'Cash App';
-  if (p.metadata?.payment_method === 'cash_app') return 'Cash App';
+  if (p.metadata?.source === 'cash_app_import') return 'Cash App (archived off-app)';
+  if (p.metadata?.source === 'stripe_cashapp') return 'Cash App Pay';
+  if (p.metadata?.payment_method === 'cash_app') return 'Cash App Pay';
   if (p.metadata?.source === 'stripe_card' || p.metadata?.payment_method === 'card') return 'Card';
   if (p.institution_name) return `${p.institution_name} ····${p.account_mask || ''}`.trim();
   return 'Bank (ACH)';

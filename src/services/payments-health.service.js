@@ -147,20 +147,20 @@ function checkEnv(checks) {
     checks.push(check('env.rent_billing', 'env', 'pass', `Rent billing scheduler on (hour ${process.env.RENT_BILLING_HOUR ?? 8})`));
   }
 
-  if (process.env.CASHAPP_GMAIL_SYNC_ENABLED === 'false') {
-    checks.push(check(
-      'env.cashapp_gmail_sync',
-      'env',
-      'warn',
-      'CASHAPP_GMAIL_SYNC_ENABLED=false — off-app Cash App Gmail import will not auto-run'
-    ));
-  } else {
+  if (process.env.CASHAPP_GMAIL_SYNC_ENABLED === 'true') {
     const mins = process.env.CASHAPP_GMAIL_SYNC_MINUTES ?? 15;
     checks.push(check(
       'env.cashapp_gmail_sync',
       'env',
       'pass',
-      `Cash App Gmail auto-import every ${mins}m (advisory-locked)`
+      `Off-app Cash App Gmail import enabled every ${mins}m (advisory-locked)`
+    ));
+  } else {
+    checks.push(check(
+      'env.cashapp_gmail_sync',
+      'env',
+      'pass',
+      'Off-app Cash App Gmail import disabled (portal ACH / card / Cash App Pay only)'
     ));
   }
 
