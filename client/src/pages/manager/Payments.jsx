@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Banknote, Clock, AlertTriangle, CheckCircle2, XCircle,
+  Banknote, Clock, AlertTriangle, CheckCircle2, XCircle, ChevronDown,
 } from 'lucide-react';
 import api from '@/api/axios';
 import StatCard from '@/components/ui/StatCard';
@@ -46,6 +46,51 @@ const METHOD_LABEL = {
   cash_app: 'Cash App', check: 'Check', zelle: 'Zelle', venmo: 'Venmo',
   wire: 'Wire', cash: 'Cash', other: 'Other',
 };
+
+function monthKeyFromDate(ts) {
+  if (!ts) return null;
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function currentMonthKey() {
+  return monthKeyFromDate(new Date());
+}
+
+function monthLabelFromKey(key) {
+  if (!key || key === 'unknown') return 'Unknown period';
+  const [y, m] = key.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
+/** Prefer billing period_start so rent lands in the right month section. */
+function paymentMonthKey(p) {
+  return monthKeyFromDate(p.period_start) || monthKeyFromDate(p.paid_at) || monthKeyFromDate(p.created_at) || 'unknown';
+}
+
+function groupPaymentsByMonth(rows) {
+  const map = new Map();
+  for (const p of rows || []) {
+    const key = paymentMonthKey(p);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(p);
+  }
+  return [...map.entries()]
+    .sort(([a], [b]) => (a < b ? 1 : a > b ? -1 : 0))
+    .map(([key, payments]) => {
+      const succeeded = payments.filter((p) => p.status === 'succeeded');
+      const collected = succeeded.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+      return {
+        key,
+        label: monthLabelFromKey(key),
+        payments,
+        count: payments.length,
+        collected,
+        isCurrent: key === currentMonthKey(),
+      };
+    });
+}
 
 const HEALTH_ICON = { pass: CheckCircle2, warn: AlertTriangle, fail: XCircle };
 function healthGlyph(status) {
@@ -104,6 +149,116 @@ function PaymentHealthPanel({ report, onClose }) {
   );
 }
 
+function PaymentRow({ p }) {
+  const meta = STATUS_META[p.status] || { label: p.status, color: 'bg-gray-100 text-gray-500' };
+  const method = paymentMethodLabel(p);
+  return (
+    <tr className="hover:bg-gray-50 transition-colors">
+      <td className="px-4 py-3">
+        <p className="font-medium text-gray-800">{p.tenant_name}</p>
+        <p className="text-xs text-gray-400">{p.tenant_email}</p>
+      </td>
+      <td className="px-4 py-3 text-gray-500">
+        {p.property_name}<br /><span className="text-xs">Unit {p.unit_number}</span>
+      </td>
+      <td className="px-4 py-3 font-semibold text-gray-800">{fmtMoney(p.amount)}</td>
+      <td className="px-4 py-3 text-gray-500">{TYPE_LABEL[p.payment_type] || p.payment_type}</td>
+      <td className="px-4 py-3 text-gray-500">
+        <p>{method}</p>
+        {p.external_reference && (
+          <p className="text-xs text-gray-400 mt-0.5 truncate max-w-[12rem]" title={p.external_reference}>{p.external_reference}</p>
+        )}
+      </td>
+      <td className="px-4 py-3">
+        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${meta.color}`}>{meta.label}</span>
+        {p.status === 'processing' && (
+          <p className="mt-0.5 text-xs text-blue-600">ACH settling</p>
+        )}
+        {p.status === 'failed' && p.failure_reason && (
+          <p
+            className="mt-0.5 text-xs text-red-500 max-w-[12rem] truncate"
+            title={p.failure_reason}
+          >
+            {/customer declined/i.test(p.failure_reason)
+              ? 'Cancelled before finish'
+              : /superseded|duplicate import/i.test(p.failure_reason)
+                ? 'Replaced / duplicate'
+                : p.failure_reason}
+          </p>
+        )}
+      </td>
+      <td className="px-4 py-3 text-xs text-gray-400">{fmtPeriod(p.period_start)}</td>
+      <td className="px-4 py-3 text-xs text-gray-400">{fmt(p.paid_at || p.created_at)}</td>
+    </tr>
+  );
+}
+
+function MonthPaymentsTable({ payments }) {
+  return (
+    <TableScroll className="portal-table">
+      <table className="w-full min-w-[44rem] text-sm">
+        <thead className="bg-gray-50 border-b border-gray-200">
+          <tr>
+            {['Tenant', 'Property', 'Amount', 'Type', 'Method', 'Status', 'Period', 'Date'].map((h) => (
+              <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {payments.map((p) => (
+            <PaymentRow key={p.id} p={p} />
+          ))}
+        </tbody>
+      </table>
+    </TableScroll>
+  );
+}
+
+function MonthSection({ month, expanded, onToggle }) {
+  return (
+    <section
+      className={`rounded-xl border bg-white overflow-hidden ${
+        month.isCurrent ? 'border-indigo-200 shadow-sm' : 'border-gray-200'
+      }`}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition ${
+          month.isCurrent ? 'bg-indigo-50/60' : 'bg-slate-50/80 hover:bg-slate-50'
+        }`}
+        aria-expanded={expanded}
+      >
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold text-slate-900">{month.label}</h3>
+            {month.isCurrent && (
+              <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+                Current
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 text-xs text-slate-500">
+            {month.count} payment{month.count === 1 ? '' : 's'}
+            {' · '}
+            {fmtMoney(month.collected)} succeeded
+          </p>
+        </div>
+        <ChevronDown
+          size={18}
+          strokeWidth={2}
+          className={`shrink-0 text-slate-400 transition-transform ${expanded ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {expanded && (
+        <div className="border-t border-gray-100">
+          <MonthPaymentsTable payments={month.payments} />
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function ManagerPayments() {
   const [payments, setPayments] = useState([]);
   const [stats, setStats]       = useState(null);
@@ -120,7 +275,8 @@ export default function ManagerPayments() {
   const [healthReport, setHealthReport] = useState(null);
   const [rentStatus, setRentStatus] = useState(null);
   const [rentStatusLoading, setRentStatusLoading] = useState(true);
-  const limit = 50;
+  const [expandedMonths, setExpandedMonths] = useState(() => new Set([currentMonthKey()]));
+  const limit = 100;
 
   useEffect(() => {
     api.get('/api/tenants?status=active')
@@ -149,6 +305,9 @@ export default function ManagerPayments() {
       setPayments(prev => append ? [...prev, ...rows] : rows);
       setStats(data.stats || null);
       setHasMore(rows.length === limit && pageNum < (data.pagination?.pages ?? 1));
+      if (!append) {
+        setExpandedMonths(new Set([currentMonthKey()]));
+      }
     } catch(e) { console.error(e); } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -160,6 +319,17 @@ export default function ManagerPayments() {
   useEffect(() => {
     if (page > 1) load(page, true);
   }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const months = useMemo(() => groupPaymentsByMonth(payments), [payments]);
+
+  function toggleMonth(key) {
+    setExpandedMonths((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   async function runBilling() {
     setRunningBilling(true);
@@ -276,61 +446,27 @@ export default function ManagerPayments() {
           <p className="text-sm text-gray-400 mt-1">Payments appear here after tenants pay through the portal (ACH, card, or Cash App Pay).</p>
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-gray-200">
-          <TableScroll className="portal-table">
-          <table className="w-full min-w-[44rem] text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>{['Tenant','Property','Amount','Type','Method','Status','Period','Date'].map(h => <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>)}</tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {payments.map(p => {
-                const meta = STATUS_META[p.status] || { label:p.status, color:'bg-gray-100 text-gray-500' };
-                const method = paymentMethodLabel(p);
-                return (
-                  <tr key={p.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3"><p className="font-medium text-gray-800">{p.tenant_name}</p><p className="text-xs text-gray-400">{p.tenant_email}</p></td>
-                    <td className="px-4 py-3 text-gray-500">{p.property_name}<br/><span className="text-xs">Unit {p.unit_number}</span></td>
-                    <td className="px-4 py-3 font-semibold text-gray-800">{fmtMoney(p.amount)}</td>
-                    <td className="px-4 py-3 text-gray-500">{TYPE_LABEL[p.payment_type] || p.payment_type}</td>
-                    <td className="px-4 py-3 text-gray-500">
-                      <p>{method}</p>
-                      {p.external_reference && (
-                        <p className="text-xs text-gray-400 mt-0.5 truncate max-w-[12rem]" title={p.external_reference}>{p.external_reference}</p>
-                      )}
-                    </td>
-                    <td className="px-4 py-3"><span className={`text-xs font-medium px-2 py-0.5 rounded-full ${meta.color}`}>{meta.label}</span>
-                      {p.status === 'processing' && (
-                        <p className="mt-0.5 text-xs text-blue-600">ACH settling</p>
-                      )}
-                      {p.status === 'failed' && p.failure_reason && (
-                        <p
-                          className="mt-0.5 text-xs text-red-500 max-w-[12rem] truncate"
-                          title={p.failure_reason}
-                        >
-                          {/customer declined/i.test(p.failure_reason)
-                            ? 'Cancelled before finish'
-                            : /superseded|duplicate import/i.test(p.failure_reason)
-                              ? 'Replaced / duplicate'
-                              : p.failure_reason}
-                        </p>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-gray-400">{fmtPeriod(p.period_start)}</td>
-                    <td className="px-4 py-3 text-xs text-gray-400">{fmt(p.paid_at || p.created_at)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          </TableScroll>
+        <div className="space-y-3">
+          <p className="text-xs text-slate-500">
+            Grouped by billing month. Current month is open; older months stay collapsed — tap a month to expand.
+          </p>
+          {months.map((month) => (
+            <MonthSection
+              key={month.key}
+              month={month}
+              expanded={expandedMonths.has(month.key)}
+              onToggle={() => toggleMonth(month.key)}
+            />
+          ))}
           {hasMore && (
-            <div className="px-4 py-3 border-t border-gray-100 flex justify-end">
+            <div className="flex justify-end pt-1">
               <button
+                type="button"
                 onClick={() => setPage(p => p + 1)}
                 disabled={loadingMore}
                 className="text-sm text-indigo-600 hover:underline disabled:opacity-50"
               >
-                {loadingMore ? 'Loading…' : 'Load more'}
+                {loadingMore ? 'Loading…' : 'Load more history'}
               </button>
             </div>
           )}
