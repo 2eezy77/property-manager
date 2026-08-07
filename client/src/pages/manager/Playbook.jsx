@@ -63,12 +63,6 @@ const STEP_GUIDE = {
     help: 'Check the inbox at least once a day. Reply within 24 hours when you can; call the owner for true emergencies.',
     where: { label: 'Open Inbox', path: '/manager/messages' },
   },
-  cashapp_imports: {
-    phase: 'ongoing',
-    title: 'Offline payments are recorded in the ledger',
-    help: 'Prefer portal pay (ACH, card, or Cash App Pay). Off-app Cash App/cashtag import is retired — historical rows are under archive/.',
-    where: { label: 'Open Payments', path: '/manager/payments' },
-  },
   tenant_offboarding: {
     phase: 'move_out',
     title: 'Move-out checklist is finished',

@@ -61,12 +61,6 @@ const DEFAULT_ITEMS = [
     sort_order: 9,
   },
   {
-    category: 'cashapp_imports',
-    label: 'Off-app Cash App import retired',
-    notes: 'Portal Cash App Pay / ACH / card post automatically. Off-app cashtag Gmail sync is disabled; historical off-app rows are archived under archive/cash-app-payments-*.csv.',
-    sort_order: 10,
-  },
-  {
     category: 'tenant_offboarding',
     label: 'Complete move-out offboarding per tenant',
     notes:
@@ -74,6 +68,9 @@ const DEFAULT_ITEMS = [
     sort_order: 11,
   },
 ];
+
+/** Retired playbook categories — hide from checklist (off-app Cash App import removed). */
+const HIDDEN_CATEGORIES = new Set(['cashapp_imports']);
 
 async function seedDefaults(managerId) {
   for (const item of DEFAULT_ITEMS) {
@@ -85,6 +82,12 @@ async function seedDefaults(managerId) {
       [managerId, item.category, item.label, item.notes, item.sort_order]
     );
   }
+  // Drop retired offline-payment step if it was seeded earlier.
+  await pool.query(
+    `DELETE FROM manager_playbook_checklist
+      WHERE manager_id = $1 AND category = ANY($2::text[])`,
+    [managerId, [...HIDDEN_CATEGORIES]]
+  );
 }
 
 async function listPlaybook(managerId) {
@@ -93,14 +96,23 @@ async function listPlaybook(managerId) {
     [managerId]
   );
   if (!existing.length) await seedDefaults(managerId);
+  else {
+    // Keep existing checklists clean when categories are retired.
+    await pool.query(
+      `DELETE FROM manager_playbook_checklist
+        WHERE manager_id = $1 AND category = ANY($2::text[])`,
+      [managerId, [...HIDDEN_CATEGORIES]]
+    );
+  }
 
   const { rows } = await pool.query(
     `SELECT id, category, label, notes, sort_order,
             last_completed_at, last_verified_at, created_at, updated_at
      FROM manager_playbook_checklist
      WHERE manager_id = $1
+       AND category <> ALL($2::text[])
      ORDER BY sort_order, label`,
-    [managerId]
+    [managerId, [...HIDDEN_CATEGORIES]]
   );
   return rows;
 }
