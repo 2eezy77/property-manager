@@ -84,7 +84,11 @@ async function recordManualPayment(db, {
         `SELECT id FROM payments
           WHERE tenant_id = $1
             AND payment_type = $2
-            AND status = 'succeeded'
+            AND (
+              status = 'succeeded'
+              OR COALESCE(metadata->>'owner_rejected_offsite', 'false') = 'true'
+              OR COALESCE(metadata->>'withdrawn_offsite', 'false') = 'true'
+            )
             AND (
               metadata->>'external_reference' = $3
               OR metadata->>'external_reference' LIKE $4
