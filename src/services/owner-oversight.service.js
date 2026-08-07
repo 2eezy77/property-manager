@@ -6,7 +6,7 @@ const pool = require('../db/client');
 const { buildManagerOnboardingStatus } = require('./tenant-checkin.service');
 const { buildManagerOffboardingStatus } = require('./tenant-offboarding.service');
 const playbook = require('./manager-playbook.service');
-const { notArchivedFormerTenantWhere } = require('../utils/payment-ledger');
+const { ledgerPaymentWhere } = require('../utils/payment-ledger');
 
 const MANAGER_EMAIL = 'konstantinhazlett@yahoo.com';
 const OPEN_MAINT_STATUSES = ['submitted', 'triaged', 'assigned', 'in_progress', 'pending_tenant'];
@@ -167,7 +167,7 @@ async function rentPaymentCounts(propIds) {
   if (!propIds.length) {
     return { failed_count: 0, pending_count: 0, outstanding_amount: 0 };
   }
-  const notArchived = notArchivedFormerTenantWhere('p');
+  const ledger = ledgerPaymentWhere('p');
   const { rows } = await pool.query(
     `SELECT
        COUNT(*) FILTER (WHERE p.status = 'failed')::int AS failed_count,
@@ -179,7 +179,7 @@ async function rentPaymentCounts(propIds) {
     WHERE un.property_id = ANY($1)
       AND p.payment_type = 'rent'
       AND p.status IN ('failed','pending')
-      AND ${notArchived}`,
+      AND ${ledger}`,
     [propIds]
   );
   return rows[0] ?? { failed_count: 0, pending_count: 0, outstanding_amount: 0 };

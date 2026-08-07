@@ -1389,7 +1389,7 @@ router.get('/manager', Guards.staffOnly, async (req, res) => {
          JOIN leases l ON l.id = p.lease_id
          JOIN units un ON un.id = l.unit_id
          WHERE un.property_id = ANY($1)
-           AND COALESCE(p.metadata->>'archived_former_tenant', '') <> 'true'`,
+           AND ${ledgerPaymentWhere('p')}`,
         [propIds, monthStart]
       ),
     ]);
