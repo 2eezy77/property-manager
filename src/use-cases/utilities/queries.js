@@ -1,9 +1,18 @@
 const pool = require('../../db/client');
 const { accessiblePropertyIds } = require('./access');
+const {
+  billingMonthKey,
+  allocateMonthlyHouseCover,
+  countActiveLeasesForMonth,
+  monthBounds,
+} = require('./house-cover');
+const { getBillSplitAmount, loadActiveLeases } = require('./domain');
 
 async function fetchBillWithSplits(db, billId) {
   const { rows: bills } = await db.query(
-    `SELECT ub.*, p.name AS property_name, p.address_line1, p.city, p.state
+    `SELECT ub.*,
+            p.name AS property_name, p.address_line1, p.city, p.state,
+            p.utility_house_cover_per_tenant
        FROM utility_bills ub
        JOIN properties p ON p.id = ub.property_id
       WHERE ub.id = $1`,
@@ -38,7 +47,37 @@ async function fetchBillWithSplits(db, billId) {
     [billId]
   );
 
-  return { bill: bills[0], splits };
+  const bill = bills[0];
+  const coverRate = Number(bill.utility_house_cover_per_tenant || 0);
+  if (coverRate > 0) {
+    const ym = billingMonthKey(bill.period_start || bill.created_at);
+    if (ym) {
+      const bounds = monthBounds(ym);
+      const { rows: siblings } = await db.query(
+        `SELECT *
+           FROM utility_bills
+          WHERE property_id = $1
+            AND to_char(COALESCE(period_start, created_at), 'YYYY-MM') = $2
+            AND status IN ('draft', 'notified', 'charging')
+          ORDER BY service_type ASC, created_at ASC`,
+        [bill.property_id, ym]
+      );
+      const leases = await loadActiveLeases(db, bill.property_id, bounds.start, bounds.end);
+      const activeCount = countActiveLeasesForMonth(leases, ym);
+      const alloc = allocateMonthlyHouseCover({
+        bills: siblings,
+        coverPerTenant: coverRate,
+        activeLeaseCount: activeCount,
+        getAmount: getBillSplitAmount,
+      });
+      bill.month_combined_total = alloc.combined;
+      bill.house_cover_total = alloc.coverTotal;
+      bill.month_tenant_pool = alloc.tenantPool;
+      bill.month_active_tenant_count = activeCount;
+    }
+  }
+
+  return { bill, splits };
 }
 
 async function listBills(userId, role, { status, property_id } = {}) {
@@ -94,10 +133,13 @@ async function getTenantSplits(tenantId) {
             ub.service_type, ub.provider_name,
             ub.period_start, ub.period_end, ub.due_date,
             ub.dispute_deadline_at, ub.status AS bill_status,
+            ub.house_cover_applied, ub.tenant_pool_amount,
+            pr.utility_house_cover_per_tenant,
             p.id AS payment_id,
             p.status AS payment_status
        FROM utility_bill_splits s
        JOIN utility_bills ub ON ub.id = s.bill_id
+       JOIN properties pr ON pr.id = ub.property_id
        LEFT JOIN payments p ON p.id = s.payment_id
       WHERE s.tenant_id = $1
       ORDER BY ub.created_at DESC

@@ -691,6 +691,16 @@ function BillDetail({ billId, onChange, onClose }) {
               <p className="font-semibold text-gray-900">{fmtMoney(bill.total_amount)}</p>
             </div>
           )}
+          {(Number(bill.utility_house_cover_per_tenant) > 0 || bill.house_cover_applied != null) && (
+            <div className="col-span-2 md:col-span-4 rounded-lg bg-slate-50 border border-slate-100 px-3 py-2 text-sm text-slate-700">
+              Bill {fmtMoney(tenantCharges)} − House cover{' '}
+              {fmtMoney(bill.house_cover_total ?? bill.house_cover_applied)}
+              {bill.month_active_tenant_count != null && (
+                <> (${Number(bill.utility_house_cover_per_tenant).toFixed(0)} × {bill.month_active_tenant_count} tenants)</>
+              )}
+              {' '}→ Tenants {fmtMoney(bill.month_tenant_pool ?? bill.tenant_pool_amount)}
+            </div>
+          )}
           {isElectric && bill.statement_balance != null && (
             <div>
               <p className="text-xs uppercase tracking-wide text-gray-400">Account balance</p>

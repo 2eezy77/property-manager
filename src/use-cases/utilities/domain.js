@@ -2,6 +2,13 @@
  * Domain rules shared by UC01 (manual create) and UC09 (Gmail import).
  */
 
+const {
+  billingMonthKey,
+  monthBounds,
+  countActiveLeasesForMonth,
+  allocateMonthlyHouseCover,
+} = require('./house-cover');
+
 function dayOnly(value) {
   if (!value) return '';
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
@@ -273,6 +280,135 @@ async function computeSplitsForBill(client, {
   return computeOccupancySplits(leases, amount, period_start, period_end);
 }
 
+async function loadPropertyHouseCover(client, propertyId) {
+  const { rows } = await client.query(
+    `SELECT utility_house_cover_per_tenant FROM properties WHERE id = $1`,
+    [propertyId]
+  );
+  return Number(rows[0]?.utility_house_cover_per_tenant || 0);
+}
+
+async function listBillsForPropertyMonth(client, propertyId, yearMonth) {
+  const { rows } = await client.query(
+    `SELECT *
+       FROM utility_bills
+      WHERE property_id = $1
+        AND to_char(COALESCE(period_start, created_at), 'YYYY-MM') = $2
+        AND status IN ('draft', 'notified', 'charging')
+      ORDER BY service_type ASC, created_at ASC`,
+    [propertyId, yearMonth]
+  );
+  return rows;
+}
+
+async function billHasFrozenSplits(client, billId) {
+  const { rows } = await client.query(
+    `SELECT 1 FROM utility_bill_splits
+      WHERE bill_id = $1 AND status = ANY($2::text[])
+      LIMIT 1`,
+    [billId, ['paid', 'waived', 'charging']]
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Apply monthly house cover across a property-month, then refresh mutable bill splits.
+ * Frozen bills (paid/waived/charging splits) keep amounts; cover columns still updated.
+ */
+async function refreshPropertyMonthSplits(client, { propertyId, yearMonth }) {
+  const coverPerTenant = await loadPropertyHouseCover(client, propertyId);
+  const bills = await listBillsForPropertyMonth(client, propertyId, yearMonth);
+  if (!bills.length) return { billsRefreshed: 0, allocation: null, activeLeaseCount: 0, coverPerTenant };
+
+  const bounds = monthBounds(yearMonth);
+  const monthLeases = await loadActiveLeases(client, propertyId, bounds.start, bounds.end);
+  const activeLeaseCount = countActiveLeasesForMonth(monthLeases, yearMonth);
+
+  const allocation = allocateMonthlyHouseCover({
+    bills,
+    coverPerTenant,
+    activeLeaseCount,
+    getAmount: getBillSplitAmount,
+  });
+
+  let refreshed = 0;
+  let lastSplits = [];
+  let lastLeases = monthLeases;
+
+  for (const bill of bills) {
+    const frozen = await billHasFrozenSplits(client, bill.id);
+    const alloc = allocation.byBillId[bill.id] || {
+      houseCoverApplied: 0,
+      tenantPoolAmount: getBillSplitAmount(bill),
+    };
+
+    await client.query(
+      `UPDATE utility_bills
+          SET house_cover_applied = $2,
+              tenant_pool_amount = $3,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [bill.id, alloc.houseCoverApplied, alloc.tenantPoolAmount]
+    );
+
+    if (frozen) continue;
+
+    const leases = await loadActiveLeases(
+      client,
+      bill.property_id,
+      bill.period_start,
+      bill.period_end
+    );
+    const splitAmount = coverPerTenant > 0 ? alloc.tenantPoolAmount : getBillSplitAmount(bill);
+    const splits = await computeSplitsForBill(client, {
+      propertyId: bill.property_id,
+      service_type: bill.service_type,
+      leases,
+      bill,
+      splitAmount,
+      period_start: bill.period_start,
+      period_end: bill.period_end,
+    });
+
+    await client.query('DELETE FROM utility_bill_splits WHERE bill_id = $1', [bill.id]);
+    for (const s of splits) {
+      await client.query(
+        `INSERT INTO utility_bill_splits (bill_id, lease_id, tenant_id, amount, status)
+         VALUES ($1,$2,$3,$4,'pending')`,
+        [bill.id, s.leaseId, s.tenantId, s.amount]
+      );
+    }
+
+    const prorated = splits.filter((s) => s.prorated);
+    if (prorated.length) {
+      const note = prorated
+        .map((s) => `${s.occupancyDays}/${s.billDays} days (${s.effectiveStart}–${s.effectiveEnd})`)
+        .join('; ');
+      await client.query(
+        `UPDATE utility_bills
+            SET notes = COALESCE(notes, '') || E'\nProrated splits: ' || $2,
+                updated_at = NOW()
+          WHERE id = $1
+            AND COALESCE(notes, '') NOT LIKE '%Prorated splits:%'`,
+        [bill.id, note]
+      );
+    }
+
+    lastSplits = splits;
+    lastLeases = leases;
+    refreshed += 1;
+  }
+
+  return {
+    billsRefreshed: refreshed,
+    allocation,
+    activeLeaseCount,
+    coverPerTenant,
+    leases: lastLeases.length,
+    splits: lastSplits,
+  };
+}
+
 async function insertBillWithSplits(client, {
   propertyId,
   createdBy,
@@ -290,24 +426,8 @@ async function insertBillWithSplits(client, {
   amount_source,
   chargeable_after,
   amount_pulled_at,
-  leases,
+  leases: _leases,
 }) {
-  const billMeta = {
-    total_amount,
-    tenant_charge_amount: tenant_charge_amount ?? null,
-  };
-  const splitAmount = getBillSplitAmount(billMeta);
-
-  const splits = await computeSplitsForBill(client, {
-    propertyId,
-    service_type,
-    leases,
-    bill: billMeta,
-    splitAmount,
-    period_start,
-    period_end,
-  });
-
   const { rows: [bill] } = await client.query(
     `INSERT INTO utility_bills
        (property_id, created_by, service_type, provider_name,
@@ -338,18 +458,59 @@ async function insertBillWithSplits(client, {
     ]
   );
 
-  for (const s of splits) {
-    await client.query(
-      `INSERT INTO utility_bill_splits (bill_id, lease_id, tenant_id, amount, status)
-       VALUES ($1,$2,$3,$4,'pending')`,
-      [bill.id, s.leaseId, s.tenantId, s.amount]
-    );
+  const ym = billingMonthKey(period_start || bill.created_at);
+  if (ym) {
+    await refreshPropertyMonthSplits(client, { propertyId, yearMonth: ym });
+  } else {
+    await refreshBillSplitsForBill(client, bill);
   }
 
-  return bill;
+  const { rows: [fresh] } = await client.query(`SELECT * FROM utility_bills WHERE id = $1`, [bill.id]);
+  return fresh || bill;
 }
 
-async function refreshBillSplitsForBill(client, bill, { preserveStatuses = ['paid', 'waived'] } = {}) {
+async function refreshBillSplitsForBill(client, bill, { preserveStatuses: _preserveStatuses = ['paid', 'waived'] } = {}) {
+  const ym = billingMonthKey(bill.period_start || bill.created_at);
+  if (ym) {
+    await refreshPropertyMonthSplits(client, {
+      propertyId: bill.property_id,
+      yearMonth: ym,
+    });
+    const { rows: splitRows } = await client.query(
+      `SELECT lease_id AS "leaseId", tenant_id AS "tenantId", amount,
+              NULL::int AS "occupancyDays", NULL::int AS "billDays",
+              false AS prorated, NULL::text AS "effectiveStart", NULL::text AS "effectiveEnd"
+         FROM utility_bill_splits
+        WHERE bill_id = $1
+        ORDER BY created_at ASC`,
+      [bill.id]
+    );
+    // Re-compute enriched split metadata for recalc UI when possible
+    const leases = await loadActiveLeases(
+      client,
+      bill.property_id,
+      bill.period_start,
+      bill.period_end
+    );
+    const { rows: [freshBill] } = await client.query(`SELECT * FROM utility_bills WHERE id = $1`, [bill.id]);
+    const splitAmount = freshBill?.tenant_pool_amount != null
+      ? Number(freshBill.tenant_pool_amount)
+      : getBillSplitAmount(freshBill || bill);
+    const computed = await computeSplitsForBill(client, {
+      propertyId: bill.property_id,
+      service_type: bill.service_type,
+      leases,
+      bill: freshBill || bill,
+      splitAmount,
+      period_start: bill.period_start,
+      period_end: bill.period_end,
+    });
+    // Prefer computed metadata when amounts still match pending rows
+    const splits = computed.length ? computed : splitRows;
+    return { leases: leases.length, splits };
+  }
+
+  // Fallback: single-bill path without month key
   const leases = await loadActiveLeases(
     client,
     bill.property_id,
@@ -366,27 +527,11 @@ async function refreshBillSplitsForBill(client, bill, { preserveStatuses = ['pai
   });
 
   await client.query('DELETE FROM utility_bill_splits WHERE bill_id = $1', [bill.id]);
-
   for (const s of splits) {
     await client.query(
       `INSERT INTO utility_bill_splits (bill_id, lease_id, tenant_id, amount, status)
        VALUES ($1,$2,$3,$4,'pending')`,
       [bill.id, s.leaseId, s.tenantId, s.amount]
-    );
-  }
-
-  const prorated = splits.filter((s) => s.prorated);
-  if (prorated.length) {
-    const note = prorated
-      .map((s) => `${s.occupancyDays}/${s.billDays} days (${s.effectiveStart}–${s.effectiveEnd})`)
-      .join('; ');
-    await client.query(
-      `UPDATE utility_bills
-          SET notes = COALESCE(notes, '') || E'\nProrated splits: ' || $2,
-              updated_at = NOW()
-        WHERE id = $1
-          AND COALESCE(notes, '') NOT LIKE '%Prorated splits:%'`,
-      [bill.id, note]
     );
   }
 
@@ -401,6 +546,9 @@ module.exports = {
   loadUnitElectricShares,
   inclusiveDays,
   refreshBillSplitsForBill,
+  refreshPropertyMonthSplits,
+  loadPropertyHouseCover,
+  listBillsForPropertyMonth,
   normalizeAcct,
   accountsMatch,
   matchProperty,
