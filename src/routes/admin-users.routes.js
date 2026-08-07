@@ -99,6 +99,7 @@ router.get('/', async (req, res) => {
          JOIN properties p ON p.id = un.property_id AND p.org_id = $1
         WHERE u.role = 'tenant'
           AND (u.org_id = $1 OR u.org_id IS NULL)
+          AND u.site_archived_at IS NULL
         ORDER BY u.id, l.status = 'active' DESC, l.start_date DESC NULLS LAST`,
       [orgId]
     );

@@ -11,6 +11,7 @@ const authenticate = require('../middleware/authenticate');
 const { Guards }                         = require('../middleware/authorize');
 const { tenantOnly, staffOnly, anyRole } = Guards;
 const { processInboundMessage, summariseThread } = require('../services/ai-agent.service');
+const { notSiteArchivedWhere } = require('../utils/site-visibility');
 
 const router = express.Router();
 router.use(authenticate);
@@ -182,7 +183,7 @@ router.get('/inbox', staffOnly, async (req, res) => {
     }
     if (!propFilter.length) return res.json({ threads: [] });
 
-    let conditions = [`p.id = ANY($1)`, `mt.is_open = TRUE`];
+    let conditions = [`p.id = ANY($1)`, `mt.is_open = TRUE`, notSiteArchivedWhere('u')];
     let params = [propFilter];
     if (urgency)       { params.push(urgency);        conditions.push(`mt.urgency = $${params.length}`); }
     if (triage_status) { params.push(triage_status);  conditions.push(`mt.triage_status = $${params.length}`); }

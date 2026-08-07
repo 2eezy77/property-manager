@@ -45,6 +45,7 @@ CREATE TABLE users (
     phone             VARCHAR(25),
     avatar_url        TEXT,
     is_active         BOOLEAN      NOT NULL DEFAULT TRUE,
+    site_archived_at  TIMESTAMPTZ,
     email_verified_at TIMESTAMPTZ,
     last_login_at     TIMESTAMPTZ,
     fcm_token         TEXT,

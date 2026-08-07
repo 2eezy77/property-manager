@@ -23,6 +23,7 @@ const {
   createIdentityFeeIntent,
   createIdentitySession,
 } = require('../services/tenant-identity.service');
+const { notSiteArchivedWhere } = require('../utils/site-visibility');
 
 const router = express.Router();
 router.use(authenticate);
@@ -133,7 +134,7 @@ router.get('/', staffOnly, async (req, res) => {
     }
     if (!propIds.length) return res.json({ leases: [] });
 
-    let conditions = ['un.property_id = ANY($1)'];
+    let conditions = ['un.property_id = ANY($1)', notSiteArchivedWhere('u')];
     let params = [propIds];
     if (status)      { params.push(status);      conditions.push(`l.status = $${params.length}`); }
     if (property_id) { params.push(property_id); conditions.push(`un.property_id = $${params.length}`); }

@@ -254,9 +254,9 @@ function onboardingRows(roster, stepKey, missingLabel, emailSubject) {
 }
 
 function buildRentInsight(roster) {
-  const { monthLabel, tenants, groups, summary, collections } = roster;
+  const { monthLabel, tenants, groups, summary } = roster;
 
-  if (!summary.total && !collections?.length) {
+  if (!summary.total) {
     return insight('ok', 'No active leases on your properties.');
   }
 
@@ -275,17 +275,11 @@ function buildRentInsight(roster) {
     late: groups.late.map(mapTenant),
     pending: groups.pending.map(mapTenant),
     due: groups.due.map(mapTenant),
-    collections: (groups.collections || []).map(mapTenant),
+    collections: [],
   };
 
   let level = 'ok';
-  let headline = summary.total
-    ? `${summary.up_to_date} of ${summary.total} up to date for ${monthLabel}.`
-    : `No active rent due for ${monthLabel}.`;
-  if (summary.collections > 0) {
-    level = 'action';
-    headline += ` ${summary.collections} former tenant${summary.collections === 1 ? '' : 's'} in collections.`;
-  }
+  let headline = `${summary.up_to_date} of ${summary.total} up to date for ${monthLabel}.`;
   if (summary.late > 0 || summary.partial > 0) {
     level = summary.late > 0 ? 'action' : 'watch';
     const bits = [`${summary.up_to_date} up to date`];

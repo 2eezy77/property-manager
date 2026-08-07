@@ -92,7 +92,7 @@ export default function RentCollectionPanel({ data, loading }) {
       </div>
     );
   }
-  if (!data?.summary?.total && !data?.collections?.length) {
+  if (!data?.summary?.total) {
     return null;
   }
 
@@ -114,12 +114,6 @@ export default function RentCollectionPanel({ data, loading }) {
             <>
               {' · '}
               <span className="font-medium text-red-700">{summary.late} late</span>
-            </>
-          )}
-          {summary.collections > 0 && (
-            <>
-              {' · '}
-              <span className="font-medium text-red-800">{summary.collections} collections</span>
             </>
           )}
           {summary.email_count > 0 && (
@@ -162,16 +156,6 @@ export default function RentCollectionPanel({ data, loading }) {
               empty="Nobody is late."
             />
           </>
-        )}
-        {(groups.collections?.length > 0) && (
-          <div className="lg:col-span-2">
-            <Section
-              title={`Collections — former tenants (${groups.collections.length})`}
-              tone="late"
-              tenants={groups.collections}
-              empty={null}
-            />
-          </div>
         )}
         {(groups.pending.length > 0 || groups.due.length > 0) && (
           <div className="lg:col-span-2 grid gap-3 sm:grid-cols-2">

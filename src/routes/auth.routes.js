@@ -51,7 +51,7 @@ router.post('/login', async (req, res) => {
   try {
     // 1. Look up user by email
     const { rows } = await pool.query(
-      `SELECT id, email, password_hash, role, first_name, last_name, is_active
+      `SELECT id, email, password_hash, role, first_name, last_name, is_active, site_archived_at
          FROM users WHERE email = $1 LIMIT 1`,
       [email.toLowerCase().trim()]
     );
@@ -63,7 +63,7 @@ router.post('/login', async (req, res) => {
     const validHash  = user ? user.password_hash : dummyHash;
     const isMatch    = await bcrypt.compare(password, validHash);
 
-    if (!user || !isMatch || !user.is_active) {
+    if (!user || !isMatch || !user.is_active || user.site_archived_at) {
       if (user?.id) {
         logActivity({
           realActorId: user.id,

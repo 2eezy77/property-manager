@@ -40,6 +40,7 @@ const rentBilling        = require('../services/rent-billing.service');
 const { notifyPaymentReceived } = require('../services/payment-email.service');
 const { encrypt, decrypt } = require('../utils/encryption');
 const { ledgerPaymentWhere } = require('../utils/payment-ledger');
+const { notSiteArchivedWhere } = require('../utils/site-visibility');
 const { markLateFeesPaidForLease, settleSuccessfulRentPayment } = require('../utils/payment-settlement');
 const { getRentStatusRoster } = require('../services/rent-status.service');
 const { syncCashAppFromGmail } = require('../services/cashapp-gmail.service');
@@ -1323,7 +1324,11 @@ router.get('/manager', Guards.staffOnly, async (req, res) => {
     const limit = Math.min(100, Number(req.query.limit ?? 50));
     const offset = (page - 1) * limit;
 
-    let conditions = ['un.property_id = ANY($1)', ledgerPaymentWhere('p')];
+    let conditions = [
+      'un.property_id = ANY($1)',
+      ledgerPaymentWhere('p'),
+      notSiteArchivedWhere('u'),
+    ];
     let params = [propIds];
     if (status)       { params.push(status);       conditions.push(`p.status = $${params.length}`); }
     if (payment_type) { params.push(payment_type); conditions.push(`p.payment_type = $${params.length}`); }
@@ -1360,6 +1365,7 @@ router.get('/manager', Guards.staffOnly, async (req, res) => {
            FROM payments p
            JOIN leases l ON l.id = p.lease_id
            JOIN units un ON un.id = l.unit_id
+           JOIN users u ON u.id = p.tenant_id
           WHERE ${whereSql}`,
         params
       ),

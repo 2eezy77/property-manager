@@ -156,7 +156,6 @@ async function bootstrap743(client) {
   const accounts = [
     { label: 'Owner (oversight)',   email: OWNER_EMAIL                            },
     { label: 'Property Manager',    email: KP_EMAIL                               },
-    { label: 'Tenant — Davontaye',  email: 'davontayegara95@gmail.com'         },
     { label: 'Tenant — Buckley',    email: 'buckleystone1@gmail.com'          },
     { label: 'Tenant — Isaiah',     email: 'isaiahreese13@outlook.com'        },
   ];

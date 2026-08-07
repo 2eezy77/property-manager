@@ -208,6 +208,7 @@ async function queryCollectionsRows(propIds) {
        JOIN units un ON un.id = l.unit_id
       WHERE un.property_id = ANY($1)
         AND l.status IN ('terminated', 'expired')
+        AND u.site_archived_at IS NULL
         AND (
           EXISTS (
             SELECT 1 FROM payments p
@@ -356,6 +357,7 @@ async function queryRentRows(propIds, monthStart, monthEnd) {
        JOIN units un ON un.id = l.unit_id
       WHERE un.property_id = ANY($1)
         AND u.role = 'tenant'
+        AND u.site_archived_at IS NULL
         AND l.start_date < $3::date
       ORDER BY u.last_name, u.first_name`,
     [propIds, monthStart, monthEnd]
@@ -369,26 +371,23 @@ async function getRentStatusRoster(userId, role) {
   const raw = await queryRentRows(propIds, monthStart, monthEnd);
   const tenants = raw.map((r) => classifyRow(r, monthLabel));
 
-  const collectionsRaw = await queryCollectionsRows(propIds);
-  const collections = collectionsRaw.map(classifyCollectionsRow);
-
+  // Former-tenant Collections are not shown on the live site.
+  // Track those notices in workspace archive/collections/ instead.
   const groups = {
     upToDate: tenants.filter((t) => t.status === 'up_to_date'),
     partial: tenants.filter((t) => t.status === 'partial'),
     late: tenants.filter((t) => t.status === 'late'),
     pending: tenants.filter((t) => t.status === 'pending'),
     due: tenants.filter((t) => t.status === 'due'),
-    collections,
+    collections: [],
   };
 
-  const emailCount =
-    tenants.filter((t) => t.shouldEmail).length
-    + collections.filter((t) => t.shouldEmail).length;
+  const emailCount = tenants.filter((t) => t.shouldEmail).length;
 
   return {
     monthLabel,
     tenants,
-    collections,
+    collections: [],
     groups,
     summary: {
       total: tenants.length,
@@ -397,7 +396,7 @@ async function getRentStatusRoster(userId, role) {
       late: groups.late.length,
       pending: groups.pending.length,
       due: groups.due.length,
-      collections: collections.length,
+      collections: 0,
       email_count: emailCount,
       needs_relink: tenants.filter((t) => t.needsRelink).length,
     },

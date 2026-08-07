@@ -21,6 +21,7 @@ const {
   resolveStepMeta,
   isOffboardingActive,
 } = require('../services/tenant-offboarding.service');
+const { notSiteArchivedWhere } = require('../utils/site-visibility');
 
 const router = express.Router();
 router.use(authenticate);
@@ -189,7 +190,7 @@ router.get('/onboarding', async (req, res) => {
     if (!propIds.length) return res.json({ tenants: [] });
 
     const { status, property_id, complete } = req.query;
-    let conditions = ['un.property_id = ANY($1)', "u.role = 'tenant'"];
+    let conditions = ['un.property_id = ANY($1)', "u.role = 'tenant'", notSiteArchivedWhere('u')];
     const params = [propIds];
 
     if (status) {
@@ -238,7 +239,7 @@ router.get('/', async (req, res) => {
     const orgId = forLeaseCreate ? await resolveOrgIdForUser(req.user.id) : null;
     if (!propIds.length && !orgId) return res.json({ tenants: [] });
 
-    let conditions = ['un.property_id = ANY($1)'];
+    let conditions = ['un.property_id = ANY($1)', notSiteArchivedWhere('u')];
     let params = [propIds];
 
     if (status)      { params.push(status);      conditions.push(`l.status = $${params.length}`); }
@@ -296,6 +297,7 @@ router.get('/', async (req, res) => {
              WHERE u.role = 'tenant'
                AND u.org_id = ${orgParam}
                AND u.is_active = TRUE
+               AND ${notSiteArchivedWhere('u')}
                AND NOT EXISTS (SELECT 1 FROM leases l2 WHERE l2.tenant_id = u.id)` : ''}
            ) tenant_rows
           ORDER BY last_name NULLS LAST, first_name NULLS LAST, email`,
@@ -342,7 +344,7 @@ router.get('/:id', async (req, res) => {
       `SELECT u.id, u.first_name, u.last_name, u.email, u.phone,
               u.is_active, u.created_at, u.last_login_at,
               ${TENANT_ONBOARDING_SELECT}
-         FROM users u WHERE u.id = $1 AND u.role = 'tenant'`,
+         FROM users u WHERE u.id = $1 AND u.role = 'tenant' AND u.site_archived_at IS NULL`,
       [req.params.id]
     );
     if (!tRows.length) return res.status(404).json({ error: 'Tenant not found' });
@@ -426,6 +428,7 @@ router.get('/offboarding', async (req, res) => {
          JOIN properties p ON p.id = un.property_id
         WHERE un.property_id = ANY($1)
           AND u.role = 'tenant'
+          AND ${notSiteArchivedWhere('u')}
           AND (
             l.offboarding_started_at IS NOT NULL
             OR l.status IN ('expired', 'terminated')
