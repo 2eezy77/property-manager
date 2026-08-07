@@ -18,7 +18,7 @@ Live Manager → Payments shows **active** tenants for the current month. Former
 | Davontaye Tyrrell Gara | Master Bedroom | rent | failed | $1,200.00 |
 | Davontaye Tyrrell Gara | Master Bedroom | security_deposit | failed | $1,200.00 |
 
-Lease terminated; user inactive. Do not treat these failed attempts as current rent due.
+Lease terminated; user inactive. Live rows tagged `archived_former_tenant`. Related $150 late fee waived when archiving. Do not treat these as current rent due.
 
 ## How months are split
 
