@@ -72,25 +72,33 @@ mustContain(
   'off-app Cash App Gmail sync must be opt-in (default off)'
 );
 
-// Cash App source labels before generic payment_method (Manager Payments)
+// Source labels before generic payment_method (Manager Payments)
 const paymentsSrc = read('client/src/pages/manager/Payments.jsx');
-const cashAppImportCheck = "if (p.source === 'cash_app_import') return 'Cash App (archived off-app)';";
+const stripeCardCheck = "if (p.source === 'stripe_card' || p.payment_method === 'card')";
+const cashAppImportCheck = "if (p.source === 'cash_app_import')";
 const stripeCashAppCheck = "if (p.source === 'stripe_cashapp') return 'Cash App Pay';";
 const paymentMethodBranch = 'if (p.payment_method)';
+if (!paymentsSrc.includes(stripeCardCheck)) {
+  failures.push(`client/src/pages/manager/Payments.jsx: must contain ${JSON.stringify(stripeCardCheck)} — Card label by source`);
+}
 if (!paymentsSrc.includes(cashAppImportCheck)) {
   failures.push(`client/src/pages/manager/Payments.jsx: must contain ${JSON.stringify(cashAppImportCheck)} — Cash App off-app label by source`);
 }
 if (!paymentsSrc.includes(stripeCashAppCheck)) {
   failures.push(`client/src/pages/manager/Payments.jsx: must contain ${JSON.stringify(stripeCashAppCheck)} — Cash App Pay label by source`);
 }
+if (!paymentsSrc.includes("Cash App (archived off-app)")) {
+  failures.push('client/src/pages/manager/Payments.jsx: must label full off-app Cash App imports');
+}
+const cardIdx = paymentsSrc.indexOf(stripeCardCheck);
 const importIdx = paymentsSrc.indexOf(cashAppImportCheck);
 const stripeIdx = paymentsSrc.indexOf(stripeCashAppCheck);
 const methodIdx = paymentsSrc.indexOf(paymentMethodBranch);
-if (importIdx === -1 || stripeIdx === -1 || methodIdx === -1) {
+if (cardIdx === -1 || importIdx === -1 || stripeIdx === -1 || methodIdx === -1) {
   // missing strings already reported above
-} else if (importIdx >= methodIdx || stripeIdx >= methodIdx) {
+} else if (cardIdx >= methodIdx || importIdx >= methodIdx || stripeIdx >= methodIdx) {
   failures.push(
-    'client/src/pages/manager/Payments.jsx: cash_app_import and stripe_cashapp source checks must appear before if (p.payment_method)'
+    'client/src/pages/manager/Payments.jsx: stripe_card, cash_app_import, and stripe_cashapp source checks must appear before if (p.payment_method)'
   );
 }
 
