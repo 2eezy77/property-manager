@@ -50,14 +50,14 @@ async function fetchBillWithSplits(db, billId) {
   const bill = bills[0];
   const coverRate = Number(bill.utility_house_cover_per_tenant || 0);
   if (coverRate > 0) {
-    const ym = billingMonthKey(bill.period_start || bill.created_at);
+    const ym = billingMonthKey(bill.period_end || bill.period_start || bill.created_at);
     if (ym) {
       const bounds = monthBounds(ym);
       const { rows: siblings } = await db.query(
         `SELECT *
            FROM utility_bills
           WHERE property_id = $1
-            AND to_char(COALESCE(period_start, created_at), 'YYYY-MM') = $2
+            AND to_char(COALESCE(period_end, period_start, created_at), 'YYYY-MM') = $2
             AND status IN ('draft', 'notified', 'charging')
           ORDER BY service_type ASC, created_at ASC`,
         [bill.property_id, ym]
