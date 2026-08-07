@@ -50,11 +50,15 @@ async function runUtilitiesSync({ force = false } = {}) {
 
     const actor = await resolveGmailActor();
     if (!actor) {
-      // Still run reminders if Gmail missing (existing notified bills)
+      // No Gmail actor → skip import/notify. Reminders still gated by auto-notify flag
+      // so we don't ping tenants while UTILITIES_AUTO_NOTIFY_ENABLED is off.
       const {
+        autoNotifyEnabled,
         sendUtilityReminders,
       } = require('./utility-comms.service');
-      const reminders = await sendUtilityReminders();
+      const reminders = !autoNotifyEnabled()
+        ? { reminded3: 0, reminded7: 0, overdueStaff: 0, disabled: true }
+        : await sendUtilityReminders();
       return { skipped: false, reason: 'no_gmail', import: null, reminders };
     }
 
