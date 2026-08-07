@@ -369,8 +369,17 @@ async function sendUtilityReminders() {
 
 /**
  * Notify all chargeable draft bills (worker). Never charges.
+ * Gated by UTILITIES_AUTO_NOTIFY_ENABLED — default OFF until owner green-lights.
  */
+function autoNotifyEnabled() {
+  return process.env.UTILITIES_AUTO_NOTIFY_ENABLED === 'true';
+}
+
 async function autoNotifyEligibleDrafts({ userId, role }) {
+  if (!autoNotifyEnabled()) {
+    return { notified: 0, skipped: 0, disabled: true };
+  }
+
   const { isElectricBillChargeable } = require('./dominion-billing.service');
   const { executeNotifyTenants } = require('../use-cases/utilities/uc03-notify-tenants');
   const { accessiblePropertyIds } = require('../use-cases/utilities/access');
@@ -379,7 +388,8 @@ async function autoNotifyEligibleDrafts({ userId, role }) {
   if (!propIds.length) return { notified: 0, skipped: 0 };
 
   const { rows: drafts } = await pool.query(
-    `SELECT id, service_type, chargeable_after, period_end, status
+    `SELECT id, service_type, chargeable_after, period_end, status, amount_source,
+            tenant_charge_amount, statement_balance, total_amount
        FROM utility_bills
       WHERE property_id = ANY($1)
         AND status = 'draft'`,
@@ -390,6 +400,17 @@ async function autoNotifyEligibleDrafts({ userId, role }) {
   let skipped = 0;
   for (const bill of drafts) {
     if (bill.service_type === 'electric' && !isElectricBillChargeable(bill)) {
+      skipped += 1;
+      continue;
+    }
+    // Hold Dominion Amount Due fallbacks until Current Charges are confirmed
+    if (
+      bill.service_type === 'electric' &&
+      (bill.amount_source === 'amount_due_fallback' || bill.amount_source === 'parsed_total')
+    ) {
+      console.warn(
+        `[utility-comms] hold notify ${bill.id}: amount_source=${bill.amount_source} (need Current Charges)`
+      );
       skipped += 1;
       continue;
     }
@@ -415,5 +436,6 @@ module.exports = {
   alertStaffUtilityDispute,
   sendUtilityReminders,
   autoNotifyEligibleDrafts,
+  autoNotifyEnabled,
   REVIEW_URL,
 };

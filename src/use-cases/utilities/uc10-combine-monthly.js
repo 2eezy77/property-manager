@@ -1,5 +1,9 @@
 /**
  * UC10 — Combine draft utility bills into one row per property + service + calendar month.
+ *
+ * IMPORTANT: Do NOT snap provider-parsed service periods (HRSD mid-month, Dominion
+ * statement cycles) to calendar month bounds. Only snap when every draft in the
+ * group already looks like a calendar-month default.
  */
 
 const pool = require('../../db/client');
@@ -12,6 +16,55 @@ const {
   maxDate,
   refreshBillSplits,
 } = require('./monthly-billing');
+
+function dayOnly(value) {
+  if (!value) return '';
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  const s = String(value);
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  return s.slice(0, 10);
+}
+
+/** True when period exactly matches the calendar month of period_end. */
+function isCalendarMonthPeriod(periodStart, periodEnd) {
+  const end = dayOnly(periodEnd);
+  const start = dayOnly(periodStart);
+  const ym = billingMonth(end);
+  if (!ym || !start || !end) return false;
+  const bounds = calendarMonthBounds(ym);
+  if (!bounds) return false;
+  return start === bounds.start && end === bounds.end;
+}
+
+function groupHasProviderPeriod(bills) {
+  return bills.some((b) => !isCalendarMonthPeriod(b.period_start, b.period_end));
+}
+
+/** Prefer trusted electric Current Charges over Amount Due fallbacks when merging. */
+function pickMergeAmount(bills) {
+  const electricTrusted = bills.filter(
+    (b) => b.service_type === 'electric' && b.amount_source === 'current_charges'
+  );
+  const pool = electricTrusted.length ? electricTrusted : bills;
+  return Math.max(...pool.map((b) => Number(b.tenant_charge_amount ?? b.total_amount) || 0));
+}
+
+/** Prefer a bill that carries a real provider period as keeper. */
+function sortKeeperFirst(bills) {
+  return [...bills].sort((a, b) => {
+    const aProv = !isCalendarMonthPeriod(a.period_start, a.period_end) ? 1 : 0;
+    const bProv = !isCalendarMonthPeriod(b.period_start, b.period_end) ? 1 : 0;
+    if (bProv !== aProv) return bProv - aProv;
+    const aTrusted = a.amount_source === 'current_charges' ? 1 : 0;
+    const bTrusted = b.amount_source === 'current_charges' ? 1 : 0;
+    if (bTrusted !== aTrusted) return bTrusted - aTrusted;
+    const amt = Number(b.total_amount) - Number(a.total_amount);
+    if (amt !== 0) return amt;
+    return new Date(b.created_at) - new Date(a.created_at);
+  });
+}
 
 async function executeCombineMonthlyDrafts({ userId, role }) {
   const propIds = await accessiblePropertyIds(userId, role);
@@ -50,36 +103,41 @@ async function executeCombineMonthlyDrafts({ userId, role }) {
       const ym = key.split('|')[2];
       const bounds = calendarMonthBounds(ym);
       if (!bounds) continue;
+      const preserveProvider = groupHasProviderPeriod(bills);
 
       if (bills.length > 1) {
-        bills.sort((a, b) => {
-          const amt = Number(b.total_amount) - Number(a.total_amount);
-          if (amt !== 0) return amt;
-          return new Date(b.created_at) - new Date(a.created_at);
-        });
-        const keeper = bills[0];
-        const others = bills.slice(1);
+        const ordered = sortKeeperFirst(bills);
+        const keeper = ordered[0];
+        const others = ordered.slice(1);
 
-        let total = Number(keeper.total_amount);
-        let periodStart = keeper.period_start;
-        let periodEnd = keeper.period_end;
-        let dueDate = keeper.due_date;
+        let total = pickMergeAmount(ordered);
+        let periodStart = dayOnly(keeper.period_start);
+        let periodEnd = dayOnly(keeper.period_end);
+        let dueDate = dayOnly(keeper.due_date);
         const noteParts = [keeper.notes];
 
         for (const o of others) {
-          total = Math.max(total, Number(o.total_amount));
-          periodStart = minDate(periodStart, o.period_start);
-          periodEnd = maxDate(periodEnd, o.period_end);
-          dueDate = maxDate(dueDate, o.due_date);
+          periodStart = minDate(periodStart, dayOnly(o.period_start));
+          periodEnd = maxDate(periodEnd, dayOnly(o.period_end));
+          dueDate = maxDate(dueDate, dayOnly(o.due_date));
           if (o.notes) noteParts.push(o.notes);
           removed += 1;
         }
 
-        noteParts.push(`(Combined ${bills.length} Gmail imports into ${monthLabel(ym)} bill.)`);
+        // Only snap to calendar bounds when every draft was already a calendar default.
+        const writeStart = preserveProvider ? periodStart : bounds.start;
+        const writeEnd = preserveProvider ? periodEnd : bounds.end;
+
+        noteParts.push(
+          preserveProvider
+            ? `(Combined ${bills.length} Gmail imports; preserved provider service period for ${monthLabel(ym)}.)`
+            : `(Combined ${bills.length} Gmail imports into ${monthLabel(ym)} bill.)`
+        );
 
         const { rows: [updated] } = await client.query(
           `UPDATE utility_bills
               SET total_amount = $1,
+                  tenant_charge_amount = COALESCE(tenant_charge_amount, $1),
                   period_start = $2,
                   period_end = $3,
                   due_date = $4,
@@ -87,7 +145,7 @@ async function executeCombineMonthlyDrafts({ userId, role }) {
                   updated_at = NOW()
             WHERE id = $6
             RETURNING *`,
-          [total, bounds.start, bounds.end, dueDate, noteParts.filter(Boolean).join('\n'), keeper.id]
+          [total, writeStart, writeEnd, dueDate, noteParts.filter(Boolean).join('\n'), keeper.id]
         );
 
         for (const o of others) {
@@ -102,10 +160,17 @@ async function executeCombineMonthlyDrafts({ userId, role }) {
           property_id: keeper.property_id,
           combined_count: bills.length,
           total_amount: total,
+          preserved_provider_period: preserveProvider,
         });
       } else {
+        // Single draft: never rewrite a provider-parsed mid-month period to calendar bounds.
         const [bill] = bills;
-        const needsNorm = bill.period_start !== bounds.start || bill.period_end !== bounds.end;
+        if (preserveProvider) {
+          continue;
+        }
+        const start = dayOnly(bill.period_start);
+        const end = dayOnly(bill.period_end);
+        const needsNorm = start !== bounds.start || end !== bounds.end;
         if (needsNorm) {
           const { rows: [updated] } = await client.query(
             `UPDATE utility_bills
@@ -131,4 +196,8 @@ async function executeCombineMonthlyDrafts({ userId, role }) {
   return { merged, removed, normalized, bills: summary };
 }
 
-module.exports = { executeCombineMonthlyDrafts };
+module.exports = {
+  executeCombineMonthlyDrafts,
+  isCalendarMonthPeriod,
+  groupHasProviderPeriod,
+};
