@@ -22,12 +22,18 @@ const {
   isOffboardingActive,
 } = require('../services/tenant-offboarding.service');
 const { notSiteArchivedWhere } = require('../utils/site-visibility');
+const { ledgerPaymentWhere } = require('../utils/payment-ledger');
 
 const router = express.Router();
 router.use(authenticate);
 router.use(staffOnly);
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const OUTSTANDING_RENT_SUBQUERY = `(SELECT SUM(op.amount) FROM payments op
+                     WHERE op.tenant_id = u.id AND op.status IN ('failed','pending')
+                       AND op.payment_type = 'rent'
+                       AND ${ledgerPaymentWhere('op')}) AS outstanding_balance`;
 function isValidUuid(id) {
   return typeof id === 'string' && UUID_RE.test(id);
 }
@@ -262,9 +268,7 @@ router.get('/', async (req, res) => {
                     l.start_date, l.end_date, l.monthly_rent,
                     ${LEASE_OFFBOARD_SELECT},
                     un.unit_number, p.name AS property_name, p.id AS property_id,
-                    (SELECT SUM(amount) FROM payments
-                     WHERE tenant_id = u.id AND status IN ('failed','pending')
-                       AND payment_type = 'rent') AS outstanding_balance,
+                    ${OUTSTANDING_RENT_SUBQUERY},
                     ${TENANT_ONBOARDING_SELECT}
              FROM users u
              JOIN leases l ON l.tenant_id = u.id
@@ -289,9 +293,7 @@ router.get('/', async (req, res) => {
                     NULL::timestamptz AS offboard_utilities_settled_at,
                     NULL::timestamptz AS offboard_portal_disabled_at,
                     NULL::text AS unit_number, NULL::text AS property_name, NULL::uuid AS property_id,
-                    (SELECT SUM(amount) FROM payments
-                     WHERE tenant_id = u.id AND status IN ('failed','pending')
-                       AND payment_type = 'rent') AS outstanding_balance,
+                    ${OUTSTANDING_RENT_SUBQUERY},
                     ${TENANT_ONBOARDING_SELECT}
              FROM users u
              WHERE u.role = 'tenant'
@@ -314,9 +316,7 @@ router.get('/', async (req, res) => {
               l.start_date, l.end_date, l.monthly_rent,
               ${LEASE_OFFBOARD_SELECT},
               un.unit_number, p.name AS property_name, p.id AS property_id,
-              (SELECT SUM(amount) FROM payments
-               WHERE tenant_id = u.id AND status IN ('failed','pending')
-                 AND payment_type = 'rent') AS outstanding_balance,
+              ${OUTSTANDING_RENT_SUBQUERY},
               ${TENANT_ONBOARDING_SELECT}
        FROM users u
        JOIN leases l ON l.tenant_id = u.id
