@@ -616,6 +616,7 @@ BEGIN
           AND p.due_date      IS NOT NULL
           AND (CURRENT_DATE - p.due_date) > l.grace_period_days
           AND l.autopay_enabled IS NOT TRUE
+          AND COALESCE(l.late_fee_amount, 0) > 0
           AND NOT EXISTS (SELECT 1 FROM late_fees lf WHERE lf.payment_id = p.id)
     LOOP
         IF rec.late_fee_type = 'flat' THEN
@@ -625,6 +626,10 @@ BEGIN
             IF rec.late_fee_cap IS NOT NULL THEN
                 fee_amt := LEAST(fee_amt, rec.late_fee_cap);
             END IF;
+        END IF;
+
+        IF fee_amt IS NULL OR fee_amt <= 0 THEN
+            CONTINUE;
         END IF;
 
         INSERT INTO late_fees (lease_id, payment_id, amount, days_overdue, status, applied_at)
