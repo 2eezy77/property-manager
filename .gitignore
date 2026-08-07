@@ -30,6 +30,10 @@ Thumbs.db
 # Local auth session caches
 scripts/.dominion-auth-session.json
 
+# Dominion portal sync artifacts (PDFs + live extracts; keep .gitkeep)
+archive/utilities/dominion-bills/*
+!archive/utilities/dominion-bills/.gitkeep
+
 # Uploaded visit photos (local dev)
 uploads/
 
