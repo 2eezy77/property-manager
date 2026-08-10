@@ -6,7 +6,9 @@ const {
   computeChargeableAfter,
   isElectricBillChargeable,
   validateElectricAmount,
+  periodFromDominionStatement,
 } = require('../src/services/dominion-billing.service');
+const { billingMonthKey } = require('../src/use-cases/utilities/house-cover');
 
 let failed = 0;
 
@@ -60,5 +62,21 @@ const valWarn = validateElectricAmount({
   statement_balance: 744.21,
 });
 assert('validate balance match warns', valWarn.length >= 1);
+
+// Statement date − (billingDays − 1) … statement date (mid-month, not calendar)
+const cycle = periodFromDominionStatement({ statementDate: '2026-07-16', billingDays: 30 });
+assert('dominion period_end is statement date', cycle.period_end === '2026-07-16');
+assert('dominion period_start = statement − 29d', cycle.period_start === '2026-06-17', cycle);
+assert(
+  'house-cover month keys off period_end (statement month)',
+  billingMonthKey(cycle.period_end) === '2026-07'
+);
+assert(
+  'period_start alone would wrongly key June',
+  billingMonthKey(cycle.period_start) === '2026-06'
+);
+
+const bad = periodFromDominionStatement({ statementDate: '2026-07-16', billingDays: 0 });
+assert('invalid billingDays yields null start', bad.period_start === null && bad.period_end === '2026-07-16');
 
 process.exit(failed ? 1 : 0);
