@@ -45,6 +45,8 @@
     "utilities:ensure-cycles": "node scripts/ensure-utility-cycles.js",
     "test:uc10-combine": "node scripts/test-uc10-combine-periods.js",
     "test:collectible-priority": "node scripts/test-collectible-provider-priority.js",
+    "test:utility-gmail-merge": "node scripts/test-utility-gmail-merge.js",
+    "test:utilities-scheduler-reminders": "node scripts/test-utilities-scheduler-reminders.js",
     "test:rent-status-classify": "node scripts/test-rent-status-classify.js",
     "test:manual-payment-dedupe": "node scripts/test-manual-payment-dedupe.js",
     "test:utility-auto-notify": "node scripts/test-utility-auto-notify.js",

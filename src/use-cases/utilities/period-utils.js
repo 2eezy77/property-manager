@@ -51,10 +51,66 @@ function pickLatestCollectibleBill(bills) {
   return ranked[0] || null;
 }
 
+/** Amount match for Gmail calendar-default merge into an open provider bill. */
+function amountsNearlyEqual(a, b, epsilon = 0.02) {
+  const left = Number(a);
+  const right = Number(b);
+  return Number.isFinite(left) && Number.isFinite(right) && Math.abs(left - right) < epsilon;
+}
+
+/**
+ * Prefer an open provider-period bill with the same amount (±epsilon) over creating
+ * a calendar-month phantom from a Gmail import that lacked period_parsed.
+ */
+function pickMatchingOpenProviderBill(bills, amount, epsilon = 0.02) {
+  return (
+    (bills || []).find((b) => {
+      if (isCalendarMonthPeriod(b.period_start, b.period_end)) return false;
+      const billAmt = Number(b.tenant_charge_amount ?? b.total_amount);
+      return amountsNearlyEqual(billAmt, amount, epsilon);
+    }) || null
+  );
+}
+
+/**
+ * Period bounds when merging a parsed Gmail row into an existing draft.
+ * Never let a calendar-default import overwrite a mid-month provider period.
+ */
+function resolveMergedBillingPeriods({ existing, parsed, bounds }) {
+  const existingStart = dayOnly(existing.period_start);
+  const existingEnd = dayOnly(existing.period_end);
+  const existingIsProvider = !isCalendarMonthPeriod(existingStart, existingEnd);
+
+  if (parsed.period_parsed && parsed.period_start && parsed.period_end) {
+    const parsedStart = dayOnly(parsed.period_start);
+    const parsedEnd = dayOnly(parsed.period_end);
+    return {
+      periodStart: existingStart <= parsedStart ? existingStart : parsedStart,
+      periodEnd: existingEnd >= parsedEnd ? existingEnd : parsedEnd,
+    };
+  }
+  if (existingIsProvider) {
+    return { periodStart: existingStart, periodEnd: existingEnd };
+  }
+  return {
+    periodStart:
+      bounds?.start ||
+      (existingStart <= dayOnly(parsed.period_start)
+        ? existingStart
+        : dayOnly(parsed.period_start)),
+    periodEnd:
+      bounds?.end ||
+      (existingEnd >= dayOnly(parsed.period_end) ? existingEnd : dayOnly(parsed.period_end)),
+  };
+}
+
 module.exports = {
   dayOnly,
   isCalendarMonthPeriod,
   groupHasProviderPeriod,
   rankCollectibleBills,
   pickLatestCollectibleBill,
+  amountsNearlyEqual,
+  pickMatchingOpenProviderBill,
+  resolveMergedBillingPeriods,
 };
