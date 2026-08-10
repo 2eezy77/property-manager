@@ -329,6 +329,11 @@ function autoNotifyEnabled() {
   return process.env.UTILITIES_AUTO_NOTIFY_ENABLED === 'true';
 }
 
+/** Shared empty summary when reminders must not run (auto-notify off / rolled back). */
+function remindersWhenNotifyDisabled() {
+  return { reminded3: 0, reminded7: 0, overdueStaff: 0, disabled: true };
+}
+
 /**
  * Pure hold reasons for draft auto-notify (excludes chargeable_after / notify errors).
  * Returns a short reason string when the draft must not be notified, else null.
@@ -425,5 +430,6 @@ module.exports = {
   autoNotifyEligibleDrafts,
   autoNotifyEnabled,
   draftAutoNotifyHoldReason,
+  remindersWhenNotifyDisabled,
   REVIEW_URL,
 };
