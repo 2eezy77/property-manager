@@ -6,6 +6,10 @@ const {
   refreshBillSplitsForBill,
 } = require('./domain');
 const { billingMonthKey } = require('./house-cover');
+const {
+  pickMatchingOpenProviderBill,
+  resolveMergedBillingPeriods,
+} = require('./period-utils');
 
 function billingMonth(dateStr) {
   return billingMonthKey(dateStr);
@@ -78,7 +82,6 @@ async function findMonthlyDraft(client, propertyId, serviceType, periodEnd) {
  * bill for the same property/service (same amount ±$0.02) instead of creating a phantom.
  */
 async function findOpenProviderBill(client, propertyId, serviceType, amount) {
-  const { isCalendarMonthPeriod, dayOnly } = require('./period-utils');
   const { rows } = await client.query(
     `SELECT *
        FROM utility_bills
@@ -88,14 +91,7 @@ async function findOpenProviderBill(client, propertyId, serviceType, amount) {
       ORDER BY period_end DESC, created_at DESC`,
     [propertyId, serviceType]
   );
-  const amt = Number(amount);
-  return (
-    rows.find((b) => {
-      if (isCalendarMonthPeriod(b.period_start, b.period_end)) return false;
-      const billAmt = Number(b.tenant_charge_amount ?? b.total_amount);
-      return Number.isFinite(amt) && Math.abs(billAmt - amt) < 0.02;
-    }) || null
-  );
+  return pickMatchingOpenProviderBill(rows, amount);
 }
 
 function electricAmountFields(parsed) {
@@ -149,22 +145,11 @@ async function upsertMonthlyDraft(client, {
     );
     // Prefer real provider service dates when the email parser extracted them.
     // Never let a calendar-default import overwrite an existing mid-month provider period.
-    const { isCalendarMonthPeriod } = require('./period-utils');
-    const existingStart = String(existing.period_start).slice(0, 10);
-    const existingEnd = String(existing.period_end).slice(0, 10);
-    const existingIsProvider = !isCalendarMonthPeriod(existingStart, existingEnd);
-    let periodStart;
-    let periodEnd;
-    if (parsed.period_parsed && parsed.period_start && parsed.period_end) {
-      periodStart = minDate(existingStart, parsed.period_start);
-      periodEnd = maxDate(existingEnd, parsed.period_end);
-    } else if (existingIsProvider) {
-      periodStart = existingStart;
-      periodEnd = existingEnd;
-    } else {
-      periodStart = bounds?.start || minDate(existingStart, parsed.period_start);
-      periodEnd = bounds?.end || maxDate(existingEnd, parsed.period_end);
-    }
+    const { periodStart, periodEnd } = resolveMergedBillingPeriods({
+      existing,
+      parsed,
+      bounds,
+    });
     const dueDate = maxDate(existing.due_date, parsed.due_date);
     const notes = [
       existing.notes,
@@ -259,6 +244,7 @@ module.exports = {
   minDate,
   maxDate,
   findMonthlyDraft,
+  findOpenProviderBill,
   upsertMonthlyDraft,
   refreshBillSplits,
 };
