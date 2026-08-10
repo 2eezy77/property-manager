@@ -178,4 +178,6 @@ module.exports = {
   executeCombineMonthlyDrafts,
   isCalendarMonthPeriod,
   groupHasProviderPeriod,
+  pickMergeAmount,
+  sortKeeperFirst,
 };
