@@ -32,6 +32,8 @@
     "test:utility-house-cover": "node scripts/test-utility-house-cover.js",
     "test:utility-portal-charge": "node scripts/test-utility-portal-charge.js",
     "test:utility-split-refresh": "node scripts/test-utility-split-refresh-safety.js",
+    "test:utility-split-domain": "node scripts/test-utility-split-domain.js",
+    "test:identity-fee-grace": "node scripts/test-identity-fee-grace.js",
     "import:cashapp": "node scripts/import-cashapp-payments.js",
     "import:cashapp:apply": "node scripts/import-cashapp-payments.js --apply",
     "import:dominion": "node scripts/import-dominion-billing-history.js",
@@ -83,7 +85,7 @@
     "test:balance-paid": "node scripts/test-balance-paid-month.js",
     "test:identity-crypto": "node scripts/test-identity-crypto.js",
     "test:lease-invite-identity": "node scripts/test-lease-invite-identity.js",
-    "test:identity:all": "npm run test:identity-crypto && npm run test:lease-invite-identity"
+    "test:identity:all": "npm run test:identity-crypto && npm run test:identity-fee-grace && npm run test:lease-invite-identity"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.27.0",
