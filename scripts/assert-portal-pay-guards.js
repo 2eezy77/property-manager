@@ -134,6 +134,13 @@ mustContain(
   'manager Payments must label utility payment type'
 );
 
+// Failed utility Stripe payments must clear payment_id so tenants can retry
+mustContain(
+  'src/webhooks/stripe.webhook.js',
+  ["payment_type === 'utility'", 'payment_id = NULL'],
+  'utility payment failures must clear split payment_id for retry'
+);
+
 if (failures.length) {
   console.error('assert:portal-pay FAILED:\n' + failures.map((f) => `  - ${f}`).join('\n'));
   process.exit(1);
