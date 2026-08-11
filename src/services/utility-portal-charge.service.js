@@ -2,9 +2,13 @@
  * Tenant portal pay for open utility splits (ACH / card / Cash App).
  * Keeps utility_bills / splits as the obligation source of truth;
  * creates payments.payment_type = 'utility' and links splits via payment_id.
+ *
+ * Payable once: payment_id IS NULL + bill notified/charging. pending is allowed
+ * only under that bill gate so recalc desync cannot block pay, but paid/charging
+ * rows are never selected.
  */
 
-const PAYABLE_SPLIT_STATUSES = ['notified', 'disputed', 'failed'];
+const PAYABLE_SPLIT_STATUSES = ['pending', 'notified', 'disputed', 'failed'];
 
 async function listOpenUtilitySplits(client, tenantId, { leaseId = null, splitId = null, forUpdate = false } = {}) {
   const params = [tenantId];
@@ -33,6 +37,7 @@ async function listOpenUtilitySplits(client, tenantId, { leaseId = null, splitId
             s.tenant_id,
             s.amount,
             s.status AS split_status,
+            s.payment_id,
             ub.id AS bill_id,
             ub.service_type,
             ub.provider_name,
@@ -107,6 +112,19 @@ async function prepareUtilityPortalCharge(client, {
     throw err;
   }
 
+  // Re-check after FOR UPDATE — another charge must not have claimed a share.
+  if (
+    splits.some(
+      (s) =>
+        s.payment_id != null
+        || !PAYABLE_SPLIT_STATUSES.includes(String(s.split_status))
+    )
+  ) {
+    const err = new Error('No open utility balance to pay.');
+    err.code = 'NOTHING_DUE';
+    throw err;
+  }
+
   const amountDollars = Math.round(
     splits.reduce((sum, s) => sum + Number(s.amount || 0), 0) * 100
   ) / 100;
@@ -149,15 +167,22 @@ async function prepareUtilityPortalCharge(client, {
     ]
   );
 
-  await client.query(
+  const { rowCount: claimed } = await client.query(
     `UPDATE utility_bill_splits
         SET payment_id = $1,
             status = 'charging',
             updated_at = NOW()
       WHERE id = ANY($2::uuid[])
-        AND payment_id IS NULL`,
-    [payment.id, splitIds]
+        AND payment_id IS NULL
+        AND status::text = ANY($3::text[])`,
+    [payment.id, splitIds, PAYABLE_SPLIT_STATUSES]
   );
+
+  if (Number(claimed) !== splitIds.length) {
+    const err = new Error('No open utility balance to pay.');
+    err.code = 'NOTHING_DUE';
+    throw err;
+  }
 
   await client.query(
     `UPDATE utility_bills

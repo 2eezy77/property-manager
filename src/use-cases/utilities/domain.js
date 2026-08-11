@@ -303,19 +303,101 @@ async function listBillsForPropertyMonth(client, propertyId, yearMonth) {
   return rows;
 }
 
-async function billHasFrozenSplits(client, billId) {
-  const { rows } = await client.query(
-    `SELECT 1 FROM utility_bill_splits
-      WHERE bill_id = $1 AND status::text = ANY($2::text[])
-      LIMIT 1`,
-    [billId, ['paid', 'waived', 'charging']]
+const FROZEN_SPLIT_STATUSES = ['paid', 'waived', 'charging'];
+const PRESERVE_OPEN_SPLIT_STATUSES = ['disputed', 'failed'];
+
+/** Open-split status for refresh/insert: notified bills stay tenant-payable. */
+function defaultOpenSplitStatus(billStatus) {
+  return billStatus === 'notified' || billStatus === 'charging' ? 'notified' : 'pending';
+}
+
+function isFrozenSplitRow(row) {
+  if (!row) return false;
+  if (row.payment_id != null) return true;
+  return FROZEN_SPLIT_STATUSES.includes(String(row.status));
+}
+
+/**
+ * Upsert computed splits without wiping paid / charging / payment-linked rows.
+ * Prevents recalc from recreating a second payable obligation for the same share.
+ */
+async function upsertBillSplits(client, bill, computedSplits) {
+  const { rows: existing } = await client.query(
+    `SELECT id, lease_id, tenant_id, amount, status, payment_id
+       FROM utility_bill_splits
+      WHERE bill_id = $1`,
+    [bill.id]
   );
-  return rows.length > 0;
+
+  const byLease = new Map();
+  for (const row of existing) {
+    byLease.set(row.lease_id, row);
+  }
+
+  const desiredLeaseIds = new Set(computedSplits.map((s) => s.leaseId));
+  const openStatus = defaultOpenSplitStatus(bill.status);
+  const allFrozen =
+    existing.length > 0
+    && existing.every(isFrozenSplitRow)
+    && computedSplits.every((s) => byLease.has(s.leaseId))
+    && existing.every((row) => desiredLeaseIds.has(row.lease_id));
+
+  if (allFrozen) {
+    return { updated: 0, inserted: 0, deleted: 0, skippedFrozen: existing.length };
+  }
+
+  let updated = 0;
+  let inserted = 0;
+  let deleted = 0;
+
+  for (const s of computedSplits) {
+    const cur = byLease.get(s.leaseId);
+    if (cur) {
+      if (isFrozenSplitRow(cur)) continue;
+      const nextStatus = PRESERVE_OPEN_SPLIT_STATUSES.includes(String(cur.status))
+        ? cur.status
+        : openStatus;
+      const { rowCount } = await client.query(
+        `UPDATE utility_bill_splits
+            SET amount = $2,
+                tenant_id = $3,
+                status = $4,
+                updated_at = NOW()
+          WHERE id = $1
+            AND payment_id IS NULL
+            AND status::text <> ALL($5::text[])`,
+        [cur.id, s.amount, s.tenantId, nextStatus, FROZEN_SPLIT_STATUSES]
+      );
+      if (rowCount) updated += 1;
+    } else {
+      await client.query(
+        `INSERT INTO utility_bill_splits (bill_id, lease_id, tenant_id, amount, status)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [bill.id, s.leaseId, s.tenantId, s.amount, openStatus]
+      );
+      inserted += 1;
+    }
+  }
+
+  for (const row of existing) {
+    if (desiredLeaseIds.has(row.lease_id)) continue;
+    if (isFrozenSplitRow(row)) continue;
+    const { rowCount } = await client.query(
+      `DELETE FROM utility_bill_splits
+        WHERE id = $1
+          AND payment_id IS NULL
+          AND status::text <> ALL($2::text[])`,
+      [row.id, FROZEN_SPLIT_STATUSES]
+    );
+    if (rowCount) deleted += 1;
+  }
+
+  return { updated, inserted, deleted, skippedFrozen: existing.filter(isFrozenSplitRow).length };
 }
 
 /**
  * Apply monthly house cover across a property-month, then refresh mutable bill splits.
- * Frozen bills (paid/waived/charging splits) keep amounts; cover columns still updated.
+ * Paid / waived / charging / payment-linked splits are never deleted or recreated.
  */
 async function refreshPropertyMonthSplits(client, { propertyId, yearMonth }) {
   const coverPerTenant = await loadPropertyHouseCover(client, propertyId);
@@ -338,7 +420,6 @@ async function refreshPropertyMonthSplits(client, { propertyId, yearMonth }) {
   let lastLeases = monthLeases;
 
   for (const bill of bills) {
-    const frozen = await billHasFrozenSplits(client, bill.id);
     const alloc = allocation.byBillId[bill.id] || {
       houseCoverApplied: 0,
       tenantPoolAmount: getBillSplitAmount(bill),
@@ -352,8 +433,6 @@ async function refreshPropertyMonthSplits(client, { propertyId, yearMonth }) {
         WHERE id = $1`,
       [bill.id, alloc.houseCoverApplied, alloc.tenantPoolAmount]
     );
-
-    if (frozen) continue;
 
     const leases = await loadActiveLeases(
       client,
@@ -372,14 +451,7 @@ async function refreshPropertyMonthSplits(client, { propertyId, yearMonth }) {
       period_end: bill.period_end,
     });
 
-    await client.query('DELETE FROM utility_bill_splits WHERE bill_id = $1', [bill.id]);
-    for (const s of splits) {
-      await client.query(
-        `INSERT INTO utility_bill_splits (bill_id, lease_id, tenant_id, amount, status)
-         VALUES ($1,$2,$3,$4,'pending')`,
-        [bill.id, s.leaseId, s.tenantId, s.amount]
-      );
-    }
+    await upsertBillSplits(client, bill, splits);
 
     const prorated = splits.filter((s) => s.prorated);
     if (prorated.length) {
@@ -528,14 +600,7 @@ async function refreshBillSplitsForBill(client, bill, { preserveStatuses: _prese
     period_end: bill.period_end,
   });
 
-  await client.query('DELETE FROM utility_bill_splits WHERE bill_id = $1', [bill.id]);
-  for (const s of splits) {
-    await client.query(
-      `INSERT INTO utility_bill_splits (bill_id, lease_id, tenant_id, amount, status)
-       VALUES ($1,$2,$3,$4,'pending')`,
-      [bill.id, s.leaseId, s.tenantId, s.amount]
-    );
-  }
+  await upsertBillSplits(client, bill, splits);
 
   return { leases: leases.length, splits };
 }
@@ -547,6 +612,9 @@ module.exports = {
   getBillSplitAmount,
   loadUnitElectricShares,
   inclusiveDays,
+  defaultOpenSplitStatus,
+  isFrozenSplitRow,
+  upsertBillSplits,
   refreshBillSplitsForBill,
   refreshPropertyMonthSplits,
   loadPropertyHouseCover,

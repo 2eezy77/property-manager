@@ -33,7 +33,8 @@ async function waiveOpenSplits(client, billId, waivedBy) {
             waived_at = NOW(),
             updated_at = NOW()
       WHERE bill_id = $1
-        AND status NOT IN ('paid', 'waived')`,
+        AND payment_id IS NULL
+        AND status NOT IN ('paid', 'waived', 'charging')`,
     [billId, waivedBy]
   );
   return rowCount ?? 0;
@@ -59,8 +60,9 @@ async function settleBill(client, billId, note = RESOLVED_NOTE) {
 }
 
 async function reopenLatestForCollection(client, bill) {
+  const reopenStatus = bill.status === 'notified' ? 'notified' : 'pending';
   const { rows: splits } = await client.query(
-    `SELECT id, status FROM utility_bill_splits WHERE bill_id = $1`,
+    `SELECT id, status, payment_id FROM utility_bill_splits WHERE bill_id = $1`,
     [bill.id]
   );
   if (!splits.length) {
@@ -79,20 +81,21 @@ async function reopenLatestForCollection(client, bill) {
     for (const s of computed) {
       await client.query(
         `INSERT INTO utility_bill_splits (bill_id, lease_id, tenant_id, amount, status)
-         VALUES ($1,$2,$3,$4,'pending')`,
-        [bill.id, s.leaseId, s.tenantId, s.amount]
+         VALUES ($1,$2,$3,$4,$5)`,
+        [bill.id, s.leaseId, s.tenantId, s.amount, reopenStatus]
       );
     }
   } else {
     await client.query(
       `UPDATE utility_bill_splits
-          SET status = 'pending',
+          SET status = $2,
               waived_by = NULL,
               waived_at = NULL,
               updated_at = NOW()
         WHERE bill_id = $1
-          AND status = 'waived'`,
-      [bill.id]
+          AND status = 'waived'
+          AND payment_id IS NULL`,
+      [bill.id, reopenStatus]
     );
   }
 
