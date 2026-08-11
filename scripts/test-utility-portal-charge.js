@@ -10,7 +10,7 @@ const {
 
 assert.deepStrictEqual(
   PAYABLE_SPLIT_STATUSES.slice().sort(),
-  ['disputed', 'failed', 'notified']
+  ['disputed', 'failed', 'notified', 'pending']
 );
 
 {

@@ -105,8 +105,18 @@ if (cardIdx === -1 || importIdx === -1 || stripeIdx === -1 || methodIdx === -1) 
 // Portal utility pay: link splits → payments.payment_type = utility (not landlord ACH)
 mustContain(
   'src/services/utility-portal-charge.service.js',
-  ["payment_type", "'utility'", 'prepareUtilityPortalCharge', 'listOpenUtilitySplits'],
+  ["payment_type", "'utility'", 'prepareUtilityPortalCharge', 'listOpenUtilitySplits', "'pending'"],
   'utility portal charge service must create utility payments linked to splits'
+);
+mustContain(
+  'src/use-cases/utilities/domain.js',
+  ['upsertBillSplits', 'defaultOpenSplitStatus', 'payment_id IS NULL'],
+  'utility split refresh must upsert without wiping paid/payment-linked rows'
+);
+mustContain(
+  'src/use-cases/utilities/uc03-notify-tenants.js',
+  ["status = 'pending'", 'payment_id IS NULL', 'backfillSplitNotifications'],
+  'UC03 must heal pending splits on already-notified bills'
 );
 mustContain(
   'src/routes/payments.routes.js',
