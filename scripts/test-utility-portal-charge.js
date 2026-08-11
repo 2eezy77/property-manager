@@ -21,6 +21,12 @@ assert.deepStrictEqual(
   assert.deepStrictEqual(empty.utilitySplits, []);
 }
 
+// Payable statuses only — draft/paid/charging must not be offered for portal pay
+assert.ok(!PAYABLE_SPLIT_STATUSES.includes('draft'));
+assert.ok(!PAYABLE_SPLIT_STATUSES.includes('paid'));
+assert.ok(!PAYABLE_SPLIT_STATUSES.includes('charging'));
+assert.ok(PAYABLE_SPLIT_STATUSES.includes('disputed'), 'disputed shares remain payable');
+
 {
   const splits = [
     {
