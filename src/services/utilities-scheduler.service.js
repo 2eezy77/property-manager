@@ -55,9 +55,10 @@ async function runUtilitiesSync({ force = false } = {}) {
       const {
         autoNotifyEnabled,
         sendUtilityReminders,
+        remindersWhenNotifyDisabled,
       } = require('./utility-comms.service');
       const reminders = !autoNotifyEnabled()
-        ? { reminded3: 0, reminded7: 0, overdueStaff: 0, disabled: true }
+        ? remindersWhenNotifyDisabled()
         : await sendUtilityReminders();
       return { skipped: false, reason: 'no_gmail', import: null, reminders };
     }
@@ -66,6 +67,7 @@ async function runUtilitiesSync({ force = false } = {}) {
     const {
       autoNotifyEligibleDrafts,
       sendUtilityReminders,
+      remindersWhenNotifyDisabled,
     } = require('./utility-comms.service');
 
     let imported = null;
@@ -111,7 +113,7 @@ async function runUtilitiesSync({ force = false } = {}) {
     // Reminders only for already-notified bills; skip entirely while auto-notify is off
     // so we don't ping tenants after an accidental notify + rollback.
     const reminders = notify.disabled
-      ? { reminded3: 0, reminded7: 0, overdueStaff: 0, disabled: true }
+      ? remindersWhenNotifyDisabled()
       : await sendUtilityReminders();
 
     console.log(

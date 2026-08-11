@@ -31,6 +31,8 @@
     "test:utility-emails": "node scripts/test-utility-email-parser.js",
     "test:utility-house-cover": "node scripts/test-utility-house-cover.js",
     "test:utility-portal-charge": "node scripts/test-utility-portal-charge.js",
+    "test:utility-split-domain": "node scripts/test-utility-split-domain.js",
+    "test:identity-fee-grace": "node scripts/test-identity-fee-grace.js",
     "import:cashapp": "node scripts/import-cashapp-payments.js",
     "import:cashapp:apply": "node scripts/import-cashapp-payments.js --apply",
     "import:dominion": "node scripts/import-dominion-billing-history.js",
@@ -43,6 +45,12 @@
     "utilities:ensure-cycles": "node scripts/ensure-utility-cycles.js",
     "test:uc10-combine": "node scripts/test-uc10-combine-periods.js",
     "test:collectible-priority": "node scripts/test-collectible-provider-priority.js",
+    "test:utility-gmail-merge": "node scripts/test-utility-gmail-merge.js",
+    "test:utilities-scheduler-reminders": "node scripts/test-utilities-scheduler-reminders.js",
+    "test:rent-status-classify": "node scripts/test-rent-status-classify.js",
+    "test:manual-payment-dedupe": "node scripts/test-manual-payment-dedupe.js",
+    "test:utility-auto-notify": "node scripts/test-utility-auto-notify.js",
+    "test:site-visibility": "node scripts/test-site-visibility.js",
     "utilities:recalc-splits": "node scripts/recalculate-utility-splits.js",
     "utilities:recalc-splits:apply": "node scripts/recalculate-utility-splits.js --apply",
     "import:mortgage": "node scripts/import-mortgage-statements.js",
@@ -76,7 +84,7 @@
     "test:balance-paid": "node scripts/test-balance-paid-month.js",
     "test:identity-crypto": "node scripts/test-identity-crypto.js",
     "test:lease-invite-identity": "node scripts/test-lease-invite-identity.js",
-    "test:identity:all": "npm run test:identity-crypto && npm run test:lease-invite-identity"
+    "test:identity:all": "npm run test:identity-crypto && npm run test:identity-fee-grace && npm run test:lease-invite-identity"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.27.0",
