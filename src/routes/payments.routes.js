@@ -50,6 +50,8 @@ const {
   listOpenUtilitySplits,
   summarizeOpenUtilities,
   prepareUtilityPortalCharge,
+  releaseUtilitySplitsForFailedPayment,
+  markUtilitySplitsPaidForPayment,
 } = require('../services/utility-portal-charge.service');
 const { activateNativeLeaseAfterDeposit } = require('../services/native-lease-activate.service');
 const {
@@ -730,12 +732,11 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
     }
 
     if (localStatus === 'succeeded' && paymentType === 'utility') {
-      await client.query(
-        `UPDATE utility_bill_splits
-            SET status = 'paid', updated_at = NOW()
-          WHERE payment_id = $1`,
-        [payment.id]
-      );
+      await markUtilitySplitsPaidForPayment(client, payment.id);
+    }
+
+    if (localStatus === 'failed' && paymentType === 'utility') {
+      await releaseUtilitySplitsForFailedPayment(client, payment.id);
     }
 
     if (localStatus === 'succeeded' && paymentType === 'security_deposit') {
@@ -1260,9 +1261,19 @@ router.get('/cashapp/sync', Guards.tenantOnly, async (req, res) => {
             amount: parseFloat(payment.amount),
           });
         }
+        let utilityBillIds = [];
+        if (rowCount && payment.payment_type === 'utility') {
+          utilityBillIds = await markUtilitySplitsPaidForPayment(client, payment.id);
+        }
         await client.query('COMMIT');
         if (rowCount) {
           status = 'succeeded';
+          for (const billId of utilityBillIds) {
+            const { maybeSettleBill } = require('../use-cases/utilities');
+            await maybeSettleBill(pool, billId).catch((e) =>
+              console.error('[payments/cashapp/sync] settle utility bill', billId, e.message)
+            );
+          }
           await settleSuccessfulRentPayment(pool, {
             paymentId: payment.id,
             tenantId: payment.tenant_id,
@@ -1287,18 +1298,24 @@ router.get('/cashapp/sync', Guards.tenantOnly, async (req, res) => {
       );
       status = 'processing';
     } else if (
-      pi.status === 'canceled'
-      || pi.last_payment_error
-      || pi.status === 'requires_payment_method'
+      (pi.status === 'canceled' || pi.status === 'requires_payment_method')
+      && status !== 'succeeded'
     ) {
+      // Only terminal PI failures — do not treat a stale last_payment_error on a
+      // still-processing intent as failure (would unlock splits then double-charge).
       failureReason = pi.last_payment_error?.message || 'Cash App payment was not completed.';
-      await pool.query(
+      const { rows: failedRows } = await pool.query(
         `UPDATE payments
             SET status = 'failed', failure_reason = $1, updated_at = NOW()
-          WHERE id = $2`,
+          WHERE id = $2
+            AND status IN ('pending', 'processing')
+         RETURNING id, payment_type`,
         [failureReason, payment.id]
       );
-      status = 'failed';
+      if (failedRows[0]?.payment_type === 'utility') {
+        await releaseUtilitySplitsForFailedPayment(pool, failedRows[0].id);
+      }
+      if (failedRows[0]) status = 'failed';
     }
 
     res.json({
