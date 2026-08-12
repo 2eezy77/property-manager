@@ -12,18 +12,29 @@ const SKIP_PATH_PREFIXES = [
 
 const SKIP_EXACT = new Set([
   '/auth/me',
-  '/auth/refresh',
 ]);
+
+/** Full request path (mount-safe). Express req.path is router-relative. */
+function requestPath(req) {
+  const raw = req.originalUrl || req.url || req.path || '';
+  const pathOnly = String(raw).split('?')[0];
+  if (pathOnly) return pathOnly;
+  const base = req.baseUrl || '';
+  const leaf = req.path || '';
+  return `${base}${leaf}` || '';
+}
 
 function shouldCapture(req) {
   if (!req.user?.id) return false;
-  const p = req.path || req.url?.split('?')[0] || '';
+  const p = requestPath(req);
   if (SKIP_EXACT.has(p)) return false;
   if (SKIP_PATH_PREFIXES.some((pre) => p.startsWith(pre))) return false;
   if (p.startsWith('/webhooks')) return false;
   const method = req.method?.toUpperCase();
+  // Cash App return sync is GET but is a real payment event
+  if (method === 'GET' && p === '/api/payments/cashapp/sync') return true;
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return false;
-  return p.startsWith('/api/') || p === '/auth/login' || p === '/auth/logout';
+  return p.startsWith('/api/') || p.startsWith('/auth/');
 }
 
 function attachActivityAudit(req, res) {
@@ -31,6 +42,7 @@ function attachActivityAudit(req, res) {
 
   const realActorId = req.user.impersonatedBy || req.user.id;
   const displayActorId = req.user.impersonatedBy ? req.user.id : req.user.id;
+  const path = requestPath(req);
 
   res.on('finish', () => {
     logActivity({
@@ -38,7 +50,7 @@ function attachActivityAudit(req, res) {
       displayActorId,
       impersonatorUserId: req.user.impersonatedBy || null,
       method: req.method,
-      path: req.path || req.originalUrl?.split('?')[0],
+      path,
       statusCode: res.statusCode,
       body: req.body,
       ip: req.ip,
@@ -48,4 +60,4 @@ function attachActivityAudit(req, res) {
   });
 }
 
-module.exports = { attachActivityAudit, shouldCapture };
+module.exports = { attachActivityAudit, shouldCapture, requestPath };

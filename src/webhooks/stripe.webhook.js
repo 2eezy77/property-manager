@@ -31,6 +31,7 @@ const express = require('express');
 
 const { constructWebhookEvent } = require('../services/stripe.service');
 const { maybeSettleBill }       = require('../use-cases/utilities');
+const { logPaymentConfirmed }   = require('../services/activity-audit.service');
 const {
   notifyPaymentReceived,
   notifyPaymentFailed,
@@ -599,6 +600,14 @@ async function onChargeSucceeded(charge, eventId) {
     }
     console.log(`[stripe-webhook] charge succeeded: ${charge.id} ($${amount}) [${payment_type}]`);
 
+    logPaymentConfirmed({
+      tenantId: tenant_id,
+      amount,
+      paymentType: payment_type,
+      paymentMethod: metadata?.payment_method || metadata?.source || charge.payment_method_details?.type,
+      paymentId,
+    }).catch((err) => console.error('[stripe-webhook] activity:', err.message));
+
     if (payment_type !== 'identity_verification_fee') {
       notifyPaymentReceived({
         paymentId,
@@ -912,6 +921,14 @@ async function onSucceeded(pi, eventId) {
       await maybeSettleBill(pool, billId);
     }
     console.log(`[stripe-webhook] payment succeeded: ${pi.id} ($${amount}) [${payment_type}]`);
+
+    logPaymentConfirmed({
+      tenantId: tenant_id,
+      amount,
+      paymentType: payment_type,
+      paymentMethod: metadata?.payment_method || metadata?.source || pi.payment_method_types?.[0],
+      paymentId,
+    }).catch((err) => console.error('[stripe-webhook] activity:', err.message));
 
     if (payment_type !== 'identity_verification_fee') {
       notifyPaymentReceived({
