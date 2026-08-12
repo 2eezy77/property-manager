@@ -204,9 +204,48 @@ async function prepareUtilityPortalCharge(client, {
   };
 }
 
+/**
+ * Abandoned / failed Stripe utility pays must clear payment_id so portal retry works.
+ * (onFailed already did this; onCanceled + Cash App sync failure did not.)
+ * @param {import('pg').Pool | import('pg').PoolClient} db
+ * @returns {Promise<string[]>} distinct bill ids touched
+ */
+async function releaseUtilitySplitsForFailedPayment(db, paymentId) {
+  if (!paymentId) return [];
+  const { rows } = await db.query(
+    `UPDATE utility_bill_splits
+        SET status = 'failed',
+            payment_id = NULL,
+            updated_at = NOW()
+      WHERE payment_id = $1
+     RETURNING bill_id`,
+    [paymentId]
+  );
+  return [...new Set(rows.map((r) => r.bill_id).filter(Boolean))];
+}
+
+/**
+ * @param {import('pg').Pool | import('pg').PoolClient} db
+ * @returns {Promise<string[]>} distinct bill ids touched
+ */
+async function markUtilitySplitsPaidForPayment(db, paymentId) {
+  if (!paymentId) return [];
+  const { rows } = await db.query(
+    `UPDATE utility_bill_splits
+        SET status = 'paid',
+            updated_at = NOW()
+      WHERE payment_id = $1
+     RETURNING bill_id`,
+    [paymentId]
+  );
+  return [...new Set(rows.map((r) => r.bill_id).filter(Boolean))];
+}
+
 module.exports = {
   PAYABLE_SPLIT_STATUSES,
   listOpenUtilitySplits,
   summarizeOpenUtilities,
   prepareUtilityPortalCharge,
+  releaseUtilitySplitsForFailedPayment,
+  markUtilitySplitsPaidForPayment,
 };

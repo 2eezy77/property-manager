@@ -6,6 +6,8 @@ const assert = require('assert');
 const {
   summarizeOpenUtilities,
   PAYABLE_SPLIT_STATUSES,
+  releaseUtilitySplitsForFailedPayment,
+  markUtilitySplitsPaidForPayment,
 } = require('../src/services/utility-portal-charge.service');
 
 assert.deepStrictEqual(
@@ -56,4 +58,34 @@ assert.deepStrictEqual(
   assert.strictEqual(summary.utilitySplits[1].amount, 7.655);
 }
 
-console.log('test-utility-portal-charge OK');
+(async () => {
+  // Abandoned/canceled utility pays must clear payment_id (Bugbot).
+  const calls = [];
+  const db = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return {
+        rows: [
+          { bill_id: 'bill-a' },
+          { bill_id: 'bill-a' },
+          { bill_id: 'bill-b' },
+        ],
+      };
+    },
+  };
+  const billIds = await releaseUtilitySplitsForFailedPayment(db, 'pay-1');
+  assert.deepStrictEqual(billIds, ['bill-a', 'bill-b']);
+  assert.ok(calls[0].sql.includes('payment_id = NULL'));
+  assert.ok(calls[0].sql.includes("status = 'failed'"));
+  assert.deepStrictEqual(calls[0].params, ['pay-1']);
+
+  const paidIds = await markUtilitySplitsPaidForPayment(db, 'pay-2');
+  assert.deepStrictEqual(paidIds, ['bill-a', 'bill-b']);
+  assert.ok(calls[1].sql.includes("status = 'paid'"));
+  assert.ok(!calls[1].sql.includes('payment_id = NULL'));
+
+  console.log('test-utility-portal-charge OK');
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

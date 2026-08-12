@@ -50,6 +50,8 @@ const {
   listOpenUtilitySplits,
   summarizeOpenUtilities,
   prepareUtilityPortalCharge,
+  releaseUtilitySplitsForFailedPayment,
+  markUtilitySplitsPaidForPayment,
 } = require('../services/utility-portal-charge.service');
 const { activateNativeLeaseAfterDeposit } = require('../services/native-lease-activate.service');
 const {
@@ -730,12 +732,11 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
     }
 
     if (localStatus === 'succeeded' && paymentType === 'utility') {
-      await client.query(
-        `UPDATE utility_bill_splits
-            SET status = 'paid', updated_at = NOW()
-          WHERE payment_id = $1`,
-        [payment.id]
-      );
+      await markUtilitySplitsPaidForPayment(client, payment.id);
+    }
+
+    if (localStatus === 'failed' && paymentType === 'utility') {
+      await releaseUtilitySplitsForFailedPayment(client, payment.id);
     }
 
     if (localStatus === 'succeeded' && paymentType === 'security_deposit') {
@@ -1260,9 +1261,19 @@ router.get('/cashapp/sync', Guards.tenantOnly, async (req, res) => {
             amount: parseFloat(payment.amount),
           });
         }
+        let utilityBillIds = [];
+        if (rowCount && payment.payment_type === 'utility') {
+          utilityBillIds = await markUtilitySplitsPaidForPayment(client, payment.id);
+        }
         await client.query('COMMIT');
         if (rowCount) {
           status = 'succeeded';
+          for (const billId of utilityBillIds) {
+            const { maybeSettleBill } = require('../use-cases/utilities');
+            await maybeSettleBill(pool, billId).catch((e) =>
+              console.error('[payments/cashapp/sync] settle utility bill', billId, e.message)
+            );
+          }
           await settleSuccessfulRentPayment(pool, {
             paymentId: payment.id,
             tenantId: payment.tenant_id,
@@ -1298,6 +1309,9 @@ router.get('/cashapp/sync', Guards.tenantOnly, async (req, res) => {
           WHERE id = $2`,
         [failureReason, payment.id]
       );
+      if (payment.payment_type === 'utility') {
+        await releaseUtilitySplitsForFailedPayment(pool, payment.id);
+      }
       status = 'failed';
     }
 
