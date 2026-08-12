@@ -115,8 +115,23 @@ mustContain(
 );
 mustContain(
   'src/use-cases/utilities/uc03-notify-tenants.js',
-  ["status = 'pending'", 'payment_id IS NULL', 'backfillSplitNotifications'],
+  ['healPendingSplitsForBill', 'notify-splits'],
   'UC03 must heal pending splits on already-notified bills'
+);
+mustContain(
+  'src/use-cases/utilities/notify-splits.js',
+  ["status = 'pending'", 'payment_id IS NULL', 'channel = \'in_app\''],
+  'notify heal must promote pending→notified without payment_id and stay in-app'
+);
+mustContain(
+  'src/use-cases/utilities/enforce-latest-collectible.js',
+  ['payment_id IS NULL', "'charging'", 'reopenStatus'],
+  'collectible settle must not waive/reopen payment-linked or charging splits'
+);
+mustContain(
+  'src/webhooks/stripe.webhook.js',
+  ["status = 'failed'", 'payment_id = NULL', "payment_type === 'utility'"],
+  'failed utility Stripe payments must clear payment_id so tenants can retry'
 );
 mustContain(
   'src/routes/payments.routes.js',

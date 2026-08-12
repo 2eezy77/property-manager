@@ -32,6 +32,7 @@
     "test:utility-house-cover": "node scripts/test-utility-house-cover.js",
     "test:utility-portal-charge": "node scripts/test-utility-portal-charge.js",
     "test:utility-split-refresh": "node scripts/test-utility-split-refresh-safety.js",
+    "test:utility-portal-pay-heal": "node scripts/test-utility-portal-pay-heal.js",
     "import:cashapp": "node scripts/import-cashapp-payments.js",
     "import:cashapp:apply": "node scripts/import-cashapp-payments.js --apply",
     "import:dominion": "node scripts/import-dominion-billing-history.js",
