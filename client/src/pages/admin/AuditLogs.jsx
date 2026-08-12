@@ -7,9 +7,9 @@ import Panel from '@/components/ui/Panel';
 
 const CATEGORIES = [
   ['', 'All types'],
-  ['auth', 'Sign-in'],
-  ['utilities', 'Utilities'],
   ['payments', 'Payments'],
+  ['utilities', 'Utilities'],
+  ['auth', 'Sign-in'],
   ['maintenance', 'Maintenance'],
   ['users', 'Users'],
   ['communications', 'Email'],
@@ -18,10 +18,10 @@ const CATEGORIES = [
 ];
 
 const WHEN_OPTIONS = [
-  ['', 'All time'],
-  ['24h', 'Last 24 hours'],
   ['7d', 'Last 7 days'],
+  ['24h', 'Last 24 hours'],
   ['30d', 'Last 30 days'],
+  ['', 'All time'],
 ];
 
 const ROLE_OPTIONS = [
@@ -79,7 +79,7 @@ function FilterChip({ active, onClick, children }) {
       type="button"
       onClick={onClick}
       className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-        active ? 'bg-violet-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:border-violet-200'
+        active ? 'bg-slate-800 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-300'
       }`}
     >
       {children}
@@ -94,9 +94,10 @@ export default function ActivityLogPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [category, setCategory] = useState('');
-  const [since, setSince] = useState('30d');
+  const [since, setSince] = useState('7d');
   const [role, setRole] = useState('');
   const [failedOnly, setFailedOnly] = useState(false);
+  const [showSignIns, setShowSignIns] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -107,6 +108,8 @@ export default function ActivityLogPage() {
       if (since) params.set('since', since);
       if (role) params.set('role', role);
       if (failedOnly) params.set('failed', '1');
+      // Default API hides successful auth; only include when asked or filtering Sign-in
+      if (showSignIns || category === 'auth') params.set('hideAuth', '0');
       const { data } = await api.get(`/api/owner/activity-log?${params}`);
       setLogs(data.logs || []);
       setTotal(data.total ?? 0);
@@ -117,7 +120,7 @@ export default function ActivityLogPage() {
     } finally {
       setLoading(false);
     }
-  }, [category, since, role, failedOnly]);
+  }, [category, since, role, failedOnly, showSignIns]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -126,7 +129,7 @@ export default function ActivityLogPage() {
       <PageHeader
         portal="admin"
         title="Activity log"
-        subtitle="Same list for you and your co-owner — one place to see who did what this month."
+        subtitle="Payments, utilities, and real portal changes — not every sign-in."
         actions={(
           <button
             type="button"
@@ -139,31 +142,10 @@ export default function ActivityLogPage() {
         )}
       />
 
-      <div className="rounded-2xl border-2 border-violet-200 bg-violet-50 px-5 py-4">
-        <p className="text-sm font-bold text-slate-900">
-          {policy?.headline || 'Shared log — every owner sees the same events.'}
-        </p>
-        <p className="mt-2 text-sm text-slate-700">
-          {policy?.recommendation || 'We log real changes (payments, utilities, passwords), not every page click.'}
-        </p>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Recorded</p>
-            <ul className="mt-1.5 list-disc pl-4 text-xs text-slate-700 space-y-0.5">
-              {(policy?.tracks || []).map((t) => <li key={t}>{t}</li>)}
-            </ul>
-          </div>
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Not recorded</p>
-            <ul className="mt-1.5 list-disc pl-4 text-xs text-slate-700 space-y-0.5">
-              {(policy?.skips || []).map((t) => <li key={t}>{t}</li>)}
-            </ul>
-          </div>
-        </div>
-        {policy?.visibility && (
-          <p className="mt-3 text-xs text-slate-500">{policy.visibility}</p>
-        )}
-      </div>
+      <p className="text-sm text-slate-600">
+        {policy?.recommendation
+          || 'Successful sign-ins stay hidden by default. Use Payments or failed-only when chasing an issue.'}
+      </p>
 
       <Panel className="!p-4 space-y-4">
         <div>
@@ -190,15 +172,27 @@ export default function ActivityLogPage() {
             ))}
           </div>
         </div>
-        <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={failedOnly}
-            onChange={(e) => setFailedOnly(e.target.checked)}
-            className="rounded border-slate-300 text-violet-600"
-          />
-          Show failed actions only (wrong password, errors)
-        </label>
+        <div className="flex flex-wrap gap-4">
+          <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={failedOnly}
+              onChange={(e) => setFailedOnly(e.target.checked)}
+              className="rounded border-slate-300 text-slate-800"
+            />
+            Failed only
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showSignIns || category === 'auth'}
+              onChange={(e) => setShowSignIns(e.target.checked)}
+              disabled={category === 'auth'}
+              className="rounded border-slate-300 text-slate-800"
+            />
+            Include successful sign-ins
+          </label>
+        </div>
       </Panel>
 
       {error && (
@@ -207,12 +201,14 @@ export default function ActivityLogPage() {
 
       {loading ? (
         <div className="flex h-40 items-center justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
         </div>
       ) : logs.length === 0 ? (
         <div className="portal-card p-10 text-center text-sm text-slate-500 space-y-2">
           <p>Nothing matches these filters yet.</p>
-          <p className="text-xs">Try <strong>All time</strong>. New events appear after sign-in, payments, utilities, or other portal changes.</p>
+          <p className="text-xs">
+            Try <strong>All time</strong> or turn on <strong>Include successful sign-ins</strong>.
+          </p>
         </div>
       ) : (
         <div className="portal-card overflow-hidden !p-0">
@@ -254,13 +250,13 @@ export default function ActivityLogPage() {
   );
 }
 
-/** Compact list for owner dashboard — same API, limit 5 */
+/** Compact list for owner dashboard — payments-first, no sign-in spam */
 export function RecentActivitySnippet() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.get('/api/owner/activity-log?limit=5&since=30d')
+    api.get('/api/owner/activity-log?limit=5&since=7d')
       .then(({ data }) => setLogs(data.logs || []))
       .catch(() => setLogs([]))
       .finally(() => setLoading(false));
@@ -276,7 +272,7 @@ export function RecentActivitySnippet() {
         <div className="space-y-2">{[1, 2, 3].map((i) => <div key={i} className="h-10 skeleton rounded-lg" />)}</div>
       ) : logs.length === 0 ? (
         <p className="text-sm text-slate-500 py-4 text-center">
-          No portal changes logged this month yet.
+          No payments or portal changes this week yet.
         </p>
       ) : (
         <ul className="divide-y divide-slate-100 -mx-1">
@@ -290,7 +286,7 @@ export function RecentActivitySnippet() {
       )}
       <Link
         to="/admin/activity"
-        className="mt-3 block text-center text-xs font-semibold text-violet-700 hover:underline"
+        className="mt-3 block text-center text-xs font-semibold text-slate-700 hover:underline"
       >
         Open activity log
       </Link>

@@ -58,6 +58,40 @@ assert.strictEqual(
   false
 );
 
+// Allowlist: Plaid link-token and generic noise must not be captured
+assert.strictEqual(
+  shouldCapture({
+    user: { id: 'u1' },
+    method: 'POST',
+    originalUrl: '/api/payments/plaid/link-token',
+  }),
+  false
+);
+assert.strictEqual(
+  shouldCapture({
+    user: { id: 'u1' },
+    method: 'POST',
+    originalUrl: '/api/payments/plaid/exchange',
+  }),
+  true
+);
+assert.strictEqual(
+  shouldCapture({
+    user: { id: 'u1' },
+    method: 'POST',
+    originalUrl: '/api/messages',
+  }),
+  false
+);
+assert.strictEqual(
+  shouldCapture({
+    user: { id: 'u1' },
+    method: 'POST',
+    originalUrl: '/api/utilities/bills/abc/notify',
+  }),
+  true
+);
+
 const actor = { first_name: 'Osanin', last_name: 'Murillo', email: 'o@x.com' };
 
 assert.strictEqual(

@@ -319,24 +319,21 @@ function buildSummary({ actor, impersonator, method, path, body, statusCode }) {
 /** Plain guidance returned to the Activity log UI (same for every owner viewer). */
 function getActivityPolicy() {
   return {
-    headline: 'Shared log — every owner sees the same events.',
+    headline: 'Shared log — meaningful portal changes only.',
     tracks: [
-      'Both owners (you and your co-owner), manager, and tenants',
-      'Password sign-in, portal opens (returning sessions), sign-out, failed sign-in',
-      'Payments like Stripe: ACH / card / Cash App for rent, deposit, and utilities (started + confirmed)',
-      'Billing runs, late fees, autopay, bank link',
-      'Utilities: bills, notify, disputes',
-      'Passwords, launch emails, announcements',
-      'Maintenance and portal previews',
+      'Payments (ACH / card / Cash App) for rent, deposit, and utilities — started + confirmed',
+      'Failed sign-ins; at most one portal open per person per day',
+      'Utilities notify / disputes, billing, bank link, passwords',
+      'Maintenance, announcements, leases, site visits',
     ],
     skips: [
-      'Routine page loads and /auth/me',
-      'Repeat session opens within 4 hours (debounced)',
+      'Page loads, inbox clicks, Plaid link-token, routine API chatter',
+      'Sign-out and repeat sign-ins within 24 hours',
       'Passwords and bank tokens (always redacted)',
     ],
     visibility: 'Owners only. Managers and tenants cannot open this page.',
     recommendation:
-      'One source of truth for the month — no need to ask each other who did what.',
+      'Filter to Payments when chasing a charge. Sign-ins stay hidden unless you ask for them.',
     shared: true,
   };
 }
@@ -450,30 +447,53 @@ async function logActivity({
   return rows[0];
 }
 
-const SESSION_OPEN_DEBOUNCE_HOURS = 4;
+/** One successful portal-open line per person inside this window (login or refresh). */
+const SESSION_OPEN_DEBOUNCE_HOURS = 24;
 
-/**
- * Log a returning portal session (refresh cookie), at most once per debounce window.
- * Password sign-ins still use /auth/login via logActivity.
- */
-async function logSessionOpen({ userId, ip }) {
-  if (!userId) return null;
+async function hasRecentPortalOpen(userId) {
   const { rows } = await pool.query(
     `SELECT 1
        FROM activity_audit_log
       WHERE actor_user_id = $1
         AND action IN ('login', 'session')
+        AND COALESCE(status_code, 200) < 400
         AND created_at > NOW() - ($2::int * INTERVAL '1 hour')
       LIMIT 1`,
     [userId, SESSION_OPEN_DEBOUNCE_HOURS]
   );
-  if (rows.length) return null;
+  return rows.length > 0;
+}
+
+/**
+ * Log a returning portal session (refresh cookie), at most once per debounce window.
+ */
+async function logSessionOpen({ userId, ip }) {
+  if (!userId) return null;
+  if (await hasRecentPortalOpen(userId)) return null;
   return logActivity({
     realActorId: userId,
     displayActorId: userId,
     method: 'POST',
     path: '/auth/refresh',
     statusCode: 200,
+    ip: ip ?? null,
+  });
+}
+
+/**
+ * Successful password sign-in — debounced with session opens so the feed is not login spam.
+ * Failed sign-ins still use logActivity directly (always recorded).
+ */
+async function logSignIn({ userId, ip, email }) {
+  if (!userId) return null;
+  if (await hasRecentPortalOpen(userId)) return null;
+  return logActivity({
+    realActorId: userId,
+    displayActorId: userId,
+    method: 'POST',
+    path: '/auth/login',
+    statusCode: 200,
+    body: email ? { email } : undefined,
     ip: ip ?? null,
   });
 }
@@ -515,6 +535,8 @@ async function listActivityLog({
   actorRole,
   since,
   failedOnly,
+  /** When true (default UI), hide successful login/logout/session noise. */
+  hideAuth = false,
 }) {
   const orgId = await resolveOrgIdForUser(viewerUserId);
   if (!orgId) return { logs: [], total: 0 };
@@ -540,6 +562,13 @@ async function listActivityLog({
   }
   if (failedOnly) {
     conditions.push('(l.status_code >= 400 OR COALESCE((l.metadata->>\'failed\')::boolean, false))');
+  }
+  // Hide routine auth unless the viewer explicitly filtered to Sign-in
+  if (hideAuth && category !== 'auth') {
+    conditions.push(`NOT (
+      l.action IN ('login', 'logout', 'session')
+      AND COALESCE(l.status_code, 200) < 400
+    )`);
   }
 
   const where = conditions.join(' AND ');
@@ -570,6 +599,7 @@ async function listActivityLog({
 module.exports = {
   logActivity,
   logSessionOpen,
+  logSignIn,
   logPaymentConfirmed,
   listActivityLog,
   isPrimaryOwner,
