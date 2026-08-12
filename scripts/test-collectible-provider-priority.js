@@ -11,6 +11,9 @@ const {
   isCalendarMonthPeriod: uc10Cal,
   groupHasProviderPeriod,
 } = require('../src/use-cases/utilities/uc10-combine-monthly');
+const {
+  reopenSplitStatusForBill,
+} = require('../src/use-cases/utilities/enforce-latest-collectible');
 
 let failed = 0;
 function assert(name, cond, detail) {
@@ -64,5 +67,15 @@ assert(
 
 const ranked = rankCollectibleBills([augPhantom, hrsd]);
 assert('rank order provider first', ranked[0].id === '8e9b' && ranked[1].id === 'd5375');
+
+assert(
+  'reopen keeps notified splits notified',
+  reopenSplitStatusForBill({ status: 'notified' }) === 'notified'
+);
+assert(
+  'reopen draft/settled uses pending',
+  reopenSplitStatusForBill({ status: 'draft' }) === 'pending' &&
+    reopenSplitStatusForBill({ status: 'settled' }) === 'pending'
+);
 
 process.exit(failed ? 1 : 0);

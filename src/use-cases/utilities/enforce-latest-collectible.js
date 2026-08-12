@@ -25,6 +25,11 @@ async function resolveOwnerId(client, propertyId) {
   return rows[0]?.owner_id ?? null;
 }
 
+/** When reopening a collectible bill, keep notified splits payable as notified. */
+function reopenSplitStatusForBill(bill) {
+  return bill?.status === 'notified' ? 'notified' : 'pending';
+}
+
 async function waiveOpenSplits(client, billId, waivedBy) {
   const { rowCount } = await client.query(
     `UPDATE utility_bill_splits
@@ -60,7 +65,7 @@ async function settleBill(client, billId, note = RESOLVED_NOTE) {
 }
 
 async function reopenLatestForCollection(client, bill) {
-  const reopenStatus = bill.status === 'notified' ? 'notified' : 'pending';
+  const reopenStatus = reopenSplitStatusForBill(bill);
   const { rows: splits } = await client.query(
     `SELECT id, status, payment_id FROM utility_bill_splits WHERE bill_id = $1`,
     [bill.id]
@@ -213,6 +218,7 @@ async function enforceLatestCollectible(client, opts = {}) {
 
 module.exports = {
   enforceLatestCollectible,
+  reopenSplitStatusForBill,
   RESOLVED_NOTE,
   CALENDAR_PHANTOM_NOTE,
   pickLatestCollectibleBill,
