@@ -137,7 +137,7 @@ mustContain(
 );
 mustContain(
   'src/use-cases/utilities/uc03-notify-tenants.js',
-  ["status = 'pending'", 'payment_id IS NULL', 'backfillSplitNotifications'],
+  ['healPendingSplitsForBill', 'notify-splits'],
   'UC03 must heal pending splits on already-notified bills'
 );
 // Supersede / reopen must not wipe payment-linked or in-flight charging splits
@@ -149,6 +149,11 @@ mustContain(
     'reopenSplitStatusForBill',
   ],
   'collectible enforce must preserve payment_id / charging when waiving or reopening'
+);
+mustContain(
+  'src/use-cases/utilities/notify-splits.js',
+  ["status = 'pending'", 'payment_id IS NULL', "channel = 'in_app'"],
+  'notify heal must promote pending→notified without payment_id and stay in-app'
 );
 mustContain(
   'src/routes/payments.routes.js',

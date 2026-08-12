@@ -40,6 +40,7 @@
     "test:cashapp-classify": "node scripts/test-cashapp-classify.js",
     "test:superseded-failed": "node scripts/test-superseded-failed-payments.js",
     "test:partial-rent": "node scripts/test-partial-rent.js",
+    "test:utility-portal-pay-heal": "node scripts/test-utility-portal-pay-heal.js",
     "import:cashapp": "node scripts/import-cashapp-payments.js",
     "import:cashapp:apply": "node scripts/import-cashapp-payments.js --apply",
     "import:dominion": "node scripts/import-dominion-billing-history.js",
