@@ -102,6 +102,28 @@ if (cardIdx === -1 || importIdx === -1 || stripeIdx === -1 || methodIdx === -1) 
   );
 }
 
+// Utility notify/reminders are in-app only (no tenant/staff utility emails)
+mustContain(
+  'src/services/utility-comms.service.js',
+  ["channel: 'in_app'", 'emailed: 0'],
+  'utility-comms must record in-app notifications and report emailed: 0'
+);
+mustNotContain(
+  'src/services/utility-comms.service.js',
+  ["channel: 'email'", 'sendMail(', 'transporter.send'],
+  'utility-comms must not send utility emails'
+);
+
+// House-cover sibling month keys off period_end (Dominion statement month)
+mustContain(
+  'src/use-cases/utilities/queries.js',
+  [
+    'billingMonthKey(bill.period_end || bill.period_start || bill.created_at)',
+    "to_char(COALESCE(period_end, period_start, created_at), 'YYYY-MM')",
+  ],
+  'house-cover siblings must group by period_end month'
+);
+
 // Portal utility pay: link splits → payments.payment_type = utility (not landlord ACH)
 mustContain(
   'src/services/utility-portal-charge.service.js',
@@ -118,6 +140,16 @@ mustContain(
   ["status = 'pending'", 'payment_id IS NULL', 'backfillSplitNotifications'],
   'UC03 must heal pending splits on already-notified bills'
 );
+// Supersede / reopen must not wipe payment-linked or in-flight charging splits
+mustContain(
+  'src/use-cases/utilities/enforce-latest-collectible.js',
+  [
+    'payment_id IS NULL',
+    "status NOT IN ('paid', 'waived', 'charging')",
+    'reopenSplitStatusForBill',
+  ],
+  'collectible enforce must preserve payment_id / charging when waiving or reopening'
+);
 mustContain(
   'src/routes/payments.routes.js',
   ["'utility'", 'utilityDue', 'prepareUtilityPortalCharge'],
@@ -132,6 +164,13 @@ mustContain(
   'client/src/pages/manager/Payments.jsx',
   ["utility:'Utility'"],
   'manager Payments must label utility payment type'
+);
+
+// Failed utility Stripe payments must clear payment_id so tenants can retry
+mustContain(
+  'src/webhooks/stripe.webhook.js',
+  ["payment_type === 'utility'", 'payment_id = NULL'],
+  'utility payment failures must clear split payment_id for retry'
 );
 
 if (failures.length) {

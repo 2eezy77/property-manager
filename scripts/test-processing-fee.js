@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 /**
- * Unit checks for Card/Cash App processing fee helper.
+ * Unit checks for Card/Cash App processing fee helper + client estimate parity.
  * Run: node scripts/test-processing-fee.js
  */
+const fs = require('fs');
+const path = require('path');
 const {
   computeCardCashAppFee,
   feeMetadata,
@@ -46,6 +48,18 @@ try {
   threw = true;
 }
 assert(threw, 'rejects negative base');
+
+/** Client copies must keep the same 2.9% + $0.30 estimate as the server. */
+function clientEstimateMatchesServer(relPath) {
+  const src = fs.readFileSync(path.join(__dirname, '..', relPath), 'utf8');
+  const hasFn = src.includes('function estimateCardCashAppTotal(baseAmount)');
+  const hasRate = src.includes('Math.round(baseCents * 0.029) + 30');
+  assert(hasFn, `${relPath} defines estimateCardCashAppTotal`);
+  assert(hasRate, `${relPath} uses round(baseCents * 0.029) + 30`);
+}
+
+clientEstimateMatchesServer('client/src/pages/tenant/Payments.jsx');
+clientEstimateMatchesServer('client/src/components/leases/FinishLeasePay.jsx');
 
 if (failed) {
   console.error(`\n${failed} failure(s)`);
