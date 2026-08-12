@@ -1298,21 +1298,24 @@ router.get('/cashapp/sync', Guards.tenantOnly, async (req, res) => {
       );
       status = 'processing';
     } else if (
-      pi.status === 'canceled'
-      || pi.last_payment_error
-      || pi.status === 'requires_payment_method'
+      (pi.status === 'canceled' || pi.status === 'requires_payment_method')
+      && status !== 'succeeded'
     ) {
+      // Only terminal PI failures — do not treat a stale last_payment_error on a
+      // still-processing intent as failure (would unlock splits then double-charge).
       failureReason = pi.last_payment_error?.message || 'Cash App payment was not completed.';
-      await pool.query(
+      const { rows: failedRows } = await pool.query(
         `UPDATE payments
             SET status = 'failed', failure_reason = $1, updated_at = NOW()
-          WHERE id = $2`,
+          WHERE id = $2
+            AND status IN ('pending', 'processing')
+         RETURNING id, payment_type`,
         [failureReason, payment.id]
       );
-      if (payment.payment_type === 'utility') {
-        await releaseUtilitySplitsForFailedPayment(pool, payment.id);
+      if (failedRows[0]?.payment_type === 'utility') {
+        await releaseUtilitySplitsForFailedPayment(pool, failedRows[0].id);
       }
-      status = 'failed';
+      if (failedRows[0]) status = 'failed';
     }
 
     res.json({

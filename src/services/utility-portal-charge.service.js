@@ -218,6 +218,7 @@ async function releaseUtilitySplitsForFailedPayment(db, paymentId) {
             payment_id = NULL,
             updated_at = NOW()
       WHERE payment_id = $1
+        AND status <> 'paid'
      RETURNING bill_id`,
     [paymentId]
   );

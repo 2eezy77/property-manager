@@ -77,6 +77,7 @@ assert.deepStrictEqual(
   assert.deepStrictEqual(billIds, ['bill-a', 'bill-b']);
   assert.ok(calls[0].sql.includes('payment_id = NULL'));
   assert.ok(calls[0].sql.includes("status = 'failed'"));
+  assert.ok(calls[0].sql.includes("status <> 'paid'"));
   assert.deepStrictEqual(calls[0].params, ['pay-1']);
 
   const paidIds = await markUtilitySplitsPaidForPayment(db, 'pay-2');
