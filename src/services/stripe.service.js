@@ -62,6 +62,27 @@ function payerMetadata({ name, email, userId, propertyLabel } = {}) {
 }
 
 /**
+ * Stripe PaymentIntent metadata values must be strings (max 500 chars).
+ * Utility portal pay was spreading UUID arrays / booleans and Stripe rejected
+ * the create with "Metadata values must be strings".
+ */
+function toStripeMetadata(metadata = {}) {
+  const out = {};
+  for (const [key, value] of Object.entries(metadata || {})) {
+    if (value == null) continue;
+    const k = String(key).slice(0, 40);
+    let s;
+    if (typeof value === 'string') s = value;
+    else if (typeof value === 'number' || typeof value === 'boolean') s = String(value);
+    else if (Array.isArray(value)) s = value.map((v) => String(v)).join(',');
+    else s = JSON.stringify(value);
+    if (!s) continue;
+    out[k] = s.length > 500 ? s.slice(0, 500) : s;
+  }
+  return out;
+}
+
+/**
  * Keep Stripe Customer.name / email filled so Dashboard "Customer" isn't blank.
  */
 async function syncCustomerProfile(customerId, { name, email } = {}) {
@@ -324,7 +345,7 @@ async function chargeACH({
     },
     confirm:              true,
     description,
-    metadata,
+    metadata: toStripeMetadata(metadata),
     mandate_data: {
       customer_acceptance: {
         type:   'online',
@@ -561,7 +582,7 @@ async function createCashAppPaymentIntent({
     customer: customerId,
     payment_method_types: ['cashapp'],
     description,
-    metadata,
+    metadata: toStripeMetadata(metadata),
   };
   if (transferDestination) {
     params.transfer_data = { destination: transferDestination };
@@ -582,7 +603,7 @@ async function createCardPaymentIntent({
     payment_method_types: ['card'],
     capture_method: 'automatic',
     description,
-    metadata,
+    metadata: toStripeMetadata(metadata),
   });
 }
 
@@ -652,5 +673,6 @@ module.exports = {
   formatPropertyLabel,
   withPayerLabel,
   payerMetadata,
+  toStripeMetadata,
   syncCustomerProfile,
 };
