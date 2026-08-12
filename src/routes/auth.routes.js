@@ -18,7 +18,7 @@ const bcrypt   = require('bcrypt');
 
 const { signAccessToken, generateRefreshToken, hashRefreshToken } = require('../utils/jwt.utils');
 const authenticate = require('../middleware/authenticate');
-const { logActivity } = require('../services/activity-audit.service');
+const { logActivity, logSessionOpen } = require('../services/activity-audit.service');
 const {
   requestPasswordReset,
   completePasswordReset,
@@ -177,6 +177,10 @@ router.post('/refresh', async (req, res) => {
       `INSERT INTO refresh_tokens (user_id, token_hash, expires_at, ip_address, user_agent)
        VALUES ($1, $2, $3, $4, $5)`,
       [record.user_id, newHash, expiresAt, req.ip, req.headers['user-agent'] ?? null]
+    );
+
+    logSessionOpen({ userId: record.user_id, ip: req.ip }).catch((err) =>
+      console.error('[activity-audit session]', err.message)
     );
 
     res

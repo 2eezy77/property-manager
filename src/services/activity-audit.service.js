@@ -63,6 +63,49 @@ function actorDisplayName(actor) {
   return n || actor.email || 'User';
 }
 
+function moneyLabel(amount) {
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return null;
+  return `$${n.toFixed(2)}`;
+}
+
+function paymentTypeLabel(paymentType) {
+  const t = String(paymentType || 'payment').toLowerCase();
+  if (t === 'utility' || t === 'utilities') return 'utilities';
+  if (t === 'rent') return 'rent';
+  if (t === 'security_deposit') return 'security deposit';
+  if (t === 'identity_verification_fee') return 'identity fee';
+  return t.replace(/_/g, ' ');
+}
+
+function paymentMethodLabel(body = {}) {
+  const raw = body.paymentMethod || body.payment_method || body.source || '';
+  const s = String(raw).toLowerCase();
+  if (s.includes('cashapp') || s.includes('cash_app') || s === 'cash_app') return 'Cash App';
+  if (s.includes('card') || s === 'stripe_card') return 'card';
+  if (s.includes('ach') || s.includes('bank') || s === 'stripe_ach') return 'ACH';
+  if (s.includes('plaid')) return 'ACH';
+  return null;
+}
+
+/** Stripe-style payment one-liner. */
+function formatPaymentSummary(who, { paymentType, amount, method, statusCode, phase = 'started' }) {
+  const type = paymentTypeLabel(paymentType);
+  const money = moneyLabel(amount);
+  const via = method ? ` via ${method}` : '';
+  const amt = money ? ` ${money}` : '';
+  if (statusCode >= 400) {
+    return `${who} failed ${type} payment${amt}${via}`;
+  }
+  if (phase === 'confirmed') {
+    return `${who} paid${amt} ${type}${via}`.replace('  ', ' ');
+  }
+  if (phase === 'submitted') {
+    return `${who} submitted${amt} ${type} payment${via}`.replace('  ', ' ');
+  }
+  return `${who} started${amt} ${type} payment${via}`.replace('  ', ' ');
+}
+
 /** Build a plain-English one-liner from HTTP request. */
 function buildSummary({ actor, impersonator, method, path, body, statusCode }) {
   const name = actorDisplayName(actor);
@@ -77,8 +120,20 @@ function buildSummary({ actor, impersonator, method, path, body, statusCode }) {
     if (statusCode >= 400) return `${name} failed to sign in`;
     return `${name} signed in`;
   }
+  if (p === '/auth/refresh' && method === 'POST') {
+    return `${name} opened the portal`;
+  }
   if (p === '/auth/logout' && method === 'POST') {
     return `${who} signed out`;
+  }
+  if (p === '/events/payment_confirmed') {
+    return formatPaymentSummary(who, {
+      paymentType: b.paymentType || b.payment_type,
+      amount: b.amount,
+      method: paymentMethodLabel(b),
+      statusCode: statusCode || 200,
+      phase: 'confirmed',
+    });
   }
   if (p === '/auth/forgot-password' && method === 'POST') {
     return 'Password reset requested';
@@ -181,7 +236,40 @@ function buildSummary({ actor, impersonator, method, path, body, statusCode }) {
     return `${who} removed a manager payout bank account`;
   }
   if (p === '/api/payments/charge' && method === 'POST') {
-    return `${who} paid rent (ACH)`;
+    return formatPaymentSummary(who, {
+      paymentType: b.paymentType || 'rent',
+      amount: b.amount,
+      method: paymentMethodLabel({ ...b, payment_method: b.paymentMethod || 'ach' }) || 'ACH',
+      statusCode,
+      phase: statusCode >= 400 ? 'started' : 'submitted',
+    });
+  }
+  if (p === '/api/payments/card/create-intent' && method === 'POST') {
+    return formatPaymentSummary(who, {
+      paymentType: b.paymentType || 'rent',
+      amount: b.amount,
+      method: 'card',
+      statusCode,
+      phase: 'started',
+    });
+  }
+  if (p === '/api/payments/cashapp/create-intent' && method === 'POST') {
+    return formatPaymentSummary(who, {
+      paymentType: b.paymentType || 'rent',
+      amount: b.amount,
+      method: 'Cash App',
+      statusCode,
+      phase: 'started',
+    });
+  }
+  if (p === '/api/payments/cashapp/sync' && (method === 'GET' || method === 'POST')) {
+    return formatPaymentSummary(who, {
+      paymentType: b.paymentType || 'payment',
+      amount: b.amount,
+      method: 'Cash App',
+      statusCode,
+      phase: statusCode >= 400 ? 'started' : 'confirmed',
+    });
   }
   if (p === '/api/payments/record' && method === 'POST') {
     return `${who} recorded a payment manually`;
@@ -234,14 +322,16 @@ function getActivityPolicy() {
     headline: 'Shared log — every owner sees the same events.',
     tracks: [
       'Both owners (you and your co-owner), manager, and tenants',
-      'Sign-in, sign-out, and failed sign-in',
-      'Rent payments, billing runs, late fees, autopay',
-      'Utilities: bills, notify, ACH charges, disputes',
+      'Password sign-in, portal opens (returning sessions), sign-out, failed sign-in',
+      'Payments like Stripe: ACH / card / Cash App for rent, deposit, and utilities (started + confirmed)',
+      'Billing runs, late fees, autopay, bank link',
+      'Utilities: bills, notify, disputes',
       'Passwords, launch emails, announcements',
       'Maintenance and portal previews',
     ],
     skips: [
-      'Routine page loads and token refresh',
+      'Routine page loads and /auth/me',
+      'Repeat session opens within 4 hours (debounced)',
       'Passwords and bank tokens (always redacted)',
     ],
     visibility: 'Owners only. Managers and tenants cannot open this page.',
@@ -253,8 +343,8 @@ function getActivityPolicy() {
 
 function inferCategory(path) {
   if (path.startsWith('/auth')) return 'auth';
+  if (path === '/events/payment_confirmed' || path.includes('/payments')) return 'payments';
   if (path.includes('/utilities')) return 'utilities';
-  if (path.includes('/payments')) return 'payments';
   if (path.includes('/maintenance')) return 'maintenance';
   if (path.includes('/users') || path.includes('/admin/users')) return 'users';
   if (path.includes('/portal-launch')) return 'communications';
@@ -267,10 +357,15 @@ function inferCategory(path) {
 
 function inferAction(method, path, statusCode) {
   if (path === '/auth/login') return 'login';
+  if (path === '/auth/refresh') return 'session';
   if (path === '/auth/logout') return 'logout';
+  if (path === '/events/payment_confirmed') return 'payment_confirmed';
   if (path === '/auth/forgot-password') return 'password_reset_request';
   if (path === '/auth/reset-password') return 'password_reset';
   if (path.includes('password')) return 'password';
+  if (path.includes('create-intent') || path.includes('/charge') || path.includes('cashapp/sync')) {
+    return statusCode >= 400 ? 'payment_failed' : 'payment';
+  }
   if (path.includes('charge')) return 'charge';
   if (path.includes('notify')) return 'notify';
   if (path.includes('email')) return 'email';
@@ -355,6 +450,60 @@ async function logActivity({
   return rows[0];
 }
 
+const SESSION_OPEN_DEBOUNCE_HOURS = 4;
+
+/**
+ * Log a returning portal session (refresh cookie), at most once per debounce window.
+ * Password sign-ins still use /auth/login via logActivity.
+ */
+async function logSessionOpen({ userId, ip }) {
+  if (!userId) return null;
+  const { rows } = await pool.query(
+    `SELECT 1
+       FROM activity_audit_log
+      WHERE actor_user_id = $1
+        AND action IN ('login', 'session')
+        AND created_at > NOW() - ($2::int * INTERVAL '1 hour')
+      LIMIT 1`,
+    [userId, SESSION_OPEN_DEBOUNCE_HOURS]
+  );
+  if (rows.length) return null;
+  return logActivity({
+    realActorId: userId,
+    displayActorId: userId,
+    method: 'POST',
+    path: '/auth/refresh',
+    statusCode: 200,
+    ip: ip ?? null,
+  });
+}
+
+/** Stripe-like confirmed payment line (from webhook settlement). */
+async function logPaymentConfirmed({
+  tenantId,
+  amount,
+  paymentType,
+  paymentMethod,
+  paymentId,
+  statusCode = 200,
+}) {
+  if (!tenantId) return null;
+  return logActivity({
+    realActorId: tenantId,
+    displayActorId: tenantId,
+    method: 'POST',
+    path: '/events/payment_confirmed',
+    statusCode,
+    body: {
+      amount,
+      paymentType,
+      payment_type: paymentType,
+      payment_method: paymentMethod,
+      paymentId,
+    },
+  });
+}
+
 const SINCE_HOURS = { '24h': 24, '7d': 168, '30d': 720 };
 
 async function listActivityLog({
@@ -420,8 +569,12 @@ async function listActivityLog({
 
 module.exports = {
   logActivity,
+  logSessionOpen,
+  logPaymentConfirmed,
   listActivityLog,
   isPrimaryOwner,
   buildSummary,
+  formatPaymentSummary,
   getActivityPolicy,
+  SESSION_OPEN_DEBOUNCE_HOURS,
 };
