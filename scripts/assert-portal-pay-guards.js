@@ -166,11 +166,34 @@ mustContain(
   'manager Payments must label utility payment type'
 );
 
-// Failed utility Stripe payments must clear payment_id so tenants can retry
+// Failed/canceled utility Stripe pays must unlock splits so tenants can retry
+mustContain(
+  'src/services/utility-portal-charge.service.js',
+  ["payment_id = NULL", "status = 'failed'", "status <> 'paid'", 'releaseUtilitySplitsForFailedPayment'],
+  'releaseUtilitySplitsForFailedPayment must clear payment_id without touching paid splits'
+);
 mustContain(
   'src/webhooks/stripe.webhook.js',
-  ["payment_type === 'utility'", 'payment_id = NULL'],
-  'utility payment failures must clear split payment_id for retry'
+  [
+    'releaseUtilitySplitsForFailedPayment',
+    "payment_type === 'utility'",
+    "case 'payment_intent.canceled':",
+  ],
+  'utility payment failures and cancels must unlock splits via shared helper'
+);
+mustContain(
+  'src/routes/payments.routes.js',
+  [
+    'releaseUtilitySplitsForFailedPayment',
+    "pi.status === 'canceled' || pi.status === 'requires_payment_method'",
+  ],
+  'Cash App sync must unlock utility splits only on terminal PI failures'
+);
+// Stripe rejects array metadata — utility portal pay must stringify ids
+mustContain(
+  'src/services/stripe.service.js',
+  ['toStripeMetadata', 'Array.isArray(value)', 'JSON.stringify(value)'],
+  'Stripe metadata helper must stringify arrays/objects for utility portal pay'
 );
 
 if (failures.length) {
