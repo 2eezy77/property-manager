@@ -32,6 +32,7 @@
     "test:utility-house-cover": "node scripts/test-utility-house-cover.js",
     "test:utility-portal-charge": "node scripts/test-utility-portal-charge.js",
     "test:utility-split-refresh": "node scripts/test-utility-split-refresh-safety.js",
+    "test:cashapp-sync-policy": "node scripts/test-cashapp-sync-policy.js",
     "test:activity-audit": "node scripts/test-activity-audit-summaries.js",
     "test:stripe-payer-labels": "node scripts/test-stripe-payer-labels.js",
     "test:utility-split-domain": "node scripts/test-utility-split-domain.js",

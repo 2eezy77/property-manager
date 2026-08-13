@@ -169,8 +169,36 @@ mustContain(
 // Failed/canceled utility Stripe pays must unlock splits so tenants can retry
 mustContain(
   'src/services/utility-portal-charge.service.js',
-  ["payment_id = NULL", "status = 'failed'", "status <> 'paid'", 'releaseUtilitySplitsForFailedPayment'],
-  'releaseUtilitySplitsForFailedPayment must clear payment_id without touching paid splits'
+  [
+    'releaseUtilitySplitsForFailedPayment',
+    'markUtilitySplitsPaidForPayment',
+    'payment_id = NULL',
+    "status = 'failed'",
+    "status <> 'paid'",
+  ],
+  'utility unlock/pay helpers must clear payment_id on fail and mark paid on success'
+);
+mustContain(
+  'src/services/cashapp-sync-policy.js',
+  [
+    'shouldMarkCashAppSyncFailed',
+    'shouldUnlockUtilitySplitsOnCashAppSyncFail',
+    'shouldMarkUtilityPaidOnCashAppSyncSuccess',
+    'requires_payment_method',
+  ],
+  'Cash App sync policy must gate terminal PI failures and utility unlock/pay'
+);
+mustContain(
+  'src/routes/payments.routes.js',
+  [
+    'shouldMarkCashAppSyncFailed',
+    'shouldUnlockUtilitySplitsOnCashAppSyncFail',
+    'shouldMarkUtilityPaidOnCashAppSyncSuccess',
+    "status IN ('pending', 'processing')",
+    'markUtilitySplitsPaidForPayment',
+    'releaseUtilitySplitsForFailedPayment',
+  ],
+  'Cash App sync must use terminal-failure policy + pending/processing UPDATE gate'
 );
 mustContain(
   'src/webhooks/stripe.webhook.js',
@@ -180,14 +208,6 @@ mustContain(
     "case 'payment_intent.canceled':",
   ],
   'utility payment failures and cancels must unlock splits via shared helper'
-);
-mustContain(
-  'src/routes/payments.routes.js',
-  [
-    'releaseUtilitySplitsForFailedPayment',
-    "pi.status === 'canceled' || pi.status === 'requires_payment_method'",
-  ],
-  'Cash App sync must unlock utility splits only on terminal PI failures'
 );
 // Stripe rejects array metadata — utility portal pay must stringify ids
 mustContain(
