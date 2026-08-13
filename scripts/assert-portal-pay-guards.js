@@ -134,6 +134,48 @@ mustContain(
   'manager Payments must label utility payment type'
 );
 
+// PR #42: canceled/abandoned utility pays unlock; Cash App sync settles on success
+mustContain(
+  'src/services/utility-portal-charge.service.js',
+  ['releaseUtilitySplitsForFailedPayment', 'markUtilitySplitsPaidForPayment', "payment_id = NULL", "status <> 'paid'"],
+  'utility unlock/pay helpers must clear payment_id on fail and mark paid on success'
+);
+mustContain(
+  'src/services/cashapp-sync-policy.js',
+  [
+    'shouldMarkCashAppSyncFailed',
+    'shouldUnlockUtilitySplitsOnCashAppSyncFail',
+    'shouldMarkUtilityPaidOnCashAppSyncSuccess',
+    'requires_payment_method',
+  ],
+  'Cash App sync policy must gate terminal PI failures and utility unlock/pay'
+);
+mustContain(
+  'src/routes/payments.routes.js',
+  [
+    'shouldMarkCashAppSyncFailed',
+    'shouldUnlockUtilitySplitsOnCashAppSyncFail',
+    'shouldMarkUtilityPaidOnCashAppSyncSuccess',
+    "status IN ('pending', 'processing')",
+    'markUtilitySplitsPaidForPayment',
+    'releaseUtilitySplitsForFailedPayment',
+  ],
+  'Cash App sync must use terminal-failure policy + pending/processing UPDATE gate'
+);
+mustContain(
+  'src/webhooks/stripe.webhook.js',
+  [
+    'releaseUtilitySplitsForFailedPayment',
+    "case 'payment_intent.canceled':",
+  ],
+  'Stripe cancel/fail webhooks must unlock utility splits via shared helper'
+);
+mustContain(
+  'src/services/stripe.service.js',
+  ['toStripeMetadata', 'Array.isArray(value)'],
+  'Stripe metadata helper must stringify arrays for utility portal pay'
+);
+
 if (failures.length) {
   console.error('assert:portal-pay FAILED:\n' + failures.map((f) => `  - ${f}`).join('\n'));
   process.exit(1);
