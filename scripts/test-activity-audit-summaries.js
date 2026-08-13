@@ -7,6 +7,8 @@ const { shouldCapture, requestPath } = require('../src/middleware/activity-audit
 const {
   buildSummary,
   formatPaymentSummary,
+  logSessionOpen,
+  SESSION_OPEN_DEBOUNCE_HOURS,
 } = require('../src/services/activity-audit.service');
 
 // Mount-safe path: router-relative req.path must not win over originalUrl
@@ -136,4 +138,47 @@ assert.ok(
   }).includes('paid $10.00 rent via ACH')
 );
 
-console.log('test-activity-audit-summaries OK');
+assert.strictEqual(SESSION_OPEN_DEBOUNCE_HOURS, 4);
+
+(async () => {
+  // Debounce: recent login/session skips a second "opened the portal" row.
+  let logCalls = 0;
+  const debounced = await logSessionOpen({
+    userId: 'u-debounce',
+    ip: '1.1.1.1',
+    db: {
+      async query(sql, params) {
+        assert.ok(sql.includes("action IN ('login', 'session')"));
+        assert.deepStrictEqual(params, ['u-debounce', 4]);
+        return { rows: [{ '?column?': 1 }] };
+      },
+    },
+    log: async () => {
+      logCalls += 1;
+      return { id: 'should-not' };
+    },
+  });
+  assert.strictEqual(debounced, null);
+  assert.strictEqual(logCalls, 0);
+
+  const logged = await logSessionOpen({
+    userId: 'u-fresh',
+    ip: '2.2.2.2',
+    db: { async query() { return { rows: [] }; } },
+    log: async (payload) => {
+      logCalls += 1;
+      assert.strictEqual(payload.path, '/auth/refresh');
+      assert.strictEqual(payload.realActorId, 'u-fresh');
+      assert.strictEqual(payload.ip, '2.2.2.2');
+      return { id: 'session-1' };
+    },
+  });
+  assert.strictEqual(logged.id, 'session-1');
+  assert.strictEqual(logCalls, 1);
+  assert.strictEqual(await logSessionOpen({ userId: null }), null);
+
+  console.log('test-activity-audit-summaries OK');
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
