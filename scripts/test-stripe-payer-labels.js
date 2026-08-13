@@ -52,11 +52,31 @@ assert.strictEqual(
     utility_split_ids: ['s1', 's2'],
     utility_bill_ids: ['b1', 'b2'],
     skip: null,
+    empty: '',
   });
   assert.strictEqual(stripeMeta.portal_utility, 'true');
   assert.strictEqual(stripeMeta.utility_split_ids, 's1,s2');
   assert.strictEqual(stripeMeta.utility_bill_ids, 'b1,b2');
   assert.strictEqual(stripeMeta.skip, undefined);
+  assert.strictEqual(stripeMeta.empty, undefined);
+}
+
+{
+  // Nested objects + truncation — Stripe metadata values must be strings ≤500 chars.
+  const longKey = `k${'x'.repeat(50)}`;
+  const longVal = 'v'.repeat(600);
+  const stripeMeta = toStripeMetadata({
+    nested: { a: 1, b: ['x'] },
+    [longKey]: 'ok',
+    bulky: longVal,
+    zero: 0,
+    flag: false,
+  });
+  assert.strictEqual(stripeMeta.nested, JSON.stringify({ a: 1, b: ['x'] }));
+  assert.strictEqual(Object.keys(stripeMeta).find((k) => k.startsWith('kx')), 'k' + 'x'.repeat(39));
+  assert.strictEqual(stripeMeta.bulky.length, 500);
+  assert.strictEqual(stripeMeta.zero, '0');
+  assert.strictEqual(stripeMeta.flag, 'false');
 }
 
 console.log('test-stripe-payer-labels: ok');
