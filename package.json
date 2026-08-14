@@ -29,6 +29,7 @@
     "test:comms": "node scripts/test-comms.js",
     "test:payment-emails": "node scripts/test-payment-emails.js",
     "test:utility-emails": "node scripts/test-utility-email-parser.js",
+    "test:dominion-billing": "node scripts/test-dominion-billing.js",
     "test:utility-house-cover": "node scripts/test-utility-house-cover.js",
     "test:utility-portal-charge": "node scripts/test-utility-portal-charge.js",
     "test:utility-split-refresh": "node scripts/test-utility-split-refresh-safety.js",
