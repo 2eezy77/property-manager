@@ -19,12 +19,16 @@ const {
   wrapStripePayrollError,
 } = require('./site-visits-payout.service');
 
+const {
+  ENDED_LEASE_STATUSES,
+  RENT_MONTHS_REQUIRED,
+  tenantLeftEarly,
+} = require('../utils/lease-signing-eligibility');
+
 const MANAGER_EMAIL = 'konstantinhazlett@yahoo.com';
 const LEASE_SIGNING_AMOUNT_CENTS = 35000;
-const RENT_MONTHS_REQUIRED = 3;
 
 const SIGNED_LEASE_STATUSES = new Set(['awaiting_deposit', 'awaiting_identity', 'active', 'terminated', 'expired']);
-const ENDED_LEASE_STATUSES = new Set(['terminated', 'expired']);
 
 async function resolveOrgManager(orgId) {
   const { rows: byEmail } = await pool.query(
@@ -123,17 +127,6 @@ async function loadFeeById(feeId, orgId) {
     [feeId, orgId]
   );
   return rows[0] ?? null;
-}
-
-/**
- * Promote pending_rent → owed after 3 rent months, or cancel if tenant left early.
- */
-function tenantLeftEarly(leaseRow) {
-  if (ENDED_LEASE_STATUSES.has(leaseRow.lease_status)) return true;
-  if (leaseRow.offboard_moveout_confirmed_at) return true;
-  if (leaseRow.offboard_portal_disabled_at) return true;
-  if (leaseRow.offboarding_started_at && leaseRow.offboard_keys_returned_at) return true;
-  return false;
 }
 
 async function refreshFeeEligibility(feeId) {
@@ -734,6 +727,8 @@ async function markTenantFeePaidExternally({ orgId, ownerId, tenantEmail, note }
 module.exports = {
   LEASE_SIGNING_AMOUNT_CENTS,
   RENT_MONTHS_REQUIRED,
+  ENDED_LEASE_STATUSES,
+  tenantLeftEarly,
   ensureLeaseSigningFee,
   refreshEligibilityForLease,
   listLeaseSigningFees,
