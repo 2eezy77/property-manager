@@ -102,6 +102,28 @@ if (cardIdx === -1 || importIdx === -1 || stripeIdx === -1 || methodIdx === -1) 
   );
 }
 
+// Utility notify/reminders are in-app only (no tenant/staff utility emails)
+mustContain(
+  'src/services/utility-comms.service.js',
+  ["channel: 'in_app'", 'emailed: 0'],
+  'utility-comms must record in-app notifications and report emailed: 0'
+);
+mustNotContain(
+  'src/services/utility-comms.service.js',
+  ["channel: 'email'", 'sendMail(', 'transporter.send'],
+  'utility-comms must not send utility emails'
+);
+
+// House-cover sibling month keys off period_end (Dominion statement month)
+mustContain(
+  'src/use-cases/utilities/queries.js',
+  [
+    'billingMonthKey(bill.period_end || bill.period_start || bill.created_at)',
+    "to_char(COALESCE(period_end, period_start, created_at), 'YYYY-MM')",
+  ],
+  'house-cover siblings must group by period_end month'
+);
+
 // Portal utility pay: link splits → payments.payment_type = utility (not landlord ACH)
 mustContain(
   'src/services/utility-portal-charge.service.js',
@@ -115,8 +137,23 @@ mustContain(
 );
 mustContain(
   'src/use-cases/utilities/uc03-notify-tenants.js',
-  ["status = 'pending'", 'payment_id IS NULL', 'backfillSplitNotifications'],
+  ['healPendingSplitsForBill', 'notify-splits'],
   'UC03 must heal pending splits on already-notified bills'
+);
+// Supersede / reopen must not wipe payment-linked or in-flight charging splits
+mustContain(
+  'src/use-cases/utilities/enforce-latest-collectible.js',
+  [
+    'payment_id IS NULL',
+    "status NOT IN ('paid', 'waived', 'charging')",
+    'reopenSplitStatusForBill',
+  ],
+  'collectible enforce must preserve payment_id / charging when waiving or reopening'
+);
+mustContain(
+  'src/use-cases/utilities/notify-splits.js',
+  ["status = 'pending'", 'payment_id IS NULL', "channel = 'in_app'"],
+  'notify heal must promote pending→notified without payment_id and stay in-app'
 );
 mustContain(
   'src/routes/payments.routes.js',
@@ -132,6 +169,56 @@ mustContain(
   'client/src/pages/manager/Payments.jsx',
   ["utility:'Utility'"],
   'manager Payments must label utility payment type'
+);
+
+// Failed/canceled utility Stripe pays must unlock splits so tenants can retry
+mustContain(
+  'src/services/utility-portal-charge.service.js',
+  [
+    'releaseUtilitySplitsForFailedPayment',
+    'markUtilitySplitsPaidForPayment',
+    'payment_id = NULL',
+    "status = 'failed'",
+    "status <> 'paid'",
+  ],
+  'utility unlock/pay helpers must clear payment_id on fail and mark paid on success'
+);
+mustContain(
+  'src/services/cashapp-sync-policy.js',
+  [
+    'shouldMarkCashAppSyncFailed',
+    'shouldUnlockUtilitySplitsOnCashAppSyncFail',
+    'shouldMarkUtilityPaidOnCashAppSyncSuccess',
+    'requires_payment_method',
+  ],
+  'Cash App sync policy must gate terminal PI failures and utility unlock/pay'
+);
+mustContain(
+  'src/routes/payments.routes.js',
+  [
+    'shouldMarkCashAppSyncFailed',
+    'shouldUnlockUtilitySplitsOnCashAppSyncFail',
+    'shouldMarkUtilityPaidOnCashAppSyncSuccess',
+    "status IN ('pending', 'processing')",
+    'markUtilitySplitsPaidForPayment',
+    'releaseUtilitySplitsForFailedPayment',
+  ],
+  'Cash App sync must use terminal-failure policy + pending/processing UPDATE gate'
+);
+mustContain(
+  'src/webhooks/stripe.webhook.js',
+  [
+    'releaseUtilitySplitsForFailedPayment',
+    "payment_type === 'utility'",
+    "case 'payment_intent.canceled':",
+  ],
+  'utility payment failures and cancels must unlock splits via shared helper'
+);
+// Stripe rejects array metadata — utility portal pay must stringify ids
+mustContain(
+  'src/services/stripe.service.js',
+  ['toStripeMetadata', 'Array.isArray(value)', 'JSON.stringify(value)'],
+  'Stripe metadata helper must stringify arrays/objects for utility portal pay'
 );
 
 if (failures.length) {
