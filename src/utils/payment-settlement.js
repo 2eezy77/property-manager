@@ -1,7 +1,10 @@
 const { notifyPaymentReceived } = require('../services/payment-email.service');
 const { refreshEligibilityForLease } = require('../services/lease-signing-pay.service');
-const { applyRentCredit } = require('../services/rent-partial.service');
-const { parseMoney, roundMoney } = require('../services/security-deposit-partial.service');
+const { applyRentCredit, applyLateFeeCredits } = require('../services/rent-partial.service');
+const {
+  rentSettlementPortions,
+  shouldAutoClearLateFeesOnFullPay,
+} = require('./rent-settlement-policy');
 
 async function markLateFeesPaidForLease(db, leaseId) {
   await db.query(
@@ -30,23 +33,15 @@ async function settleRentPaymentSuccess(client, {
   if (!payment) return null;
 
   const meta = payment.metadata || {};
-  const rentPortion = Number.isFinite(parseMoney(meta.rent_amount))
-    ? roundMoney(parseMoney(meta.rent_amount))
-    : roundMoney(amount);
-  const lateFeePortion = Number.isFinite(parseMoney(meta.late_fee_amount))
-    ? roundMoney(parseMoney(meta.late_fee_amount))
-    : 0;
-  const isInstallment = meta.partial_installment === true
-    || meta.partial_installment === 'true';
+  const { rentPortion, lateFeePortion, isInstallment } = rentSettlementPortions(meta, amount);
 
   // Paying the parent row itself for the final remaining balance: the row is
   // already marked succeeded by the caller — only apply late fee credits and
   // refresh parent metadata without zeroing a live succeeded amount incorrectly.
   if (!isInstallment) {
     if (lateFeePortion > 0) {
-      const { applyLateFeeCredits } = require('../services/rent-partial.service');
       await applyLateFeeCredits(client, leaseId, lateFeePortion);
-    } else if (lateFeePortion === 0 && rentPortion > 0 && !meta.partial_rent) {
+    } else {
       // Legacy full-pay path with no fee split in metadata: clear open fees.
       const feeBal = await client.query(
         `SELECT COALESCE(SUM(amount),0) AS t FROM late_fees
@@ -55,7 +50,13 @@ async function settleRentPaymentSuccess(client, {
       );
       // Only auto-clear fees when this payment looks like a full period payoff
       // (no partial flags). Prefer metadata when present.
-      if (parseFloat(feeBal.rows[0].t) > 0 && meta.total_remaining_before == null) {
+      if (shouldAutoClearLateFeesOnFullPay({
+        isInstallment,
+        lateFeePortion,
+        rentPortion,
+        meta,
+        openLateFeeTotal: feeBal.rows[0].t,
+      })) {
         await markLateFeesPaidForLease(client, leaseId);
       }
     }
