@@ -40,6 +40,8 @@
     "test:identity-fee-grace": "node scripts/test-identity-fee-grace.js",
     "test:cashapp-classify": "node scripts/test-cashapp-classify.js",
     "test:cashapp-import-plan": "node scripts/test-cashapp-import-plan.js",
+    "test:cashapp-rent-month": "node scripts/test-cashapp-rent-month.js",
+    "test:mortgage-parse": "node scripts/test-mortgage-statement-parse.js",
     "test:db-password-guard": "node scripts/test-db-password-guard.js",
     "test:plaid-errors": "node scripts/test-plaid-errors.js",
     "test:superseded-failed": "node scripts/test-superseded-failed-payments.js",
