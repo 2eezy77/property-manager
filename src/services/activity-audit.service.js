@@ -455,10 +455,11 @@ const SESSION_OPEN_DEBOUNCE_HOURS = 4;
 /**
  * Log a returning portal session (refresh cookie), at most once per debounce window.
  * Password sign-ins still use /auth/login via logActivity.
+ * Optional `db` / `log` are for unit tests only.
  */
-async function logSessionOpen({ userId, ip }) {
+async function logSessionOpen({ userId, ip, db = pool, log = logActivity } = {}) {
   if (!userId) return null;
-  const { rows } = await pool.query(
+  const { rows } = await db.query(
     `SELECT 1
        FROM activity_audit_log
       WHERE actor_user_id = $1
@@ -468,7 +469,7 @@ async function logSessionOpen({ userId, ip }) {
     [userId, SESSION_OPEN_DEBOUNCE_HOURS]
   );
   if (rows.length) return null;
-  return logActivity({
+  return log({
     realActorId: userId,
     displayActorId: userId,
     method: 'POST',

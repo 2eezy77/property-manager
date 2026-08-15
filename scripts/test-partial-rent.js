@@ -58,6 +58,17 @@ async function run() {
   assert.strictEqual(alloc.lateFeePortion, 100);
   assert.strictEqual(alloc.totalAllocated, 500);
 
+  // Flexible-pay / waived late fees (Stone): overpay rent does not invent late-fee credit
+  const flexible = allocateTowardRentAndFees(500, 400, 0);
+  assert.strictEqual(flexible.rentPortion, 400);
+  assert.strictEqual(flexible.lateFeePortion, 0);
+  assert.strictEqual(flexible.totalAllocated, 400);
+
+  const exactRent = allocateTowardRentAndFees(900, 900, 0);
+  assert.strictEqual(exactRent.rentPortion, 900);
+  assert.strictEqual(exactRent.lateFeePortion, 0);
+  assert.strictEqual(exactRent.totalAllocated, 900);
+
   const client = mockClient({
     pending: {
       id: 'rent-parent',
