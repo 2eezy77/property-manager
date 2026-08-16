@@ -175,19 +175,8 @@ function fmtMoney(n) {
   return `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-async function buildFinanceRagContext(ownerId) {
-  const [latest, checklistRows] = await Promise.all([
-    getLatestSummary(ownerId, { includeRawText: true }),
-    pool.query(
-      `SELECT category, label, amount_estimate, due_day, payment_method, notes,
-              last_paid_at, last_verified_at
-       FROM owner_payment_checklist
-       WHERE owner_id = $1
-       ORDER BY sort_order, label`,
-      [ownerId]
-    ),
-  ]);
-
+/** Pure RAG text builder — kept free of DB for unit tests. */
+function formatFinanceRagContext(latest, checklist = []) {
   const lines = ['# Owner personal finance context (for RAG / AI queries)', ''];
 
   if (latest) {
@@ -214,10 +203,10 @@ async function buildFinanceRagContext(ownerId) {
   }
 
   lines.push('## Owner payment checklist');
-  if (!checklistRows.rows.length) {
+  if (!checklist.length) {
     lines.push('- No checklist items configured.');
   } else {
-    for (const item of checklistRows.rows) {
+    for (const item of checklist) {
       const paid = item.last_paid_at
         ? `paid ${item.last_paid_at.toISOString().slice(0, 10)}`
         : 'not marked paid this cycle';
@@ -237,8 +226,24 @@ async function buildFinanceRagContext(ownerId) {
   lines.push('');
   lines.push('Property utility bills for 743 A Ave may also appear under /api/utilities (tenant-split bills).');
 
+  return lines.join('\n');
+}
+
+async function buildFinanceRagContext(ownerId) {
+  const [latest, checklistRows] = await Promise.all([
+    getLatestSummary(ownerId, { includeRawText: true }),
+    pool.query(
+      `SELECT category, label, amount_estimate, due_day, payment_method, notes,
+              last_paid_at, last_verified_at
+       FROM owner_payment_checklist
+       WHERE owner_id = $1
+       ORDER BY sort_order, label`,
+      [ownerId]
+    ),
+  ]);
+
   return {
-    context: lines.join('\n'),
+    context: formatFinanceRagContext(latest, checklistRows.rows),
     latest_mortgage: latest,
     checklist: checklistRows.rows,
   };
@@ -268,6 +273,8 @@ module.exports = {
   importPdfFile,
   listStatements,
   getLatestSummary,
+  fmtMoney,
+  formatFinanceRagContext,
   buildFinanceRagContext,
   resolveOwnerId,
   fileHash,
