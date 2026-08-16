@@ -51,6 +51,8 @@
     "test:ach-guard-policy": "node scripts/test-ach-guard-policy.js",
     "test:lease-signing-eligibility": "node scripts/test-lease-signing-eligibility.js",
     "test:norfolk-time": "node scripts/test-norfolk-time.js",
+    "test:email-subject": "node scripts/test-email-subject.js",
+    "test:encryption": "node scripts/test-encryption.js",
     "import:cashapp": "node scripts/import-cashapp-payments.js",
     "import:cashapp:apply": "node scripts/import-cashapp-payments.js --apply",
     "import:dominion": "node scripts/import-dominion-billing-history.js",
