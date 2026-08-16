@@ -60,40 +60,99 @@ const cases = [
     service: 'water',
     acct: 'PP-1055175',
   },
-  {
-    name: 'HRSD / Norfolk portal billing period + due date',
-    msg: {
-      id: 'hrsd-portal',
-      from: 'HRSD <noreply@hrsd.com>',
-      subject: 'Your HRSD Bill Is Due',
-      date: 'Tue, 05 Aug 2026 12:00:00 -0400',
-      body: [
-        'Welcome, Jose Montero',
-        '3491396160: 743 A AVE NORFOLK, VA 23504',
-        'Your Billing Period: 06/06/2026 - 07/09/2026',
-        'Total Amount Due $165.74',
-        'You are enrolled in Auto Pay and $165.74 will be deducted from your account on due date, 08/04/2026.',
-      ].join('\n'),
-    },
-    expectOk: true,
-    amount: 165.74,
-    service: 'water',
-    periodStart: '2026-06-06',
-    periodEnd: '2026-07-09',
-    dueDate: '2026-08-04',
-    periodParsed: true,
+{
+  name: 'HRSD / Norfolk portal billing period + due date',
+  msg: {
+    id: 'hrsd-portal',
+    from: 'HRSD <noreply@hrsd.com>',
+    subject: 'Your HRSD Bill Is Due',
+    date: 'Tue, 05 Aug 2026 12:00:00 -0400',
+    body: [
+      'Welcome, Jose Montero',
+      '3491396160: 743 A AVE NORFOLK, VA 23504',
+      'Your Billing Period: 06/06/2026 - 07/09/2026',
+      'Total Amount Due $165.74',
+      'You are enrolled in Auto Pay and $165.74 will be deducted from your account on due date, 08/04/2026.',
+    ].join('\n'),
   },
-  {
-    name: 'Dominion disconnection (skip)',
-    msg: {
-      id: '4',
-      from: 'Dominion Energy <customer.supportcc@domenergyvanccc.com>',
-      subject: 'Your Account is Subject to Disconnection',
-      date: 'Sat, 30 May 2026 09:14:00 -0400',
-      body: 'past due balance account ending in 3430',
-    },
-    expectOk: false,
+  expectOk: true,
+  amount: 165.74,
+  service: 'water',
+  periodStart: '2026-06-06',
+  periodEnd: '2026-07-09',
+  dueDate: '2026-08-04',
+  periodParsed: true,
+},
+{
+  name: 'HRSD billing period with en-dash separator',
+  msg: {
+    id: 'hrsd-endash',
+    from: 'HRSD <noreply@hrsd.com>',
+    subject: 'Your HRSD Bill Is Due',
+    date: 'Tue, 05 Aug 2026 12:00:00 -0400',
+    body: 'Your Billing Period: 06/06/2026 – 07/09/2026\nTotal Amount Due $165.74\nDue date, 08/04/2026.',
   },
+  expectOk: true,
+  amount: 165.74,
+  service: 'water',
+  periodStart: '2026-06-06',
+  periodEnd: '2026-07-09',
+  periodParsed: true,
+},
+{
+  name: 'HRSD month-name billing period',
+  msg: {
+    id: 'hrsd-month-name',
+    from: 'HRSD <noreply@hrsd.com>',
+    subject: 'Your bill is ready',
+    date: 'Tue, 05 Aug 2026 12:00:00 -0400',
+    body: 'Billing period: June 6, 2026 to July 9, 2026\nTotal Amount Due $99.00\nPayment Date: 8/4/2026',
+  },
+  expectOk: true,
+  amount: 99,
+  service: 'water',
+  periodStart: '2026-06-06',
+  periodEnd: '2026-07-09',
+  periodParsed: true,
+},
+{
+  name: 'Norfolk InvoiceCloud without period → calendar fallback',
+  msg: {
+    id: 'norfolk-no-period',
+    from: 'City of Norfolk <no-reply@invoicecloud.net>',
+    subject: 'City of Norfolk Invoice# 1055175-PP-999 Reminder',
+    date: 'Wed, 05 Aug 2026 15:57:00 -0400',
+    body: 'Account Number: PP-1055175 Invoice Number: 1055175-PP-999 Balance Due: $50.00 Total Amount: $50.00',
+  },
+  expectOk: true,
+  amount: 50,
+  service: 'water',
+  periodStart: '2026-07-01',
+  periodEnd: '2026-07-31',
+  periodParsed: false,
+},
+{
+  name: 'Dominion peak time rebate (skip marketing)',
+  msg: {
+    id: 'peak-rebate',
+    from: 'Dominion Energy <noreply@domenergyvanc.com>',
+    subject: 'Peak Time Rebate reminder',
+    date: 'Mon, 01 Jun 2026 10:00:00 -0400',
+    body: 'Peak Time Rebate event tomorrow. Amount Due: 12.00',
+  },
+  expectOk: false,
+},
+{
+  name: 'Dominion disconnection (skip)',
+  msg: {
+    id: '4',
+    from: 'Dominion Energy <customer.supportcc@domenergyvanccc.com>',
+    subject: 'Your Account is Subject to Disconnection',
+    date: 'Sat, 30 May 2026 09:14:00 -0400',
+    body: 'past due balance account ending in 3430',
+  },
+  expectOk: false,
+},
 ];
 
 let failed = 0;
@@ -129,13 +188,45 @@ for (const c of cases) {
 }
 
 {
-  const { defaultPeriodFromMessage } = require('../src/services/utility-email-parser.service');
+  const {
+    defaultPeriodFromMessage,
+    parseBillingPeriod,
+    shouldSkipBillImport,
+  } = require('../src/services/utility-email-parser.service');
   const fb = defaultPeriodFromMessage('2026-08-05');
   if (fb.period_start === '2026-07-01' && fb.period_end === '2026-07-31') {
     console.log('  ✓ defaultPeriodFromMessage uses previous calendar month');
   } else {
     failed++;
     console.log('  ✗ defaultPeriodFromMessage', fb);
+  }
+
+  const jan = defaultPeriodFromMessage('2026-01-10');
+  if (jan.period_start === '2025-12-01' && jan.period_end === '2025-12-31') {
+    console.log('  ✓ defaultPeriodFromMessage rolls year for January');
+  } else {
+    failed++;
+    console.log('  ✗ defaultPeriodFromMessage January', jan);
+  }
+
+  const em = parseBillingPeriod('Service period: 04/15/2026 — 05/14/2026');
+  if (em.period_parsed && em.period_start === '2026-04-15' && em.period_end === '2026-05-14') {
+    console.log('  ✓ parseBillingPeriod accepts em-dash');
+  } else {
+    failed++;
+    console.log('  ✗ parseBillingPeriod em-dash', em);
+  }
+
+  const skip = shouldSkipBillImport(
+    'alerts@domenergy.com',
+    'Energy Spend Alert',
+    'Your usage is trending high'
+  );
+  if (skip) {
+    console.log('  ✓ shouldSkipBillImport energy spend alert');
+  } else {
+    failed++;
+    console.log('  ✗ shouldSkipBillImport energy spend alert');
   }
 }
 
