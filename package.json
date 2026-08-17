@@ -78,7 +78,12 @@
     "test:balance-paid": "node scripts/test-balance-paid-month.js",
     "test:identity-crypto": "node scripts/test-identity-crypto.js",
     "test:lease-invite-identity": "node scripts/test-lease-invite-identity.js",
-    "test:identity:all": "npm run test:identity-crypto && npm run test:lease-invite-identity"
+    "test:identity:all": "npm run test:identity-crypto && npm run test:lease-invite-identity",
+    "test:site-visits-rules": "node scripts/test-site-visits-rules.js",
+    "test:site-visits-notify-preview": "node scripts/test-site-visits-notify-preview.js",
+    "test:tenant-lifecycle-status": "node scripts/test-tenant-lifecycle-status.js",
+    "test:authorize-rbac": "node scripts/test-authorize-rbac.js",
+    "test:jwt-utils": "node scripts/test-jwt-utils.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.27.0",
