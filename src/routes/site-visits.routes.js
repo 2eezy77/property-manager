@@ -10,6 +10,7 @@ const {
   listVisits,
   requestVisit,
   approveVisit,
+  rescheduleVisit,
   rejectVisit,
   cancelVisit,
   completeVisit,
@@ -92,7 +93,7 @@ router.get('/', Guards.staffOnly, async (req, res) => {
         monthlyCap: usage.cap_cents / 100,
         noticeHours: 24,
         timezone: 'America/New_York',
-        flow: 'All 3 common areas every visit → owner approves (24h tenant notice when applicable) → video per area at check-in.',
+        flow: 'All 3 common areas every visit → manager or owner approves (24h tenant notice when applicable) → video per area at check-in. Pay completed visits anytime; Instant Payout to manager bank.',
         roomPurposes: ['routine_inspection', 'maintenance_followup', 'vacant_showing'],
       },
     });
@@ -295,6 +296,7 @@ router.post('/payroll/pay', Guards.ownerAndAbove, async (req, res) => {
       ownerId: req.user.id,
       year,
       month,
+      outstanding: req.body?.outstanding === true,
       paymentMethod: req.body?.paymentMethod ?? 'manual',
       note: req.body?.note,
       ipAddress: req.ip,
@@ -332,6 +334,7 @@ router.post('/payroll/cashapp/create-intent', Guards.ownerAndAbove, async (req, 
       ownerId: req.user.id,
       year,
       month,
+      outstanding: req.body?.outstanding === true,
       note: req.body?.note,
     });
 
@@ -411,12 +414,32 @@ router.post('/request', Guards.staffOnly, async (req, res) => {
   }
 });
 
-router.post('/:id/approve', Guards.ownerAndAbove, async (req, res) => {
+router.post('/:id/approve', Guards.staffOnly, async (req, res) => {
   try {
-    const visit = await approveVisit({ visitId: req.params.id, ownerId: req.user.id });
+    const visit = await approveVisit({
+      visitId: req.params.id,
+      ownerId: req.user.id,
+      actorId: req.user.id,
+      actorRole: req.user.role,
+    });
     res.json({ visit, usage: await getMonthlyUsage(visit.orgId) });
   } catch (err) {
     console.error('[POST /site-visits/:id/approve]', err);
+    sendErr(res, err);
+  }
+});
+
+router.post('/:id/reschedule', Guards.staffOnly, async (req, res) => {
+  try {
+    const visit = await rescheduleVisit({
+      visitId: req.params.id,
+      actorId: req.user.id,
+      actorRole: req.user.role,
+      plannedVisitAt: req.body?.plannedVisitAt,
+    });
+    res.json({ visit });
+  } catch (err) {
+    console.error('[POST /site-visits/:id/reschedule]', err);
     sendErr(res, err);
   }
 });

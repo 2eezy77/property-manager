@@ -183,10 +183,13 @@ function buildSummary({ actor, impersonator, method, path, body, statusCode }) {
     return `${who} opened a portal preview as another user`;
   }
   if (p === '/api/site-visits/request' && method === 'POST') {
-    return `${who} requested a boots-on-site inspection (awaiting owner approval)`;
+    return `${who} requested a boots-on-site inspection`;
   }
   if (/\/api\/site-visits\/[^/]+\/approve$/.test(p) && method === 'POST') {
-    return `${who} approved a manager on-site visit ($20; common-area announcement + room inbox notices when applicable)`;
+    return `${who} approved a boots-on-site visit ($20; tenant notices sent when applicable)`;
+  }
+  if (/\/api\/site-visits\/[^/]+\/reschedule$/.test(p) && method === 'POST') {
+    return `${who} changed a boots-on-site visit date (tenant notices updated when applicable)`;
   }
   if (/\/api\/site-visits\/[^/]+\/reject$/.test(p) && method === 'POST') {
     return `${who} rejected a manager on-site visit request`;

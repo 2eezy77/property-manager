@@ -114,6 +114,13 @@ function norfolkNowLocalString(now = new Date()) {
   return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}T${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
 }
 
+/** datetime-local value for an existing instant, in Norfolk time. */
+function toNorfolkDatetimeLocal(date) {
+  if (!date) return '';
+  const p = partsFromDate(new Date(date));
+  return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}T${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
+}
+
 /** Norfolk calendar year + month (1–12) for a given instant. */
 function norfolkYearMonth(now = new Date()) {
   const p = partsFromDate(now);
@@ -143,5 +150,6 @@ module.exports = {
   isWithinCheckInWindow,
   minPlannedVisitLocalString,
   norfolkNowLocalString,
+  toNorfolkDatetimeLocal,
   MS_24H,
 };

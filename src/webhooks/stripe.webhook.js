@@ -31,6 +31,7 @@ const express = require('express');
 
 const { constructWebhookEvent } = require('../services/stripe.service');
 const { maybeSettleBill }       = require('../use-cases/utilities');
+const { attemptInstantPayoutForPayroll } = require('../services/site-visits-payout.service');
 const {
   releaseUtilitySplitsForFailedPayment,
   markUtilitySplitsPaidForPayment,
@@ -226,6 +227,9 @@ async function updateManagerPayoutByPaymentIntent(pi, { status, eventId, chargeI
         rows[0].id,
       ]
     );
+    await attemptInstantPayoutForPayroll(rows[0].id).catch((err) => {
+      console.warn('[stripe-webhook] instant payroll payout:', err.message);
+    });
   }
 
   console.log(`[stripe-webhook] manager payroll ${status}: payout ${rows[0].id} PI ${pi.id}`);
@@ -259,6 +263,9 @@ async function updateManagerPayoutByCharge(charge, { status, eventId }) {
         rows[0].id,
       ]
     );
+    await attemptInstantPayoutForPayroll(rows[0].id).catch((err) => {
+      console.warn('[stripe-webhook] instant payroll payout:', err.message);
+    });
   }
 
   console.log(`[stripe-webhook] manager payroll ${status}: payout ${rows[0].id} charge ${charge.id}`);

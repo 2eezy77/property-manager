@@ -12,6 +12,7 @@ const {
   isWithinCheckInWindow,
   minPlannedVisitLocalString,
   norfolkNowLocalString,
+  toNorfolkDatetimeLocal,
 } = require('../utils/norfolk-time');
 const { loadInspectionAreas, normalizeCommonAreas } = require('./site-visits-catalog');
 const {
@@ -171,6 +172,9 @@ function visitRowToJson(row, extras = {}) {
     status: row.status,
     requestedNote: row.requested_note,
     plannedVisitAt: row.planned_visit_at,
+    plannedVisitAtLocal: row.planned_visit_at
+      ? toNorfolkDatetimeLocal(row.planned_visit_at)
+      : null,
     plannedVisitAtFormatted: row.planned_visit_at
       ? formatNorfolkDateTime(row.planned_visit_at)
       : null,
@@ -371,27 +375,7 @@ async function requestVisit({
 
   const needs24h = visitNeeds24hNotice(roomRows);
 
-  if (!plannedVisitAt) {
-    const err = new Error('Planned visit date and time are required before owner approval.');
-    err.statusCode = 400;
-    throw err;
-  }
-
-  const planned = parseNorfolkLocal(plannedVisitAt);
-  if (!planned) {
-    const err = new Error('Invalid planned visit date/time.');
-    err.statusCode = 400;
-    throw err;
-  }
-
-  if (needs24h && !isAtLeast24HoursAhead(planned)) {
-    const err = new Error(
-      `Occupied-room visits require at least 24 hours notice (Norfolk time). Earliest: ${formatNorfolkDateTime(new Date(Date.now() + 24 * 60 * 60 * 1000))}.`
-    );
-    err.code = 'NOTICE_24H';
-    err.statusCode = 400;
-    throw err;
-  }
+  const planned = parseRequiredPlannedAt(plannedVisitAt, needs24h);
 
   const client = await pool.connect();
   try {
@@ -440,14 +424,25 @@ async function loadRoomTargetsForNotify(visitId) {
   }));
 }
 
-async function approveVisit({ visitId, ownerId }) {
-  const orgId = await resolveOrgIdForUser(ownerId);
+function assertCanApproveVisit(visit, actorId, actorRole) {
+  const isOwner = actorRole === 'owner' || actorRole === 'super_admin';
+  if (isOwner) return;
+  if (actorRole === 'property_manager' && visit.managerId === actorId) return;
+  const err = new Error('Only the owner or the assigned manager can approve this visit.');
+  err.statusCode = 403;
+  throw err;
+}
+
+async function approveVisit({ visitId, ownerId, actorId, actorRole }) {
+  const approverId = actorId || ownerId;
+  const orgId = await resolveOrgIdForUser(approverId);
   const visit = await getVisit(visitId, orgId);
   if (!visit) {
     const err = new Error('Visit not found.');
     err.statusCode = 404;
     throw err;
   }
+  assertCanApproveVisit(visit, approverId, actorRole || 'owner');
   if (visit.status !== 'pending_approval') {
     const err = new Error(`Visit is ${visit.status}, not pending approval.`);
     err.statusCode = 409;
@@ -461,7 +456,7 @@ async function approveVisit({ visitId, ownerId }) {
   const needs24h = roomTargetsNeed24h(visit.roomTargets);
   let planned = visit.plannedVisitAt ? new Date(visit.plannedVisitAt) : null;
 
-  // 24h notice is enforced when the manager submits the request, not when the owner approves.
+  // Occupied-room 24h notice is enforced on request/reschedule, not at approve time.
   if (!planned) {
     const err = new Error(
       needs24h
@@ -480,14 +475,14 @@ async function approveVisit({ visitId, ownerId }) {
             planned_visit_at = COALESCE(planned_visit_at, $3),
             updated_at = NOW()
       WHERE id = $2`,
-    [ownerId, visitId, planned]
+    [approverId, visitId, planned]
   );
 
   await sendCommonAreaVisitAnnouncement({
     visitId,
     orgId,
     propertyId: visit.propertyId,
-    senderId: ownerId,
+    senderId: approverId,
     plannedVisitAt: planned,
     scopeCommon: visit.scopeCommon,
     event: 'scheduled',
@@ -502,6 +497,91 @@ async function approveVisit({ visitId, ownerId }) {
       plannedVisitAt: planned,
       roomTargets,
     });
+  }
+
+  return getVisit(visitId, orgId);
+}
+
+function parseRequiredPlannedAt(plannedVisitAt, needs24h) {
+  if (!plannedVisitAt) {
+    const err = new Error('Planned visit date and time are required.');
+    err.statusCode = 400;
+    throw err;
+  }
+  const planned = parseNorfolkLocal(plannedVisitAt);
+  if (!planned) {
+    const err = new Error('Invalid planned visit date/time.');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (needs24h && !isAtLeast24HoursAhead(planned)) {
+    const err = new Error(
+      `Occupied-room visits require at least 24 hours notice (Norfolk time). Earliest: ${formatNorfolkDateTime(new Date(Date.now() + 24 * 60 * 60 * 1000))}.`
+    );
+    err.code = 'NOTICE_24H';
+    err.statusCode = 400;
+    throw err;
+  }
+  return planned;
+}
+
+async function rescheduleVisit({ visitId, actorId, actorRole, plannedVisitAt }) {
+  const orgId = await resolveOrgIdForUser(actorId);
+  const visit = await getVisit(visitId, orgId);
+  if (!visit) {
+    const err = new Error('Visit not found.');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const isOwner = actorRole === 'owner' || actorRole === 'super_admin';
+  if (!isOwner && visit.managerId !== actorId) {
+    const err = new Error('You can only change the date on your own visits.');
+    err.statusCode = 403;
+    throw err;
+  }
+  if (!['pending_approval', 'approved'].includes(visit.status)) {
+    const err = new Error(`Cannot change the date on a visit that is ${visit.status}.`);
+    err.statusCode = 409;
+    throw err;
+  }
+
+  const needs24h = roomTargetsNeed24h(visit.roomTargets);
+  const planned = parseRequiredPlannedAt(plannedVisitAt, needs24h);
+  const wasApproved = visit.status === 'approved';
+
+  await pool.query(
+    `UPDATE manager_site_visits
+        SET planned_visit_at = $1, updated_at = NOW()
+      WHERE id = $2`,
+    [planned, visitId]
+  );
+
+  if (wasApproved) {
+    await sendCancellationNotices({
+      visitId,
+      managerId: visit.managerId,
+      plannedVisitAt: visit.plannedVisitAt,
+    });
+    await sendCommonAreaVisitAnnouncement({
+      visitId,
+      orgId,
+      propertyId: visit.propertyId,
+      senderId: actorId,
+      plannedVisitAt: planned,
+      scopeCommon: visit.scopeCommon,
+      event: 'rescheduled',
+    });
+    if (visit.roomTargets.length > 0) {
+      const roomTargets = await loadRoomTargetsForNotify(visitId);
+      await sendApprovedVisitNotices({
+        visitId,
+        propertyId: visit.propertyId,
+        managerId: visit.managerId,
+        plannedVisitAt: planned,
+        roomTargets,
+      });
+    }
   }
 
   return getVisit(visitId, orgId);
@@ -647,7 +727,7 @@ async function completeVisit({ visitId, managerId, photos }) {
     throw err;
   }
   if (visit.status !== 'approved') {
-    const err = new Error('Owner must approve this visit before check-in.');
+    const err = new Error('This visit must be approved before check-in.');
     err.statusCode = 409;
     throw err;
   }
@@ -768,6 +848,11 @@ module.exports = {
   getVisit,
   requestVisit,
   approveVisit,
+  assertCanApproveVisit,
+  parseRequiredPlannedAt,
+  visitNeeds24hNotice,
+  roomTargetsNeed24h,
+  rescheduleVisit,
   rejectVisit,
   cancelVisit,
   completeVisit,
