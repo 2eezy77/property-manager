@@ -576,5 +576,6 @@ module.exports = {
   buildSummary,
   formatPaymentSummary,
   getActivityPolicy,
+  sanitizeBody,
   SESSION_OPEN_DEBOUNCE_HOURS,
 };
