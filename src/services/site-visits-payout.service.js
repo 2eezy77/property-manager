@@ -1009,6 +1009,7 @@ async function payManagerPayroll({
         paymentIntent = await stripe.chargeACH({
           amountCents: totalCents,
           customerId: propertyBankRow.stripe_customer_id,
+          paymentMethodId: propertyBankRow.stripe_bank_account_id || undefined,
           routingNumber: routing,
           accountNumber: acctNum,
           accountHolderName: holderName,

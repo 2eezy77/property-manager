@@ -677,6 +677,7 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
     const paymentIntent = await stripe.chargeACH({
       amountCents,
       customerId:        account.stripe_customer_id,
+      paymentMethodId:   account.stripe_bank_account_id || undefined,
       routingNumber:     routing,
       accountNumber:     acctNum,
       accountHolderName: holderName,
