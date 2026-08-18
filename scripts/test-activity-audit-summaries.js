@@ -58,12 +58,36 @@ assert.strictEqual(
   false
 );
 
-// Allowlist: Plaid link-token and generic noise must not be captured
+// Noise stays out; current payroll / identity / visit routes stay in
 assert.strictEqual(
   shouldCapture({
     user: { id: 'u1' },
     method: 'POST',
     originalUrl: '/api/payments/plaid/link-token',
+  }),
+  false
+);
+assert.strictEqual(
+  shouldCapture({
+    user: { id: 'u1' },
+    method: 'POST',
+    originalUrl: '/api/owner/property-bank/plaid/link-token',
+  }),
+  false
+);
+assert.strictEqual(
+  shouldCapture({
+    user: { id: 'u1' },
+    method: 'POST',
+    originalUrl: '/api/site-visits/payout-bank/plaid/link-token',
+  }),
+  false
+);
+assert.strictEqual(
+  shouldCapture({
+    user: { id: 'u1' },
+    method: 'PATCH',
+    originalUrl: '/api/users/me/checkin',
   }),
   false
 );
@@ -88,6 +112,54 @@ assert.strictEqual(
     user: { id: 'u1' },
     method: 'POST',
     originalUrl: '/api/utilities/bills/abc/notify',
+  }),
+  true
+);
+assert.strictEqual(
+  shouldCapture({
+    user: { id: 'u1' },
+    method: 'POST',
+    originalUrl: '/api/site-visits/payroll/cashapp/create-intent',
+  }),
+  true
+);
+assert.strictEqual(
+  shouldCapture({
+    user: { id: 'u1' },
+    method: 'POST',
+    originalUrl: '/api/site-visits/payroll/cancel-processing',
+  }),
+  true
+);
+assert.strictEqual(
+  shouldCapture({
+    user: { id: 'u1' },
+    method: 'GET',
+    originalUrl: '/api/site-visits/payroll/cashapp/sync?payment_intent=pi_x',
+  }),
+  true
+);
+assert.strictEqual(
+  shouldCapture({
+    user: { id: 'u1' },
+    method: 'POST',
+    originalUrl: '/api/site-visits/visit-1/reschedule',
+  }),
+  true
+);
+assert.strictEqual(
+  shouldCapture({
+    user: { id: 'u1' },
+    method: 'POST',
+    originalUrl: '/api/leases/lease-1/identity/fee',
+  }),
+  true
+);
+assert.strictEqual(
+  shouldCapture({
+    user: { id: 'u1' },
+    method: 'POST',
+    originalUrl: '/api/manager-compensation/lease-signing/fee-1/cashapp/create-intent',
   }),
   true
 );
@@ -179,6 +251,36 @@ assert.strictEqual(
     body: {},
   }),
   'Osanin Murillo changed a boots-on-site visit date (tenant notices updated when applicable)'
+);
+assert.strictEqual(
+  buildSummary({
+    actor: { first_name: 'Jose', last_name: 'Montero' },
+    method: 'POST',
+    path: '/api/site-visits/payroll/cashapp/create-intent',
+    statusCode: 201,
+    body: { customAmount: 100, payVisits: true },
+  }),
+  'Jose Montero started Cash App pay for site visits plus $100.00 other work'
+);
+assert.strictEqual(
+  buildSummary({
+    actor: { first_name: 'Jose', last_name: 'Montero' },
+    method: 'POST',
+    path: '/api/site-visits/payroll/cancel-processing',
+    statusCode: 200,
+    body: {},
+  }),
+  'Jose Montero cancelled an in-progress Konstantin payroll payment'
+);
+assert.strictEqual(
+  buildSummary({
+    actor,
+    method: 'POST',
+    path: '/api/leases/lease-1/identity/session',
+    statusCode: 200,
+    body: {},
+  }),
+  'Osanin Murillo started Stripe Identity verification'
 );
 
 console.log('test-activity-audit-summaries OK');

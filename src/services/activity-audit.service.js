@@ -230,6 +230,59 @@ function buildSummary({ actor, impersonator, method, path, body, statusCode }) {
     }
     return `${who} marked manager site-visit payroll paid for ${period} (${methodLabel})`;
   }
+  if (p === '/api/site-visits/payroll/cashapp/create-intent' && method === 'POST') {
+    if (statusCode >= 400) return `${who} failed to start Konstantin payroll in Cash App`;
+    if (b.customAmount && (b.payVisits === true || b.outstanding === true)) {
+      return `${who} started Cash App pay for site visits plus $${Number(b.customAmount).toFixed(2)} other work`;
+    }
+    if (b.customAmount && b.payVisits === false) {
+      return `${who} started Cash App pay of $${Number(b.customAmount).toFixed(2)} for other work`;
+    }
+    return `${who} started Cash App pay for Konstantin site-visit payroll`;
+  }
+  if (p === '/api/site-visits/payroll/cashapp/sync' && (method === 'GET' || method === 'POST')) {
+    if (statusCode >= 400) return `${who} failed to finish Konstantin payroll in Cash App`;
+    return `${who} finished Konstantin payroll via Cash App`;
+  }
+  if (p === '/api/site-visits/payroll/cancel-processing' && method === 'POST') {
+    if (statusCode >= 400) return `${who} failed to cancel an in-progress Konstantin payroll payment`;
+    return `${who} cancelled an in-progress Konstantin payroll payment`;
+  }
+  if (/\/api\/manager-compensation\/lease-signing\/[^/]+\/cashapp\/create-intent$/.test(p) && method === 'POST') {
+    if (statusCode >= 400) return `${who} failed to start Konstantin lease-signing fee in Cash App`;
+    return `${who} started Cash App pay for Konstantin $350 lease-signing fee`;
+  }
+  if (/\/api\/leases\/[^/]+\/identity\/fee$/.test(p) && method === 'POST') {
+    return formatPaymentSummary(who, {
+      paymentType: 'identity_verification_fee',
+      amount: b.amount,
+      method: paymentMethodLabel(b) || 'card',
+      statusCode,
+      phase: 'started',
+    });
+  }
+  if (/\/api\/leases\/[^/]+\/identity\/session$/.test(p) && method === 'POST') {
+    if (statusCode >= 400) return `${who} failed to start identity verification`;
+    return `${who} started Stripe Identity verification`;
+  }
+  if (p === '/api/leases/native' && method === 'POST') {
+    return `${who} created a native VA lease`;
+  }
+  if (/\/api\/leases\/[^/]+\/native\/send$/.test(p) && method === 'POST') {
+    return `${who} sent a native lease for signature`;
+  }
+  if (/\/api\/leases\/[^/]+\/native\/sign$/.test(p) && method === 'POST') {
+    return `${who} signed a native lease`;
+  }
+  if (p === '/api/utilities/bills/combine-monthly' && method === 'POST') {
+    return `${who} combined utility bills for the month`;
+  }
+  if (p === '/api/utilities/bills/prune-duplicates' && method === 'POST') {
+    return `${who} pruned duplicate utility bills`;
+  }
+  if (/\/api\/utilities\/splits\/[^/]+\/reject-dispute$/.test(p) && method === 'POST') {
+    return `${who} rejected a utility dispute`;
+  }
   if (p === '/api/owner/property-bank/plaid/exchange' && method === 'POST') {
     if (statusCode >= 400) return `${who} failed to link the property operating bank account`;
     return `${who} linked the joint property operating bank account`;
@@ -330,10 +383,10 @@ function getActivityPolicy() {
   return {
     headline: 'Shared log — meaningful portal changes only.',
     tracks: [
-      'Payments (ACH / card / Cash App) for rent, deposit, and utilities — started + confirmed',
+      'Payments (ACH / card / Cash App) for rent, deposit, utilities, and Konstantin payroll — started + confirmed',
       'Failed sign-ins; at most one portal open per person per day',
       'Utilities notify / disputes, billing, bank link, passwords',
-      'Maintenance, announcements, leases, site visits',
+      'Maintenance, announcements, leases, identity, site visits',
     ],
     skips: [
       'Page loads, inbox clicks, Plaid link-token, routine API chatter',
@@ -349,13 +402,21 @@ function getActivityPolicy() {
 
 function inferCategory(path) {
   if (path.startsWith('/auth')) return 'auth';
-  if (path === '/events/payment_confirmed' || path.includes('/payments')) return 'payments';
+  if (
+    path === '/events/payment_confirmed'
+    || path.includes('/payments')
+    || path.includes('/site-visits/payroll')
+    || path.includes('/manager-compensation')
+  ) {
+    return 'payments';
+  }
   if (path.includes('/utilities')) return 'utilities';
   if (path.includes('/maintenance')) return 'maintenance';
   if (path.includes('/users') || path.includes('/admin/users')) return 'users';
   if (path.includes('/portal-launch')) return 'communications';
   if (path.includes('/announcements')) return 'communications';
   if (path.includes('/leases')) return 'leases';
+  if (path.includes('/site-visits')) return 'visits';
   if (path.includes('/tenants')) return 'tenants';
   if (path.includes('/messages')) return 'messages';
   return 'api';

@@ -9,6 +9,8 @@ const CATEGORIES = [
   ['', 'All types'],
   ['payments', 'Payments'],
   ['utilities', 'Utilities'],
+  ['visits', 'Visits'],
+  ['leases', 'Leases'],
   ['auth', 'Sign-in'],
   ['maintenance', 'Maintenance'],
   ['users', 'Users'],
@@ -62,6 +64,8 @@ function CategoryBadge({ cat }) {
     auth: 'bg-slate-100 text-slate-700',
     utilities: 'bg-teal-50 text-teal-800',
     payments: 'bg-emerald-50 text-emerald-800',
+    visits: 'bg-sky-50 text-sky-800',
+    leases: 'bg-amber-50 text-amber-800',
     maintenance: 'bg-orange-50 text-orange-800',
     users: 'bg-violet-50 text-violet-800',
     communications: 'bg-indigo-50 text-indigo-800',
@@ -79,7 +83,7 @@ function FilterChip({ active, onClick, children }) {
       type="button"
       onClick={onClick}
       className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-        active ? 'bg-slate-800 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-300'
+        active ? 'bg-violet-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:border-violet-200'
       }`}
     >
       {children}
@@ -178,8 +182,8 @@ export default function ActivityLogPage() {
               type="checkbox"
               checked={failedOnly}
               onChange={(e) => setFailedOnly(e.target.checked)}
-              className="rounded border-slate-300 text-slate-800"
-            />
+            className="rounded border-slate-300 text-violet-600"
+          />
             Failed only
           </label>
           <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
@@ -188,7 +192,7 @@ export default function ActivityLogPage() {
               checked={showSignIns || category === 'auth'}
               onChange={(e) => setShowSignIns(e.target.checked)}
               disabled={category === 'auth'}
-              className="rounded border-slate-300 text-slate-800"
+              className="rounded border-slate-300 text-violet-600"
             />
             Include successful sign-ins
           </label>
@@ -201,7 +205,7 @@ export default function ActivityLogPage() {
 
       {loading ? (
         <div className="flex h-40 items-center justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
         </div>
       ) : logs.length === 0 ? (
         <div className="portal-card p-10 text-center text-sm text-slate-500 space-y-2">
@@ -286,7 +290,7 @@ export function RecentActivitySnippet() {
       )}
       <Link
         to="/admin/activity"
-        className="mt-3 block text-center text-xs font-semibold text-slate-700 hover:underline"
+        className="mt-3 block text-center text-xs font-semibold text-violet-700 hover:underline"
       >
         Open activity log
       </Link>
