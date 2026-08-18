@@ -17,6 +17,10 @@ import {
   visitMonthKey,
   visitNeedsShortNoticeWarning,
 } from '@/utils/siteVisitMonths';
+import {
+  buildSiteVisitPayPreview,
+  payoutKindLabel,
+} from '@/utils/siteVisitPayroll';
 
 const PAYMENT_METHOD_LABELS = {
   manual: 'Manual / other',
@@ -894,6 +898,25 @@ function OwnerPayrollPanel() {
 
   const { year, month } = parseMonthValue(monthValue);
 
+  const payPreview = useMemo(() => buildSiteVisitPayPreview({
+    visitCount: payroll?.visitCount || 0,
+    visitCents: payroll?.totalCents || 0,
+    outstandingCount: payroll?.outstandingCount || 0,
+    outstandingCents: payroll?.outstandingCents || 0,
+    otherWorkAmount: customAmount,
+    monthLabel: payroll?.monthLabel || '',
+  }), [payroll, customAmount]);
+
+  const payMethodBlocked = (paymentMethod === 'ach' && (
+    !payroll?.propertyBank?.linked
+    || !payroll?.payoutBank?.linked
+    || payroll?.connectPayoutReady === false
+  )) || (paymentMethod === 'cash_app' && (
+    !payroll?.cashAppPayAvailable
+    || !payroll?.payoutBank?.linked
+    || payroll?.connectPayoutReady === false
+  ));
+
   useEffect(() => {
     if (!payroll?.paymentMethods?.length) return;
     setPaymentMethod(
@@ -1014,13 +1037,28 @@ function OwnerPayrollPanel() {
     }
   }
 
-  async function markPaid(e, { outstanding = false } = {}) {
-    e.preventDefault();
-    const payOutstanding = outstanding || (payroll?.visitCount < 1 && payroll?.outstandingCount > 0);
+  async function submitPayroll(e, {
+    outstanding = false,
+    payVisits = true,
+    custom,
+  } = {}) {
+    e?.preventDefault?.();
+    const extra = custom != null ? Number(custom) : 0;
+    const hasCustom = Number.isFinite(extra) && extra >= 0.5;
+    const payOutstanding = outstanding
+      || (payVisits !== false && payroll?.visitCount < 1 && payroll?.outstandingCount > 0);
     const dueCount = payOutstanding ? payroll?.outstandingCount : payroll?.visitCount;
-    if (!dueCount) return;
+    if (!hasCustom && !dueCount) return;
+    if (hasCustom && payVisits === false && extra < 0.5) {
+      setError('Enter at least $0.50 for other work.');
+      return;
+    }
     if (paymentMethod === 'cash_app') {
-      await payViaCashApp({ outstanding: payOutstanding });
+      await payViaCashApp({
+        outstanding: payOutstanding,
+        payVisits,
+        customAmount: hasCustom ? extra : undefined,
+      });
       return;
     }
     setPaying(true);
@@ -1030,55 +1068,49 @@ function OwnerPayrollPanel() {
         year,
         month,
         outstanding: payOutstanding,
+        payVisits,
+        customAmount: hasCustom ? extra : undefined,
         paymentMethod,
         note: note.trim() || undefined,
       });
       setNote('');
+      if (hasCustom) setCustomAmount('');
       await loadPayroll();
+      const via = paymentMethod === 'ach' ? 'ACH' : PAYMENT_METHOD_LABELS[paymentMethod] || paymentMethod;
+      let message;
+      if (hasCustom && payVisits !== false && dueCount) {
+        message = `Paid visits plus $${extra.toFixed(2)} other work via ${via}.`;
+      } else if (hasCustom) {
+        message = `Paid $${extra.toFixed(2)} for other work via ${via}.`;
+      } else if (payOutstanding) {
+        message = 'Outstanding boots-on-site pay submitted via ACH.';
+      } else {
+        message = `${payroll.monthLabel} payroll submitted via ACH.`;
+      }
       window.dispatchEvent(new CustomEvent('api:toast', {
-        detail: { message: payOutstanding
-          ? 'Outstanding boots-on-site pay submitted via ACH.'
-          : `${payroll.monthLabel} payroll submitted via ACH.`, variant: 'success' },
+        detail: { message, variant: 'success' },
       }));
-    } catch (e) {
-      setError(apiErrorMessage(e, 'Could not mark payroll paid.'));
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not submit payroll.'));
     } finally {
       setPaying(false);
     }
   }
 
-  async function payCustom(e) {
+  function submitPrimaryPay(e) {
     e.preventDefault();
-    const amount = Number(customAmount);
-    if (!Number.isFinite(amount) || amount < 0.5) {
-      setError('Enter at least $0.50 for other work.');
-      return;
-    }
-    if (paymentMethod === 'cash_app') {
-      await payViaCashApp({ customAmount: amount, payVisits: false });
-      return;
-    }
-    setPaying(true);
-    setError('');
-    try {
-      await api.post('/api/site-visits/payroll/pay', {
-        year,
-        month,
-        payVisits: false,
-        customAmount: amount,
-        paymentMethod,
-        note: note.trim() || undefined,
+    if (payPreview.primaryAction === 'combined') {
+      return submitPayroll(e, {
+        outstanding: payPreview.hasOutstandingOnly,
+        payVisits: true,
+        custom: payPreview.otherDollars,
       });
-      setNote('');
-      setCustomAmount('');
-      await loadPayroll();
-      window.dispatchEvent(new CustomEvent('api:toast', {
-        detail: { message: `Paid $${amount.toFixed(2)} for other work via ACH.`, variant: 'success' },
-      }));
-    } catch (err) {
-      setError(apiErrorMessage(err, 'Could not pay other work.'));
-    } finally {
-      setPaying(false);
+    }
+    if (payPreview.primaryAction === 'other') {
+      return submitPayroll(e, { payVisits: false, custom: payPreview.otherDollars });
+    }
+    if (payPreview.primaryAction === 'visits') {
+      return submitPayroll(e, { outstanding: payPreview.hasOutstandingOnly, payVisits: true });
     }
   }
 
@@ -1116,19 +1148,15 @@ function OwnerPayrollPanel() {
           <div>
             <p className="text-2xl font-bold tabular-nums text-slate-900">
               {fmtMoney(
-                payroll.visitCount > 0
-                  ? payroll.totalCents
-                  : (payroll.outstandingCents || payroll.totalCents || 0)
+                payroll.alreadyPaid && payPreview.otherCents < 50
+                  ? 0
+                  : payPreview.headlineCents
               )}
             </p>
             <p className="mt-0.5 text-xs text-slate-500">
-              {payroll.visitCount > 0
-                ? `${payroll.visitCount} unpaid visit${payroll.visitCount === 1 ? '' : 's'} · ${payroll.monthLabel}`
-                : payroll.outstandingCount > 0
-                  ? `${payroll.outstandingCount} unpaid visit${payroll.outstandingCount === 1 ? '' : 's'} from other months`
-                  : payroll.alreadyPaid
-                    ? `Paid · ${payroll.monthLabel}`
-                    : `Nothing unpaid · ${payroll.monthLabel}`}
+              {payroll.alreadyPaid && payPreview.otherCents < 50
+                ? `Paid · ${payroll.monthLabel}`
+                : payPreview.headline}
               {' · '}{managerFirst}
             </p>
             <p className="mt-2 text-xs text-slate-600">
@@ -1294,51 +1322,17 @@ function OwnerPayrollPanel() {
                   className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
                 />
               </label>
-              {(payroll.visitCount > 0 || payroll.outstandingCount > 0) && (
-                <form onSubmit={markPaid} className="space-y-2">
+              <form onSubmit={submitPrimaryPay} className="space-y-3">
+                {(payroll.visitCount > 0 || payroll.outstandingCount > 0) && (
                   <p className="text-xs text-slate-700">
                     {payroll.visitCount > 0
                       ? `${payroll.visitCount} unpaid visit${payroll.visitCount === 1 ? '' : 's'} in ${payroll.monthLabel} — ${fmtMoney(payroll.totalCents)}`
                       : `${payroll.outstandingCount} unpaid visit${payroll.outstandingCount === 1 ? '' : 's'} — ${fmtMoney(payroll.outstandingCents)}`}
                   </p>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="submit"
-                      disabled={
-                        paying
-                        || (payroll.visitCount < 1 && payroll.outstandingCount < 1)
-                        || (paymentMethod === 'ach' && (
-                          !payroll.propertyBank?.linked
-                          || !payroll.payoutBank?.linked
-                          || payroll.connectPayoutReady === false
-                        ))
-                        || (paymentMethod === 'cash_app' && (
-                          !payroll.cashAppPayAvailable
-                          || !payroll.payoutBank?.linked
-                          || payroll.connectPayoutReady === false
-                        ))
-                      }
-                      className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
-                    >
-                      {paying ? 'Processing…' : `Pay visits ${fmtMoney(payroll.visitCount > 0 ? payroll.totalCents : payroll.outstandingCents)}`}
-                    </button>
-                    {payroll.outstandingCount > payroll.visitCount && (
-                      <button
-                        type="button"
-                        onClick={(e) => markPaid(e, { outstanding: true })}
-                        disabled={paying}
-                        className="rounded-lg border border-violet-300 bg-white px-4 py-2 text-xs font-semibold text-violet-800 hover:bg-violet-50 disabled:opacity-50"
-                      >
-                        Pay all outstanding {fmtMoney(payroll.outstandingCents)}
-                      </button>
-                    )}
-                  </div>
-                </form>
-              )}
-              <form onSubmit={payCustom} className="space-y-2 border-t border-violet-100 pt-3">
-                <p className="text-xs font-semibold text-slate-800">Other work — any amount, anytime</p>
-                <div className="flex flex-wrap items-end gap-2">
-                  <label className="text-xs font-medium text-slate-700">
+                )}
+                <div className="space-y-2 border-t border-violet-100 pt-3">
+                  <p className="text-xs font-semibold text-slate-800">Other work — any amount, anytime</p>
+                  <label className="block text-xs font-medium text-slate-700">
                     Amount
                     <input
                       type="number"
@@ -1350,26 +1344,54 @@ function OwnerPayrollPanel() {
                       className="mt-1 block w-32 rounded-lg border border-slate-200 px-3 py-2 text-sm"
                     />
                   </label>
+                </div>
+                {payPreview.canCombine && (
+                  <p className="text-xs text-slate-700">{payPreview.combinedDetail} — one payment</p>
+                )}
+                <div className="flex flex-wrap gap-2">
                   <button
                     type="submit"
-                    disabled={
-                      paying
-                      || !(Number(customAmount) >= 0.5)
-                      || (paymentMethod === 'ach' && (
-                        !payroll.propertyBank?.linked
-                        || !payroll.payoutBank?.linked
-                        || payroll.connectPayoutReady === false
-                      ))
-                      || (paymentMethod === 'cash_app' && (
-                        !payroll.cashAppPayAvailable
-                        || !payroll.payoutBank?.linked
-                        || payroll.connectPayoutReady === false
-                      ))
-                    }
-                    className="rounded-lg border border-violet-300 bg-white px-4 py-2 text-xs font-semibold text-violet-800 hover:bg-violet-50 disabled:opacity-50"
+                    disabled={paying || payPreview.primaryAction === 'none' || payMethodBlocked}
+                    className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
                   >
-                    {paying ? 'Processing…' : `Pay $${Number(customAmount || 0).toFixed(2)} for other work`}
+                    {paying ? 'Processing…' : payPreview.primaryLabel}
                   </button>
+                  {payPreview.canCombine && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={(e) => submitPayroll(e, {
+                          outstanding: payPreview.hasOutstandingOnly,
+                          payVisits: true,
+                        })}
+                        disabled={paying || payMethodBlocked}
+                        className="rounded-lg border border-violet-300 bg-white px-4 py-2 text-xs font-semibold text-violet-800 hover:bg-violet-50 disabled:opacity-50"
+                      >
+                        Visits only {fmtMoney(payPreview.dueVisitCents)}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => submitPayroll(e, {
+                          payVisits: false,
+                          custom: payPreview.otherDollars,
+                        })}
+                        disabled={paying || payMethodBlocked}
+                        className="rounded-lg border border-violet-300 bg-white px-4 py-2 text-xs font-semibold text-violet-800 hover:bg-violet-50 disabled:opacity-50"
+                      >
+                        Other work only {fmtMoney(payPreview.otherCents)}
+                      </button>
+                    </>
+                  )}
+                  {payroll.outstandingCount > payroll.visitCount && (
+                    <button
+                      type="button"
+                      onClick={(e) => submitPayroll(e, { outstanding: true, payVisits: true })}
+                      disabled={paying || payMethodBlocked}
+                      className="rounded-lg border border-violet-300 bg-white px-4 py-2 text-xs font-semibold text-violet-800 hover:bg-violet-50 disabled:opacity-50"
+                    >
+                      Pay all outstanding {fmtMoney(payroll.outstandingCents)}
+                    </button>
+                  )}
                 </div>
               </form>
             </div>
@@ -1386,9 +1408,7 @@ function OwnerPayrollPanel() {
                     <span>
                       {p.periodLabel}
                       {' · '}
-                      {p.payoutKind === 'custom'
-                        ? 'other work'
-                        : `${p.visitCount} visit${p.visitCount === 1 ? '' : 's'}`}
+                      {payoutKindLabel(p)}
                       {' · '}
                       {PAYMENT_METHOD_LABELS[p.paymentMethod] || p.paymentMethod}
                     </span>

@@ -195,6 +195,16 @@ assert(
   }) === 'Jose Montero paid Konstantin $85.00 for other work (ach)',
   'activity log records custom manager pay'
 );
+assert(
+  buildSummary({
+    actor: { first_name: 'Jose', last_name: 'Montero', email: 'j@x.com' },
+    method: 'POST',
+    path: '/api/site-visits/payroll/pay',
+    statusCode: 200,
+    body: { customAmount: 100, payVisits: true, paymentMethod: 'ach', year: 2026, month: 8 },
+  }) === 'Jose Montero paid Konstantin site visits plus $100.00 other work (ach)',
+  'activity log records visits plus other work in one pay'
+);
 
 async function runMonthGroupChecks() {
   const {
@@ -203,6 +213,43 @@ async function runMonthGroupChecks() {
     splitUpcomingVisits,
     visitNeedsShortNoticeWarning,
   } = await import('../client/src/utils/siteVisitMonths.js');
+  const {
+    buildSiteVisitPayPreview,
+    payoutKindLabel,
+  } = await import('../client/src/utils/siteVisitPayroll.js');
+
+  const both = buildSiteVisitPayPreview({
+    visitCount: 1,
+    visitCents: 2000,
+    outstandingCount: 1,
+    outstandingCents: 2000,
+    otherWorkAmount: '100',
+    monthLabel: 'August 2026',
+  });
+  assert(both.canCombine === true && both.combinedCents === 12000, 'August visit plus $100 other work is $120');
+  assert(both.primaryAction === 'combined' && both.primaryLabel === 'Pay $120', 'primary button pays both in one charge');
+  assert(both.headline === '1 unpaid visit + other work', 'headline names both pieces');
+  assert(
+    both.combinedDetail === '1 unpaid visit ($20) + other work ($100)',
+    'combined detail lists visit and other work'
+  );
+
+  const visitsOnlyPreview = buildSiteVisitPayPreview({
+    visitCount: 1,
+    visitCents: 2000,
+    otherWorkAmount: '',
+    monthLabel: 'August 2026',
+  });
+  assert(visitsOnlyPreview.primaryAction === 'visits' && visitsOnlyPreview.primaryLabel === 'Pay visits $20', 'blank other work keeps visits-only pay');
+
+  const otherOnlyPreview = buildSiteVisitPayPreview({
+    visitCount: 0,
+    visitCents: 0,
+    otherWorkAmount: '100',
+    monthLabel: 'August 2026',
+  });
+  assert(otherOnlyPreview.primaryAction === 'other' && otherOnlyPreview.primaryLabel === 'Pay $100 for other work', 'other work alone stays a custom pay');
+  assert(payoutKindLabel({ payoutKind: 'mixed', visitCount: 1 }) === '1 visit + other work', 'history labels mixed payouts');
 
   const juneLeftover = {
     id: 'june-1',

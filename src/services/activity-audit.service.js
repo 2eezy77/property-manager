@@ -222,6 +222,9 @@ function buildSummary({ actor, impersonator, method, path, body, statusCode }) {
     if (statusCode >= 400) return `${who} failed to mark manager visit payroll paid`;
     const methodLabel = b.paymentMethod ? String(b.paymentMethod).replace(/_/g, ' ') : 'manual';
     const period = b.year && b.month ? `${b.month}/${b.year}` : 'selected month';
+    if (b.customAmount && (b.payVisits === true || b.outstanding === true)) {
+      return `${who} paid Konstantin site visits plus $${Number(b.customAmount).toFixed(2)} other work (${methodLabel})`;
+    }
     if (b.customAmount && b.payVisits === false) {
       return `${who} paid Konstantin $${Number(b.customAmount).toFixed(2)} for other work (${methodLabel})`;
     }

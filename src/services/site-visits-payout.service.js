@@ -1014,7 +1014,9 @@ async function payManagerPayroll({
           accountHolderName: holderName,
           description: charge.payoutKind === 'custom'
             ? `Manager pay — ${note?.trim() || 'other work'}`
-            : `Site visit payroll — ${monthLabel(year, month)}`,
+            : charge.payoutKind === 'mixed'
+              ? `Site visit payroll + other work — ${monthLabel(year, month)}`
+              : `Site visit payroll — ${monthLabel(year, month)}`,
           metadata: {
             payment_type: 'manager_site_visit_payroll',
             payout_id: payoutRow.id,
@@ -1240,7 +1242,9 @@ async function startCashAppPayroll({
         customerId,
         description: charge.payoutKind === 'custom'
           ? `Manager pay — ${note?.trim() || 'other work'}`
-          : `Site visit payroll — ${monthLabel(year, month)}`,
+          : charge.payoutKind === 'mixed'
+            ? `Site visit payroll + other work — ${monthLabel(year, month)}`
+            : `Site visit payroll — ${monthLabel(year, month)}`,
         metadata: {
           payment_type: 'manager_site_visit_payroll',
           payout_id: payoutRow.id,
