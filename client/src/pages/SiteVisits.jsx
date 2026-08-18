@@ -1151,11 +1151,16 @@ function OwnerPayrollPanel() {
             </div>
           )}
 
-          {payroll.canPay && (
+          {(!payroll.processing || payroll.processingDetails?.canCancel) && (
             <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-4 space-y-4">
               <p className="text-sm font-semibold text-slate-900">
                 Pay Konstantin anytime — unpaid visits or any other work.
               </p>
+              {!payroll.canPay && (
+                <p className="text-xs text-amber-800">
+                  Link Konstantin&apos;s payout bank and your property account first — then you can send visits or any other amount from here.
+                </p>
+              )}
               <p className="text-xs text-slate-600">
                 {paymentMethod === 'ach' ? (
                   payroll.propertyBank?.linked && payroll.payoutBank?.linked ? (
