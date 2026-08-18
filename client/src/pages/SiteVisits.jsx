@@ -1,16 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router';
 import { loadStripe } from '@stripe/stripe-js';
-import {
-  Check, Footprints, Banknote, User, Landmark, FileText, Clock, CheckCircle2, PenLine,
-} from 'lucide-react';
 import api from '@/api/axios';
 import { useAuth } from '@/context/AuthContext';
 import { apiErrorMessage } from '@/utils/apiErrorMessage';
 import { usePlaidLink } from '@/hooks/usePlaidLink';
 import PageHeader from '@/components/ui/PageHeader';
 import Panel from '@/components/ui/Panel';
-import StatCard from '@/components/ui/StatCard';
 
 const PAYMENT_METHOD_LABELS = {
   manual: 'Manual / other',
@@ -28,8 +24,8 @@ const STRIPE_PAY_LABELS = {
 
 const STATUS_META = {
   pending_approval: { label: 'Scheduling', color: 'bg-amber-100 text-amber-800' },
-  approved:         { label: 'Scheduled — ready to check in', color: 'bg-blue-100 text-blue-800' },
-  completed:        { label: 'Completed', color: 'bg-emerald-100 text-emerald-800' },
+  approved:         { label: 'Scheduled', color: 'bg-blue-100 text-blue-800' },
+  completed:        { label: 'Done', color: 'bg-emerald-100 text-emerald-800' },
   rejected:         { label: 'Rejected', color: 'bg-red-100 text-red-700' },
   cancelled:        { label: 'Cancelled', color: 'bg-slate-100 text-slate-600' },
 };
@@ -79,16 +75,6 @@ function accountNeedsRelink(acct) {
   return acct?.linkStatus === 'needs_relink' || acct?.link_status === 'needs_relink';
 }
 
-function VisitWhen({ visit }) {
-  const w = visit?.visitWhen;
-  if (!w?.at) return null;
-  return (
-    <p className="text-xs font-medium text-slate-800 mt-1">
-      <span className="text-slate-500 font-normal">{w.label}:</span> {w.at}
-    </p>
-  );
-}
-
 function visitNeeds24h(visit) {
   return (visit?.roomTargets || []).some(
     (t) => t.tenantId && t.roomPurpose !== 'vacant_showing'
@@ -108,6 +94,7 @@ function VisitScheduleEditor({
 }) {
   const saved = visit.plannedVisitAtLocal || '';
   const [draft, setDraft] = useState(saved);
+  const [open, setOpen] = useState(false);
   const minDatetime = visitNeeds24h(visit) ? minPlanned : minNow;
 
   useEffect(() => {
@@ -119,34 +106,21 @@ function VisitScheduleEditor({
   if (!canChange) return null;
 
   return (
-    <div className="mt-3 space-y-2">
-      <div className="flex flex-wrap items-end gap-2">
-        <label className="text-xs font-medium text-slate-700">
-          Visit date (Norfolk)
-          <input
-            type="datetime-local"
-            value={draft}
-            min={minDatetime || undefined}
-            onChange={(e) => setDraft(e.target.value)}
-            className="mt-1 block rounded-lg border border-slate-200 px-3 py-2 text-sm"
-          />
-        </label>
+    <div className="mt-2">
+      <div className="flex flex-wrap gap-3">
         <button
           type="button"
-          disabled={busy || !draft || draft === saved}
-          onClick={() => onReschedule(visit.id, draft)}
-          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          onClick={() => setOpen((v) => !v)}
+          className="text-xs font-semibold text-slate-600 hover:text-slate-900"
         >
-          Change date
+          {open ? 'Close date' : 'Change date'}
         </button>
-      </div>
-      <div className="flex flex-wrap gap-2">
         {showApprove && visit.status === 'pending_approval' && (
           <button
             type="button"
             disabled={busy}
             onClick={() => onApprove(visit.id)}
-            className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
+            className="text-xs font-semibold text-violet-700 hover:text-violet-900"
           >
             Approve &amp; send notices
           </button>
@@ -158,12 +132,81 @@ function VisitScheduleEditor({
             onClick={() => onCancel(visit.id)}
             className="text-xs text-slate-500 hover:text-slate-800"
           >
-            Cancel visit
+            Cancel
           </button>
         )}
       </div>
+      {open && (
+        <div className="mt-2 flex flex-wrap items-end gap-2">
+          <label className="text-xs font-medium text-slate-700">
+            Visit date (Norfolk)
+            <input
+              type="datetime-local"
+              value={draft}
+              min={minDatetime || undefined}
+              onChange={(e) => setDraft(e.target.value)}
+              className="mt-1 block rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            />
+          </label>
+          <button
+            type="button"
+            disabled={busy || !draft || draft === saved}
+            onClick={() => onReschedule(visit.id, draft)}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            Save date
+          </button>
+        </div>
+      )}
     </div>
   );
+}
+
+function Segmented({ value, onChange, options }) {
+  return (
+    <div className="flex flex-wrap rounded-lg border border-slate-200 overflow-hidden text-sm w-fit">
+      {options.map((opt) => (
+        <button
+          key={opt.id}
+          type="button"
+          onClick={() => onChange(opt.id)}
+          className={`px-3.5 py-1.5 font-medium transition-colors ${
+            value === opt.id ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          {opt.label}
+          {opt.count != null && (
+            <span className={`ml-1.5 text-[11px] ${value === opt.id ? 'text-white/70' : 'text-slate-400'}`}>
+              {opt.count}
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function HowVisitsWork({ isOwner }) {
+  return (
+    <details className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-slate-600">
+      <summary className="cursor-pointer text-xs font-semibold text-slate-700">How visits work</summary>
+      <ul className="mt-2 list-disc space-y-1 pl-4 text-xs">
+        <li>$20 each, up to 5 visits / $100 a month.</li>
+        <li>Every visit covers kitchen, parking, and lawn — video at check-in.</li>
+        <li>Occupied rooms need 24-hour Norfolk notice. Vacant showings can be same-day.</li>
+        {isOwner ? (
+          <li>Konstantin schedules on his own. Pay visits or any other amount anytime.</li>
+        ) : (
+          <li>No owner approval. Change or cancel the date anytime.</li>
+        )}
+        <li>$350 per signed lease, paid after 3 months of rent.</li>
+      </ul>
+    </details>
+  );
+}
+
+function extraRooms(visit) {
+  return (visit.roomTargets || []).map((r) => r.roomLabel).filter(Boolean);
 }
 
 function readFileAsDataUrl(file) {
@@ -403,20 +446,11 @@ function RequestVisitForm({ areas, minPlanned, minNow, onDone }) {
 
   return (
     <form onSubmit={submit} className="space-y-4">
+      <p className="text-xs text-slate-500">
+        Kitchen, parking, and lawn are included every visit (video at check-in).
+      </p>
       <div>
-        <p className="text-xs font-bold uppercase text-slate-500 mb-2">Common areas (required every visit)</p>
-        <ul className="rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2 text-xs text-slate-700 space-y-1">
-          {(areas?.common || []).map((a) => (
-            <li key={a.key} className="flex items-center gap-2">
-              <Check size={14} strokeWidth={2.5} className="text-emerald-600" />
-              {a.label}
-              <span className="text-slate-400">— video at check-in</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-      <div>
-        <p className="text-xs font-bold uppercase text-slate-500 mb-2">Tenant rooms</p>
+        <p className="text-xs font-bold uppercase text-slate-500 mb-2">Add tenant rooms (optional)</p>
         <div className="space-y-2">
           {(areas?.rooms || []).map((r) => {
             const selected = units.has(r.unitId);
@@ -455,11 +489,11 @@ function RequestVisitForm({ areas, minPlanned, minNow, onDone }) {
         </div>
       </div>
       <label className="block text-xs font-medium text-slate-700">
-        Planned visit (Norfolk time)
+        When (Norfolk)
         <span className="block text-slate-500 font-normal mt-0.5">
           {needs24h
-            ? 'At least 24 hours ahead for occupied rooms (Norfolk time). Tenants are notified when you schedule — no owner approval.'
-            : 'Same-day OK for vacant showings. Tenants are notified when you schedule — no owner approval.'}
+            ? 'Occupied rooms need 24 hours. Tenants are notified when you schedule.'
+            : 'Same-day is fine for vacant / common-only. Tenants are notified when you schedule.'}
         </span>
         <input
           type="datetime-local"
@@ -483,7 +517,7 @@ function RequestVisitForm({ areas, minPlanned, minNow, onDone }) {
         disabled={busy}
         className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
       >
-        {busy ? 'Sending…' : 'Schedule visit & notify tenants'}
+        {busy ? 'Scheduling…' : 'Schedule visit'}
       </button>
     </form>
   );
@@ -675,8 +709,7 @@ function ManagerPayoutBankSection({ onChanged }) {
   return (
     <Panel title="Payout bank account">
       <p className="text-xs text-slate-600 mb-3">
-        Link the debit/bank account where Jose sends site-visit pay ($20/visit, $100/mo cap). After he pays,
-        Stripe Instant Payouts send funds to this account when they are available.
+        Where Instant Payouts land after Jose pays.
       </p>
       {loading ? (
         <p className="text-xs text-slate-500">Loading…</p>
@@ -976,7 +1009,7 @@ function OwnerPayrollPanel() {
   const managerFirst = payroll?.manager?.name?.split(' ')[0] || 'Konstantin';
 
   return (
-    <Panel title={`Pay ${managerFirst} — boots on site`} id="pay-konstantin">
+    <Panel title={`Pay ${managerFirst}`} id="pay-konstantin">
       <div className="flex flex-wrap items-end gap-3 mb-4">
         <label className="text-xs font-medium text-slate-700">
           Pay period
@@ -1002,55 +1035,43 @@ function OwnerPayrollPanel() {
         <p className="text-xs text-slate-500">No property manager on file for this organization.</p>
       ) : (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <StatCard
-              label="Completed visits"
-              value={payroll.visitCount}
-              sub={payroll.monthLabel}
-              icon={<Footprints size={20} strokeWidth={2} />}
-              tone="default"
-            />
-            <StatCard
-              label="Amount due"
-              value={fmtMoney(payroll.totalCents)}
-              sub={payroll.alreadyPaid ? 'Paid' : 'Unpaid'}
-              icon={<Banknote size={20} strokeWidth={2} />}
-              tone={payroll.alreadyPaid ? 'success' : 'warning'}
-            />
-            <StatCard
-              label="Manager"
-              value={payroll.manager.name?.split(' ')[0] || '—'}
-              sub={payroll.manager.email}
-              icon={<User size={20} strokeWidth={2} />}
-              tone="admin"
-            />
-            <StatCard
-              label="Payout bank"
-              value={payroll.payoutBank?.linked ? `···${payroll.payoutBank.accountMask}` : 'None'}
-              sub={payroll.payoutBank?.linked ? payroll.payoutBank.institutionName : 'Manager not linked'}
-              icon={<Landmark size={20} strokeWidth={2} />}
-              tone={payroll.payoutBank?.linked ? 'success' : 'warning'}
-            />
-          </div>
-
-          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">
-            <span className="font-semibold text-slate-900">Property account (pay from): </span>
-            {payroll.propertyBank?.linked ? (
-              <>
-                {payroll.propertyBank.institutionName} ····{payroll.propertyBank.accountMask}
-                {payroll.propertyBank.linkedByName ? ` · linked by ${payroll.propertyBank.linkedByName}` : ''}
-                {(payroll.propertyBank.linkStatus === 'needs_relink' || accountNeedsRelink(payroll.propertyBank)) && (
-                  <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-amber-800">reconnect needed</span>
-                )}
-              </>
-            ) : (
-              <>
-                Not linked —{' '}
+          <div>
+            <p className="text-2xl font-bold tabular-nums text-slate-900">
+              {fmtMoney(
+                payroll.visitCount > 0
+                  ? payroll.totalCents
+                  : (payroll.outstandingCents || payroll.totalCents || 0)
+              )}
+            </p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              {payroll.visitCount > 0
+                ? `${payroll.visitCount} unpaid visit${payroll.visitCount === 1 ? '' : 's'} · ${payroll.monthLabel}`
+                : payroll.outstandingCount > 0
+                  ? `${payroll.outstandingCount} unpaid visit${payroll.outstandingCount === 1 ? '' : 's'} from other months`
+                  : payroll.alreadyPaid
+                    ? `Paid · ${payroll.monthLabel}`
+                    : `Nothing unpaid · ${payroll.monthLabel}`}
+              {' · '}{managerFirst}
+            </p>
+            <p className="mt-2 text-xs text-slate-600">
+              His bank:{' '}
+              {payroll.payoutBank?.linked
+                ? `${payroll.payoutBank.institutionName} ····${payroll.payoutBank.accountMask}`
+                : 'not linked'}
+              {' · '}Your account:{' '}
+              {payroll.propertyBank?.linked ? (
+                <>
+                  {payroll.propertyBank.institutionName} ····{payroll.propertyBank.accountMask}
+                  {accountNeedsRelink(payroll.propertyBank) && (
+                    <span className="ml-1 rounded-full bg-amber-100 px-2 py-0.5 text-amber-800">reconnect</span>
+                  )}
+                </>
+              ) : (
                 <a href="/admin/finance" className="font-semibold text-violet-700 hover:underline">
-                  connect joint account in Finance
+                  link in Finance
                 </a>
-              </>
-            )}
+              )}
+            </p>
           </div>
 
           {payroll.propertyBank?.linked && accountNeedsRelink(payroll.propertyBank) && (
@@ -1153,14 +1174,7 @@ function OwnerPayrollPanel() {
 
           {(!payroll.processing || payroll.processingDetails?.canCancel) && (
             <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-4 space-y-4">
-              <p className="text-sm font-semibold text-slate-900">
-                Pay Konstantin anytime — unpaid visits or any other work.
-              </p>
-              {!payroll.canPay && (
-                <p className="text-xs text-amber-800">
-                  Link Konstantin&apos;s payout bank and your property account first — then you can send visits or any other amount from here.
-                </p>
-              )}
+              <p className="text-sm font-semibold text-slate-900">Pay visits or other work</p>
               <p className="text-xs text-slate-600">
                 {paymentMethod === 'ach' ? (
                   payroll.propertyBank?.linked && payroll.payoutBank?.linked ? (
@@ -1290,28 +1304,12 @@ function OwnerPayrollPanel() {
             </div>
           )}
 
-          {payroll.visitCount === 0 && payroll.outstandingCount === 0 && (
-            <p className="text-xs text-slate-500">No unpaid completed visits{payroll.monthLabel ? ` for ${payroll.monthLabel}` : ''}. You can still pay other work above.</p>
-          )}
-
-          {payroll.visits?.length > 0 && (
-            <div>
-              <p className="text-xs font-bold uppercase text-slate-500 mb-2">Visits in period</p>
-              <ul className="rounded-lg border border-slate-200 divide-y divide-slate-100 text-xs">
-                {payroll.visits.map((v) => (
-                  <li key={v.id} className="flex justify-between px-3 py-2">
-                    <span>{v.visitedAtFormatted}</span>
-                    <span className="font-semibold text-emerald-700">{fmtMoney(v.amountCents)}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
           {history.length > 0 && (
-            <div>
-              <p className="text-xs font-bold uppercase text-slate-500 mb-2">Payout history</p>
-              <ul className="rounded-lg border border-slate-200 divide-y divide-slate-100 text-xs">
+            <details className="text-xs text-slate-600">
+              <summary className="cursor-pointer font-semibold text-slate-700">
+                Payout history ({history.length})
+              </summary>
+              <ul className="mt-2 rounded-lg border border-slate-200 divide-y divide-slate-100">
                 {history.map((p) => (
                   <li key={p.id} className="flex flex-wrap justify-between gap-2 px-3 py-2">
                     <span>
@@ -1327,7 +1325,7 @@ function OwnerPayrollPanel() {
                   </li>
                 ))}
               </ul>
-            </div>
+            </details>
           )}
         </div>
       )}
@@ -1466,11 +1464,13 @@ function OwnerLeaseSigningPanel() {
 
   return (
     <Panel title="Lease signing pay">
-      <p className="text-xs text-slate-600 mb-3">
-        Konstantin earns ${amount} per signed lease, but you only pay after the tenant has paid{' '}
-        <strong>{rentMonths} months of rent</strong> — so you are not out $350 if they bail early.
-        Use <strong>Sync signed leases</strong> to add records for active leases (and former tenants who paid 3+ rent months).
-      </p>
+      <details className="mb-3 text-xs text-slate-600">
+        <summary className="cursor-pointer font-semibold text-slate-700">When the $350 is due</summary>
+        <p className="mt-2">
+          Konstantin earns ${amount} per signed lease after the tenant has paid{' '}
+          <strong>{rentMonths} months of rent</strong>. Sync signed leases to add records.
+        </p>
+      </details>
       <div className="flex flex-wrap gap-2 mb-4">
         <button
           type="button"
@@ -1512,36 +1512,12 @@ function OwnerLeaseSigningPanel() {
         <p className="text-xs text-slate-500">Loading…</p>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 mb-4 lg:grid-cols-4">
-            <StatCard
-              label="Ready to pay"
-              value={data?.summary?.owedCount ?? 0}
-              sub={fmtMoney(data?.summary?.owedCents ?? 0)}
-              icon={<FileText size={20} strokeWidth={2} />}
-              tone="warning"
-            />
-            <StatCard
-              label="Waiting on rent"
-              value={data?.summary?.pendingCount ?? 0}
-              sub={`${rentMonths} months required`}
-              icon={<Clock size={20} strokeWidth={2} />}
-              tone="default"
-            />
-            <StatCard
-              label="Paid"
-              value={data?.summary?.paidCount ?? 0}
-              sub={fmtMoney(data?.summary?.paidCents ?? 0)}
-              icon={<CheckCircle2 size={20} strokeWidth={2} />}
-              tone="success"
-            />
-            <StatCard
-              label="Per lease"
-              value={`$${amount}`}
-              sub="After 3 rent mos"
-              icon={<PenLine size={20} strokeWidth={2} />}
-              tone="admin"
-            />
-          </div>
+          <p className="mb-4 text-sm text-slate-700">
+            <strong>{owed.length} ready</strong>
+            {owed.length > 0 ? ` · ${fmtMoney(data?.summary?.owedCents ?? 0)}` : ''}
+            {' · '}{pending.length} waiting on rent
+            {' · '}{paid.length} paid
+          </p>
 
           {pending.length > 0 && (
             <div className="mb-4">
@@ -1563,8 +1539,10 @@ function OwnerLeaseSigningPanel() {
           )}
 
           {cancelled.length > 0 && (
-            <div className="mb-4">
-              <p className="text-xs font-bold uppercase text-slate-500 mb-2">Not payable (left early)</p>
+            <details className="mb-4">
+              <summary className="cursor-pointer text-xs font-semibold text-slate-600">
+                Not payable — left early ({cancelled.length})
+              </summary>
               <ul className="rounded-lg border border-slate-200 divide-y divide-slate-100 text-xs text-slate-500">
                 {cancelled.map((f) => (
                   <li key={f.id} className="px-3 py-2">
@@ -1579,7 +1557,7 @@ function OwnerLeaseSigningPanel() {
                   </li>
                 ))}
               </ul>
-            </div>
+            </details>
           )}
 
           {owed.length > 0 && (
@@ -1616,9 +1594,11 @@ function OwnerLeaseSigningPanel() {
           )}
 
           {paid.length > 0 && (
-            <div>
-              <p className="text-xs font-bold uppercase text-slate-500 mb-2">Paid</p>
-              <ul className="rounded-lg border border-slate-200 divide-y divide-slate-100 text-xs">
+            <details>
+              <summary className="cursor-pointer text-xs font-semibold text-slate-600">
+                Paid lease fees ({paid.length})
+              </summary>
+              <ul className="mt-2 rounded-lg border border-slate-200 divide-y divide-slate-100 text-xs">
                 {paid.slice(0, 8).map((f) => (
                   <li key={f.id} className="flex flex-wrap justify-between gap-2 px-3 py-2">
                     <span>
@@ -1629,7 +1609,7 @@ function OwnerLeaseSigningPanel() {
                   </li>
                 ))}
               </ul>
-            </div>
+            </details>
           )}
         </>
       )}
@@ -1650,34 +1630,14 @@ function ManagerLeaseSigningPanel() {
   if (!data) return null;
 
   return (
-    <Panel title="Lease signing earnings">
-      <p className="text-xs text-slate-600 mb-3">
-        ${data.policy?.amountPerLease ?? 350} per signed lease — owner pays after{' '}
-        {data.policy?.rentMonthsRequired ?? 3} months of tenant rent.
+    <Panel title="Lease signing">
+      <p className="text-sm text-slate-700">
+        ${data.policy?.amountPerLease ?? 350} after {data.policy?.rentMonthsRequired ?? 3} rent months
+        {' · '}
+        <strong>{data.summary?.owedCount ?? 0} ready</strong>
+        {' · '}{data.summary?.pendingCount ?? 0} waiting
+        {' · '}{data.summary?.paidCount ?? 0} paid
       </p>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-        <StatCard
-          label="Ready to pay"
-          value={data.summary?.owedCount ?? 0}
-          sub={fmtMoney(data.summary?.owedCents ?? 0)}
-          icon={<FileText size={20} strokeWidth={2} />}
-          tone="warning"
-        />
-        <StatCard
-          label="Waiting on rent"
-          value={data.summary?.pendingCount ?? 0}
-          sub={`${data.policy?.rentMonthsRequired ?? 3} months`}
-          icon={<Clock size={20} strokeWidth={2} />}
-          tone="default"
-        />
-        <StatCard
-          label="Paid"
-          value={data.summary?.paidCount ?? 0}
-          sub={`$${data.policy?.amountPerLease ?? 350} each`}
-          icon={<CheckCircle2 size={20} strokeWidth={2} />}
-          tone="success"
-        />
-      </div>
     </Panel>
   );
 }
@@ -1707,35 +1667,27 @@ function ManagerEarningsPanel() {
 
   return (
     <Panel title="Your earnings">
-      <label className="text-xs font-medium text-slate-700 block mb-3">
-        Month
-        <input
-          type="month"
-          value={monthValue}
-          onChange={(e) => setMonthValue(e.target.value)}
-          className="mt-1 block rounded-lg border border-slate-200 px-3 py-2 text-sm"
-        />
-      </label>
-      <div className="grid grid-cols-2 gap-3">
-        <StatCard
-          label="Completed"
-          value={payroll?.visitCount ?? 0}
-          sub={payroll?.monthLabel}
-          icon={<CheckCircle2 size={20} strokeWidth={2} />}
-          tone="success"
-        />
-        <StatCard
-          label="Earned"
-          value={fmtMoney((payroll?.outstandingCents ?? payroll?.totalCents) || 0)}
-          sub={
-            payroll?.outstandingCount > 0
-              ? `${payroll.outstandingCount} unpaid visit${payroll.outstandingCount === 1 ? '' : 's'}`
-              : payroll?.alreadyPaid ? 'Paid' : 'Awaiting payout'
-          }
-          icon={<Banknote size={20} strokeWidth={2} />}
-          tone={payroll?.outstandingCount > 0 ? 'warning' : payroll?.alreadyPaid ? 'success' : 'warning'}
-        />
+      <div className="flex flex-wrap items-end gap-3 mb-3">
+        <label className="text-xs font-medium text-slate-700">
+          Month
+          <input
+            type="month"
+            value={monthValue}
+            onChange={(e) => setMonthValue(e.target.value)}
+            className="mt-1 block rounded-lg border border-slate-200 px-3 py-2 text-sm"
+          />
+        </label>
       </div>
+      <p className="text-2xl font-bold tabular-nums text-slate-900">
+        {fmtMoney((payroll?.outstandingCents ?? payroll?.totalCents) || 0)}
+      </p>
+      <p className="mt-0.5 text-xs text-slate-500">
+        {payroll?.visitCount ?? 0} completed
+        {payroll?.outstandingCount > 0
+          ? ` · ${payroll.outstandingCount} unpaid`
+          : payroll?.alreadyPaid ? ' · paid' : ' · awaiting payout'}
+        {payroll?.monthLabel ? ` · ${payroll.monthLabel}` : ''}
+      </p>
       {payroll?.alreadyPaid && payroll.payout && (
         <p className="mt-3 text-xs text-emerald-800 bg-emerald-50 rounded-lg px-3 py-2">
           {payroll.monthLabel} marked paid via {PAYMENT_METHOD_LABELS[payroll.payout.paymentMethod] || payroll.payout.paymentMethod}
@@ -1746,8 +1698,130 @@ function ManagerEarningsPanel() {
   );
 }
 
+function sectionFromHash(hash) {
+  if (hash === '#pay-konstantin') return 'pay';
+  if (hash === '#lease-signing') return 'lease';
+  return 'visits';
+}
+
+function hashForSection(section) {
+  if (section === 'pay') return '#pay-konstantin';
+  if (section === 'lease') return '#lease-signing';
+  return '';
+}
+
+function VisitRow({
+  visit,
+  isOwner,
+  isManager,
+  completingId,
+  setCompletingId,
+  onCompleteDone,
+  busy,
+  minPlanned,
+  minNow,
+  onReschedule,
+  onCancel,
+}) {
+  const [showProof, setShowProof] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const meta = STATUS_META[visit.status] || STATUS_META.cancelled;
+  const rooms = extraRooms(visit);
+  const photos = visit.photos || [];
+  const hasProof = photos.length > 0 || visit.photoUrl;
+  const shortNotice = visitNeedsShortNoticeWarning(visit);
+
+  return (
+    <li className="px-4 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${meta.color}`}>
+              {meta.label}
+            </span>
+            <span className="text-sm font-medium text-slate-900">
+              {visit.visitWhen?.at || visit.plannedVisitAtFormatted || '—'}
+            </span>
+            <span className="text-sm font-semibold text-emerald-700">${visit.amountDollars}</span>
+          </div>
+          <p className="mt-0.5 text-xs text-slate-500">
+            {rooms.length ? `Rooms: ${rooms.join(', ')}` : 'Common areas'}
+            {isOwner && visit.managerName ? ` · ${visit.managerName}` : ''}
+          </p>
+          {shortNotice && (
+            <p className="mt-0.5 text-xs text-amber-700">Under 24-hour notice</p>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {isManager && visit.status === 'approved' && completingId !== visit.id && (
+            <button
+              type="button"
+              onClick={() => setCompletingId(visit.id)}
+              className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white"
+            >
+              Check in
+            </button>
+          )}
+          {hasProof && (
+            <button
+              type="button"
+              onClick={() => setShowProof((v) => !v)}
+              className="text-xs font-semibold text-slate-600 hover:text-slate-900"
+            >
+              {showProof ? 'Hide proof' : 'Proof'}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowDetails((v) => !v)}
+            className="text-xs text-slate-500 hover:text-slate-800"
+          >
+            {showDetails ? 'Less' : 'Details'}
+          </button>
+        </div>
+      </div>
+      {showDetails && (
+        <div className="mt-2 text-xs text-slate-500 space-y-1">
+          <p>{scopeSummary(visit)}</p>
+          {visit.notices?.length > 0 && (
+            <p className="text-violet-700">Tenants notified {fmtWhen(visit.notices[0]?.sent_at)}</p>
+          )}
+          {visit.requestedNote && <p>Note: {visit.requestedNote}</p>}
+        </div>
+      )}
+      {showProof && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {photos.map((p) => (
+            <MediaProof key={p.id} item={p} />
+          ))}
+          {visit.photoUrl && !photos.length && (
+            <MediaProof item={{ photoUrl: visit.photoUrl, mediaType: 'photo' }} />
+          )}
+        </div>
+      )}
+      {isManager && visit.status === 'approved' && completingId === visit.id && (
+        <CompleteVisitForm
+          visit={visit}
+          onDone={() => { setCompletingId(null); onCompleteDone(); }}
+          onCancel={() => setCompletingId(null)}
+        />
+      )}
+      <VisitScheduleEditor
+        visit={visit}
+        minPlanned={minPlanned}
+        minNow={minNow}
+        busy={busy}
+        onReschedule={onReschedule}
+        onCancel={onCancel}
+        showApprove={false}
+      />
+    </li>
+  );
+}
+
 export default function SiteVisitsPage({ portal = 'manager' }) {
   const { user } = useAuth();
+  const location = useLocation();
   const isOwner = portal === 'admin' || user?.role === 'owner' || user?.role === 'super_admin';
   const isManager = user?.role === 'property_manager';
 
@@ -1760,6 +1834,8 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
   const [completingId, setCompletingId] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const [showRequest, setShowRequest] = useState(false);
+  const [section, setSection] = useState(() => sectionFromHash(location.hash));
+  const [visitFilter, setVisitFilter] = useState('upcoming');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1782,10 +1858,23 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    setSection(sectionFromHash(location.hash));
+  }, [location.hash]);
+
   const usage = data.usage;
   const visits = data.visits || [];
-  const scheduled = visits.filter((v) => v.status === 'approved');
+  const upcoming = visits.filter((v) => ['approved', 'pending_approval'].includes(v.status));
+  const done = visits.filter((v) => v.status === 'completed');
+  const other = visits.filter((v) => ['cancelled', 'rejected'].includes(v.status));
+  const filteredVisits = visitFilter === 'done' ? done : visitFilter === 'more' ? other : upcoming;
   const atCap = (usage?.visits_remaining ?? 0) < 1;
+
+  function goSection(next) {
+    setSection(next);
+    const nextHash = hashForSection(next);
+    window.history.replaceState({}, '', `${location.pathname}${location.search}${nextHash}`);
+  }
 
   async function cancel(id) {
     setBusyId(id);
@@ -1819,14 +1908,14 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <PageHeader
         portal={portal}
         title="Boots on site"
         subtitle={
           isOwner
-            ? 'Konstantin schedules on his own — you do not need to approve. Pay visits or any other work anytime.'
-            : 'Schedule and check in without waiting on the owner. Occupied rooms get 24-hour notice. 5 visits per month.'
+            ? 'Konstantin schedules on his own. Pay anytime.'
+            : 'Schedule and check in — no owner approval.'
         }
         actions={(
           <button
@@ -1839,17 +1928,6 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
         )}
       />
 
-      <div className="rounded-2xl border-2 border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-slate-700">
-        <p className="font-bold text-slate-900">Inspection checklist</p>
-        <p className="text-xs mt-1">
-          Every visit: kitchen/living + parking + lawn/porch (video proof each) · optional tenant rooms · $20/visit · 5 visits / $100 per month
-          {isOwner
-            ? ' · no approval needed · pay visits or any amount anytime · Instant Payout'
-            : ' · no owner approval · change or cancel the date anytime'}
-          {' · $350/lease signed after 3 rent months'}
-        </p>
-      </div>
-
       {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
 
       {loading ? (
@@ -1858,107 +1936,118 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <StatCard label="This month" value={fmtMoney(usage?.reserved_cents ?? 0)} sub={`of ${fmtMoney(usage?.cap_cents ?? 10000)}`} icon={<Banknote size={20} strokeWidth={2} />} tone="success" />
-            <StatCard label="Visits left" value={usage?.visits_remaining ?? 0} sub={`$${(usage?.visit_amount_cents ?? 2000) / 100} each`} icon={<Footprints size={20} strokeWidth={2} />} tone="default" />
-            <StatCard label="Scheduled" value={scheduled.length} sub="Ready to check in" icon={<Clock size={20} strokeWidth={2} />} tone="warning" />
-            <StatCard label="Timezone" value="Norfolk" sub="24h room notice" icon={<Clock size={20} strokeWidth={2} />} tone="admin" />
-          </div>
+          <p className="text-sm text-slate-600">
+            <strong className="text-slate-900">{upcoming.length} scheduled</strong>
+            {' · '}{usage?.visits_remaining ?? 0} left this month
+            {' · '}{fmtMoney(usage?.reserved_cents ?? 0)} of $100
+            {done.length > 0 ? ` · ${done.length} done` : ''}
+          </p>
 
-          {isOwner && (
-            <>
-              <OwnerPayrollPanel />
-              <OwnerLeaseSigningPanel />
-            </>
-          )}
+          <Segmented
+            value={section}
+            onChange={goSection}
+            options={
+              isOwner
+                ? [
+                    { id: 'visits', label: 'Visits', count: upcoming.length },
+                    { id: 'pay', label: 'Pay' },
+                    { id: 'lease', label: 'Leases' },
+                  ]
+                : [
+                    { id: 'visits', label: 'Visits', count: upcoming.length },
+                    { id: 'pay', label: 'Pay' },
+                  ]
+            }
+          />
 
-          {isManager && (
-            <>
-              <ManagerPayoutBankSection />
-              <ManagerEarningsPanel />
-              <ManagerLeaseSigningPanel />
-            </>
-          )}
-
-          {isManager && (
-            <Panel title="Schedule inspection visit">
-              {atCap ? (
-                <p className="text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2">
-                  Monthly cap reached (5 visits / $100). You can still change or cancel a scheduled visit.
-                </p>
-              ) : showRequest ? (
-                <RequestVisitForm
-                  areas={areas}
-                  minPlanned={minPlanned}
-                  minNow={minNow}
-                  onDone={() => { setShowRequest(false); load(); }}
-                />
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setShowRequest(true)}
-                  className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700"
-                >
-                  Schedule a visit
-                </button>
+          {section === 'visits' && (
+            <div className="space-y-4">
+              {isManager && (
+                <Panel title="Schedule">
+                  {atCap ? (
+                    <p className="text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2">
+                      Monthly cap reached (5 / $100). You can still change or cancel a scheduled visit.
+                    </p>
+                  ) : showRequest ? (
+                    <RequestVisitForm
+                      areas={areas}
+                      minPlanned={minPlanned}
+                      minNow={minNow}
+                      onDone={() => { setShowRequest(false); load(); }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setShowRequest(true)}
+                      className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700"
+                    >
+                      Schedule a visit
+                    </button>
+                  )}
+                </Panel>
               )}
-            </Panel>
-          )}
 
-          <Panel title="All visits" className="!p-0">
-            {visits.length === 0 ? (
-              <p className="px-4 py-10 text-center text-sm text-slate-500">No visits yet.</p>
-            ) : (
-              <ul className="divide-y divide-slate-100">
-                {visits.map((v) => {
-                  const meta = STATUS_META[v.status] || STATUS_META.cancelled;
-                  return (
-                    <li key={v.id} className="px-4 py-4">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${meta.color}`}>{meta.label}</span>
-                            {isOwner && <span className="text-sm font-medium">{v.managerName}</span>}
-                            <span className="text-sm font-semibold text-emerald-700">${v.amountDollars}</span>
-                          </div>
-                          <p className="text-xs text-slate-500 mt-1">{scopeSummary(v)}</p>
-                          <VisitWhen visit={v} />
-                          {v.notices?.length > 0 && (
-                            <p className="text-xs text-violet-700 mt-1">Tenants notified {fmtWhen(v.notices[0]?.sent_at)}</p>
-                          )}
-                        </div>
-                        <div className="flex flex-wrap gap-1">
-                          {(v.photos || []).map((p) => (
-                            <MediaProof key={p.id} item={p} />
-                          ))}
-                          {v.photoUrl && !v.photos?.length && (
-                            <MediaProof item={{ photoUrl: v.photoUrl, mediaType: 'photo' }} />
-                          )}
-                        </div>
-                      </div>
-                      {isManager && v.status === 'approved' && completingId === v.id && (
-                        <CompleteVisitForm visit={v} onDone={() => { setCompletingId(null); load(); }} onCancel={() => setCompletingId(null)} />
-                      )}
-                      {isManager && v.status === 'approved' && completingId !== v.id && (
-                        <button type="button" onClick={() => setCompletingId(v.id)} className="mt-2 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white">
-                          Check in with videos
-                        </button>
-                      )}
-                      <VisitScheduleEditor
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <Segmented
+                  value={visitFilter}
+                  onChange={setVisitFilter}
+                  options={[
+                    { id: 'upcoming', label: 'Upcoming', count: upcoming.length },
+                    { id: 'done', label: 'Done', count: done.length },
+                    { id: 'more', label: 'More', count: other.length },
+                  ]}
+                />
+              </div>
+
+              <Panel title={visitFilter === 'done' ? 'Completed' : visitFilter === 'more' ? 'Cancelled & rejected' : 'Upcoming'} className="!p-0">
+                {filteredVisits.length === 0 ? (
+                  <p className="px-4 py-8 text-center text-sm text-slate-500">
+                    {visitFilter === 'upcoming'
+                      ? (isManager ? 'Nothing scheduled. Add a visit above.' : 'Nothing scheduled.')
+                      : visitFilter === 'done'
+                        ? 'No completed visits in this list.'
+                        : 'No cancelled or rejected visits.'}
+                  </p>
+                ) : (
+                  <ul className="divide-y divide-slate-100">
+                    {filteredVisits.map((v) => (
+                      <VisitRow
+                        key={v.id}
                         visit={v}
+                        isOwner={isOwner}
+                        isManager={isManager}
+                        completingId={completingId}
+                        setCompletingId={setCompletingId}
+                        onCompleteDone={load}
+                        busy={busyId === v.id}
                         minPlanned={minPlanned}
                         minNow={minNow}
-                        busy={busyId === v.id}
                         onReschedule={reschedule}
                         onCancel={cancel}
-                        showApprove={false}
                       />
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </Panel>
+                    ))}
+                  </ul>
+                )}
+              </Panel>
+
+              <HowVisitsWork isOwner={isOwner} />
+            </div>
+          )}
+
+          {section === 'pay' && (
+            <div className="space-y-4">
+              {isOwner && <OwnerPayrollPanel />}
+              {isManager && (
+                <>
+                  <ManagerEarningsPanel />
+                  <ManagerPayoutBankSection />
+                  <ManagerLeaseSigningPanel />
+                </>
+              )}
+            </div>
+          )}
+
+          {section === 'lease' && isOwner && <OwnerLeaseSigningPanel />}
         </>
       )}
     </div>
