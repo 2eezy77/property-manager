@@ -59,7 +59,7 @@ const {
   feeMetadata,
   feeSchedulePublic,
 } = require('../services/payment-processing-fee.service');
-const { partnerErrorMessage } = require('../utils/plaid-errors');
+const { partnerErrorMessage, linkTokenCreateErrorMessage } = require('../utils/plaid-errors');
 const { assertAchDebitAllowed } = require('../services/plaid-ach-guard.service');
 const {
   createUpdateLinkTokenForAccount,
@@ -140,7 +140,7 @@ router.post('/plaid/link-token', async (req, res) => {
     console.error('[payments/plaid/link-token]', err.response?.data ?? err);
     res.status(500).json({
       error: 'PLAID_ERROR',
-      message: partnerErrorMessage(err, 'Could not create Plaid Link token. Check PLAID_REDIRECT_URI is https://www.monterorentals.com/oauth-return in Railway and Plaid Dashboard.'),
+      message: linkTokenCreateErrorMessage(err, 'Could not create Plaid Link token. Check PLAID_REDIRECT_URI is https://www.monterorentals.com/oauth-return in Railway and Plaid Dashboard.'),
     });
   }
 });
@@ -169,7 +169,7 @@ router.post('/plaid/update-link-token', async (req, res) => {
     console.error('[payments/plaid/update-link-token]', err.response?.data ?? err);
     res.status(500).json({
       error: 'PLAID_ERROR',
-      message: partnerErrorMessage(err, 'Could not create Plaid update token.'),
+      message: linkTokenCreateErrorMessage(err, 'Could not create Plaid update token.'),
     });
   }
 });

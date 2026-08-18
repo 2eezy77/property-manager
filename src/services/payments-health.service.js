@@ -369,13 +369,17 @@ async function checkPlaidApi(checks) {
     const probe = await plaid.probeLinkToken();
     checks.push(check('plaid.link_token', 'plaid', 'pass', `Plaid link token OK (${probe.env})`));
   } catch (err) {
+    const code = err.response?.data?.error_code;
     const msg = err.response?.data?.error_message || err.message;
+    const fix = code === 'INVALID_LINK_CUSTOMIZATION'
+      ? 'Open https://dashboard.plaid.com/link/data-transparency-v5 and publish at least one Data Transparency use case on the default Link customization'
+      : 'Verify PLAID_CLIENT_ID/SECRET, production access, and PLAID_REDIRECT_URI in Plaid Dashboard allowed URIs';
     checks.push(check(
       'plaid.link_token',
       'plaid',
       'fail',
       `Plaid link token failed: ${msg}`,
-      { fix: 'Verify PLAID_CLIENT_ID/SECRET, production access, and PLAID_REDIRECT_URI in Plaid Dashboard allowed URIs' }
+      { fix }
     ));
   }
 }

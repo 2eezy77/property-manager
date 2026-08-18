@@ -131,7 +131,9 @@ export function usePlaidLink({
       setLoading(true);
       setFetchError(null);
       try {
-        const { data } = await api.post(linkTokenPath, linkTokenBody || undefined);
+        const { data } = await api.post(linkTokenPath, linkTokenBody || undefined, {
+          skipGlobalError: true,
+        });
         if (!cancelled) setLinkToken(data.linkToken);
       } catch (err) {
         if (!cancelled) setFetchError(plaidFetchErrorMessage(err));
