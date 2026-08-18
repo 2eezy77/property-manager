@@ -2,26 +2,12 @@
  * Records meaningful API activity after response (org-wide, all roles including owners).
  *
  * Capture authenticated mutations, then skip known noise (Plaid link-token,
- * inbox, check-in, playbook ticks). New payroll / lease / identity routes stay
- * logged without maintaining a frozen allowlist.
+ * inbox, check-in, playbook ticks, portal preview). List queries use the same
+ * path rules and also hide superseded “started” payment rows.
  */
 
 const { logActivity } = require('../services/activity-audit.service');
-
-const SKIP_PATH_PREFIXES = [
-  '/health',
-  '/api/dev/',
-  '/documents/',
-  '/api/messages',
-  '/api/owner/checklist',
-  '/api/manager-playbook',
-];
-
-const SKIP_EXACT = new Set([
-  '/auth/me',
-  '/api/users/me/checkin',
-  '/api/payments/cashapp/sync-gmail',
-]);
+const { isNoisePath } = require('../utils/activity-noise');
 
 const CASHAPP_SYNC_PATHS = new Set([
   '/api/payments/cashapp/sync',
@@ -37,17 +23,6 @@ function requestPath(req) {
   const base = req.baseUrl || '';
   const leaf = req.path || '';
   return `${base}${leaf}` || '';
-}
-
-function isPlaidLinkTokenPath(path) {
-  return /\/plaid\/(update-)?link-token$/.test(path);
-}
-
-function isNoisePath(path) {
-  if (SKIP_EXACT.has(path)) return true;
-  if (SKIP_PATH_PREFIXES.some((pre) => path.startsWith(pre))) return true;
-  if (isPlaidLinkTokenPath(path)) return true;
-  return false;
 }
 
 function shouldCapture(req) {
