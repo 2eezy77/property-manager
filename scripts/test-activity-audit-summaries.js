@@ -5,6 +5,13 @@
 const assert = require('assert');
 const { shouldCapture, requestPath } = require('../src/middleware/activity-audit');
 const {
+  isNoisePath,
+  isImpersonatePath,
+  isSupersededPaymentStart,
+  noisePathSql,
+  supersededStartSql,
+} = require('../src/utils/activity-noise');
+const {
   buildSummary,
   formatPaymentSummary,
   isSuccessfulAuthNoise,
@@ -279,7 +286,7 @@ assert.strictEqual(
     statusCode: 201,
     body: { customAmount: 100, payVisits: true },
   }),
-  'Jose Montero started Cash App pay for site visits plus $100.00 other work'
+  'Jose Montero sent Cash App pay for site visits plus $100.00 other work'
 );
 assert.strictEqual(
   buildSummary({
@@ -310,5 +317,67 @@ assert.strictEqual(isSuccessfulAuthNoise('payment', 200), false);
 assert.strictEqual(shouldApplyHideAuth(true, ''), true);
 assert.strictEqual(shouldApplyHideAuth(true, 'auth'), false);
 assert.strictEqual(shouldApplyHideAuth(false, ''), false);
+assert.strictEqual(isNoisePath('/api/payments/plaid/link-token'), true);
+assert.strictEqual(isNoisePath('/api/owner/property-bank/plaid/link-token'), true);
+assert.strictEqual(isNoisePath('/api/users/me/checkin'), true);
+assert.strictEqual(isNoisePath('/api/users/abc/impersonate'), true);
+assert.strictEqual(isImpersonatePath('/api/users/abc/impersonate'), true);
+assert.strictEqual(isNoisePath('/api/site-visits/payroll/cashapp/create-intent'), false);
+assert.ok(noisePathSql('l').includes('plaid/link-token'));
+assert.ok(noisePathSql('l').includes('impersonate'));
+assert.ok(supersededStartSql('l').includes('create-intent'));
+
+assert.strictEqual(
+  shouldCapture({
+    user: { id: 'u1' },
+    method: 'POST',
+    originalUrl: '/api/users/abc/impersonate',
+  }),
+  false
+);
+
+const rentStart = {
+  id: 's1',
+  path: '/api/payments/card/create-intent',
+  status_code: 200,
+  created_at: '2026-08-17T22:08:45.000Z',
+  metadata: { body: { paymentType: 'rent', amount: 450 } },
+};
+const rentPaid = {
+  id: 'p1',
+  action: 'payment_confirmed',
+  path: '/events/payment_confirmed',
+  created_at: '2026-08-17T22:11:13.000Z',
+  metadata: { body: { paymentType: 'rent', amount: 450 } },
+};
+const utilPaid = {
+  id: 'p2',
+  action: 'payment_confirmed',
+  path: '/events/payment_confirmed',
+  created_at: '2026-08-17T22:14:50.000Z',
+  metadata: { body: { paymentType: 'utility', amount: 161.28 } },
+};
+assert.strictEqual(isSupersededPaymentStart(rentStart, [rentPaid]), true);
+assert.strictEqual(isSupersededPaymentStart(rentStart, [utilPaid]), false);
+
+const payrollStart = {
+  id: 'ps1',
+  path: '/api/site-visits/payroll/cashapp/create-intent',
+  status_code: 201,
+  created_at: '2026-08-18T02:30:26.000Z',
+};
+const payrollCancel = {
+  id: 'pc1',
+  path: '/api/site-visits/payroll/cancel-processing',
+  created_at: '2026-08-18T02:30:34.000Z',
+};
+const payrollKeep = {
+  id: 'ps2',
+  path: '/api/site-visits/payroll/cashapp/create-intent',
+  status_code: 201,
+  created_at: '2026-08-18T03:53:44.000Z',
+};
+assert.strictEqual(isSupersededPaymentStart(payrollStart, [payrollCancel]), true);
+assert.strictEqual(isSupersededPaymentStart(payrollKeep, []), false);
 
 console.log('test-activity-audit-summaries OK');

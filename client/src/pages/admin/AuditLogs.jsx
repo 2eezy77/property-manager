@@ -6,31 +6,25 @@ import PageHeader from '@/components/ui/PageHeader';
 import Panel from '@/components/ui/Panel';
 
 const CATEGORIES = [
-  ['', 'All types'],
+  ['', 'All'],
   ['payments', 'Payments'],
   ['utilities', 'Utilities'],
   ['visits', 'Visits'],
   ['leases', 'Leases'],
-  ['auth', 'Sign-in'],
-  ['maintenance', 'Maintenance'],
-  ['users', 'Users'],
-  ['communications', 'Email'],
-  ['tenants', 'Tenants'],
-  ['api', 'Other'],
 ];
 
 const WHEN_OPTIONS = [
-  ['7d', 'Last 7 days'],
-  ['24h', 'Last 24 hours'],
-  ['30d', 'Last 30 days'],
+  ['7d', '7 days'],
+  ['24h', '24 hours'],
+  ['30d', '30 days'],
   ['', 'All time'],
 ];
 
 const ROLE_OPTIONS = [
   ['', 'Everyone'],
-  ['property_manager', 'Manager only'],
-  ['tenant', 'Tenants only'],
-  ['owner', 'Owners only'],
+  ['property_manager', 'Manager'],
+  ['tenant', 'Tenants'],
+  ['owner', 'Owners'],
 ];
 
 function fmtWhen(iso) {
@@ -112,8 +106,7 @@ export default function ActivityLogPage() {
       if (since) params.set('since', since);
       if (role) params.set('role', role);
       if (failedOnly) params.set('failed', '1');
-      // Default API hides successful auth; only include when asked or filtering Sign-in
-      if (showSignIns || category === 'auth') params.set('hideAuth', '0');
+      if (showSignIns) params.set('hideAuth', '0');
       const { data } = await api.get(`/api/owner/activity-log?${params}`);
       setLogs(data.logs || []);
       setTotal(data.total ?? 0);
@@ -133,7 +126,7 @@ export default function ActivityLogPage() {
       <PageHeader
         portal="admin"
         title="Activity log"
-        subtitle="Payments, utilities, and real portal changes — not every sign-in."
+        subtitle="Paid charges and real portal changes — not sign-ins or payment starts."
         actions={(
           <button
             type="button"
@@ -146,55 +139,41 @@ export default function ActivityLogPage() {
         )}
       />
 
-      <p className="text-sm text-slate-600">
-        {policy?.recommendation
-          || 'Successful sign-ins stay hidden by default. Use Payments or failed-only when chasing an issue.'}
-      </p>
-
-      <Panel className="!p-4 space-y-4">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Time</p>
-          <div className="flex flex-wrap gap-2">
-            {WHEN_OPTIONS.map(([v, l]) => (
-              <FilterChip key={v || 'all'} active={since === v} onClick={() => setSince(v)}>{l}</FilterChip>
-            ))}
-          </div>
-        </div>
-        <div>
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Who</p>
-          <div className="flex flex-wrap gap-2">
+      <Panel className="!p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {WHEN_OPTIONS.map(([v, l]) => (
+            <FilterChip key={v || 'all'} active={since === v} onClick={() => setSince(v)}>{l}</FilterChip>
+          ))}
+          <span className="mx-1 hidden h-4 w-px bg-slate-200 sm:block" />
+          {CATEGORIES.map(([v, l]) => (
+            <FilterChip key={v || 'all-types'} active={category === v} onClick={() => setCategory(v)}>{l}</FilterChip>
+          ))}
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600"
+          >
             {ROLE_OPTIONS.map(([v, l]) => (
-              <FilterChip key={v || 'all'} active={role === v} onClick={() => setRole(v)}>{l}</FilterChip>
+              <option key={v || 'everyone'} value={v}>{l}</option>
             ))}
-          </div>
-        </div>
-        <div>
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Type</p>
-          <div className="flex flex-wrap gap-2">
-            {CATEGORIES.map(([v, l]) => (
-              <FilterChip key={v || 'all'} active={category === v} onClick={() => setCategory(v)}>{l}</FilterChip>
-            ))}
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-4">
-          <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+          </select>
+          <label className="ml-auto flex items-center gap-2 text-xs font-medium text-slate-600 cursor-pointer">
             <input
               type="checkbox"
               checked={failedOnly}
               onChange={(e) => setFailedOnly(e.target.checked)}
-            className="rounded border-slate-300 text-violet-600"
-          />
-            Failed only
-          </label>
-          <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showSignIns || category === 'auth'}
-              onChange={(e) => setShowSignIns(e.target.checked)}
-              disabled={category === 'auth'}
               className="rounded border-slate-300 text-violet-600"
             />
-            Include successful sign-ins
+            Failed only
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showSignIns}
+              onChange={(e) => setShowSignIns(e.target.checked)}
+              className="rounded border-slate-300 text-violet-600"
+            />
+            Include sign-ins
           </label>
         </div>
       </Panel>
@@ -211,7 +190,7 @@ export default function ActivityLogPage() {
         <div className="portal-card p-10 text-center text-sm text-slate-500 space-y-2">
           <p>Nothing matches these filters yet.</p>
           <p className="text-xs">
-            Try <strong>All time</strong> or turn on <strong>Include successful sign-ins</strong>.
+            Try <strong>All time</strong> or turn on <strong>Include sign-ins</strong>.
           </p>
         </div>
       ) : (
@@ -254,7 +233,7 @@ export default function ActivityLogPage() {
   );
 }
 
-/** Compact list for owner dashboard — payments-first, no sign-in spam */
+/** Compact list for owner dashboard — outcomes only, no sign-in spam */
 export function RecentActivitySnippet() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);

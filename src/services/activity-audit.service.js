@@ -3,6 +3,7 @@
  */
 
 const pool = require('../db/client');
+const { noisePathSql, supersededStartSql } = require('../utils/activity-noise');
 
 const SENSITIVE_KEYS = new Set([
   'password',
@@ -233,12 +234,12 @@ function buildSummary({ actor, impersonator, method, path, body, statusCode }) {
   if (p === '/api/site-visits/payroll/cashapp/create-intent' && method === 'POST') {
     if (statusCode >= 400) return `${who} failed to start Konstantin payroll in Cash App`;
     if (b.customAmount && (b.payVisits === true || b.outstanding === true)) {
-      return `${who} started Cash App pay for site visits plus $${Number(b.customAmount).toFixed(2)} other work`;
+      return `${who} sent Cash App pay for site visits plus $${Number(b.customAmount).toFixed(2)} other work`;
     }
     if (b.customAmount && b.payVisits === false) {
-      return `${who} started Cash App pay of $${Number(b.customAmount).toFixed(2)} for other work`;
+      return `${who} sent Cash App pay of $${Number(b.customAmount).toFixed(2)} for other work`;
     }
-    return `${who} started Cash App pay for Konstantin site-visit payroll`;
+    return `${who} sent Cash App pay for Konstantin site-visit payroll`;
   }
   if (p === '/api/site-visits/payroll/cashapp/sync' && (method === 'GET' || method === 'POST')) {
     if (statusCode >= 400) return `${who} failed to finish Konstantin payroll in Cash App`;
@@ -250,7 +251,7 @@ function buildSummary({ actor, impersonator, method, path, body, statusCode }) {
   }
   if (/\/api\/manager-compensation\/lease-signing\/[^/]+\/cashapp\/create-intent$/.test(p) && method === 'POST') {
     if (statusCode >= 400) return `${who} failed to start Konstantin lease-signing fee in Cash App`;
-    return `${who} started Cash App pay for Konstantin $350 lease-signing fee`;
+    return `${who} sent Cash App pay for Konstantin $350 lease-signing fee`;
   }
   if (/\/api\/leases\/[^/]+\/identity\/fee$/.test(p) && method === 'POST') {
     return formatPaymentSummary(who, {
@@ -389,13 +390,14 @@ function getActivityPolicy() {
       'Maintenance, announcements, leases, identity, site visits',
     ],
     skips: [
-      'Page loads, inbox clicks, Plaid link-token, routine API chatter',
-      'Sign-out and repeat sign-ins within 24 hours',
+      'Page loads, inbox, portal preview, Plaid link-token, check-in, playbook ticks',
+      'Successful sign-ins and “opened the portal” (unless you ask)',
+      'Payment “started” lines after the charge is paid or cancelled',
       'Passwords and bank tokens (always redacted)',
     ],
     visibility: 'Owners only. Managers and tenants cannot open this page.',
     recommendation:
-      'Filter to Payments when chasing a charge. Sign-ins stay hidden unless you ask for them.',
+      'Paid charges and real portal changes only. Sign-ins and payment starts stay hidden.',
     shared: true,
   };
 }
@@ -622,7 +624,11 @@ async function listActivityLog({
   const orgId = await resolveOrgIdForUser(viewerUserId);
   if (!orgId) return { logs: [], total: 0 };
 
-  const conditions = ['l.org_id = $1'];
+  const conditions = [
+    'l.org_id = $1',
+    `NOT ${noisePathSql('l')}`,
+    `NOT ${supersededStartSql('l')}`,
+  ];
   const params = [orgId];
   if (category) {
     params.push(category);
