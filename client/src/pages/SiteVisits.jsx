@@ -203,7 +203,7 @@ function HowVisitsWork({ isOwner }) {
         <li>Every visit covers kitchen, parking, and lawn — video at check-in.</li>
         <li>Occupied rooms need 24-hour Norfolk notice. Vacant showings can be same-day.</li>
         {isOwner ? (
-          <li>Konstantin is the property manager. Associate pay is Cash App so Instant Payout hits his bank in about 30 minutes — not a 3–5 day vendor transfer.</li>
+          <li>Konstantin is the property manager. Associate pay prefers Cash App (about 30 minutes). Bank transfer stays available if you need it.</li>
         ) : (
           <li>No owner approval. Change or cancel the date anytime.</li>
         )}
@@ -1287,7 +1287,7 @@ function OwnerPayrollPanel() {
               <p className="text-xs text-slate-600">
                 {paymentMethod === 'ach' ? (
                   <>
-                    Cash App is unavailable, so this fallback bank transfer takes 3–5 business days.
+                    Fallback: bank transfer takes 3–5 business days before Instant Payout.
                   </>
                 ) : paymentMethod === 'cash_app' ? (
                   <>
@@ -1301,14 +1301,36 @@ function OwnerPayrollPanel() {
               </p>
               )}
               {(payroll.paymentMethods || []).includes('cash_app') && (
-                <p className="text-xs font-semibold text-violet-800">
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod('cash_app')}
+                  className={`rounded-lg px-3 py-2 text-xs font-semibold border ${
+                    paymentMethod === 'cash_app'
+                      ? 'border-violet-600 bg-violet-600 text-white'
+                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
                   {OWNER_PAY_METHOD_COPY.cash_app.label} · {OWNER_PAY_METHOD_COPY.cash_app.speed}
-                </p>
+                </button>
               )}
-              {(payroll.paymentMethods || []).includes('ach') && !(payroll.paymentMethods || []).includes('cash_app') && (
-                <p className="text-xs font-semibold text-slate-600">
-                  {OWNER_PAY_METHOD_COPY.ach.label} · {OWNER_PAY_METHOD_COPY.ach.speed}
-                </p>
+              {(payroll.paymentMethods || []).includes('ach') && (
+                <details className="rounded-lg border border-slate-200 bg-white px-3 py-2" open={paymentMethod === 'ach'}>
+                  <summary className="cursor-pointer text-xs font-semibold text-slate-600">
+                    Just in case — {OWNER_PAY_METHOD_COPY.ach.label} · {OWNER_PAY_METHOD_COPY.ach.speed}
+                  </summary>
+                  <p className="mt-2 text-xs text-slate-600">{OWNER_PAY_METHOD_COPY.ach.detail}</p>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod('ach')}
+                    className={`mt-2 rounded-lg px-3 py-1.5 text-xs font-semibold border ${
+                      paymentMethod === 'ach'
+                        ? 'border-violet-600 bg-violet-600 text-white'
+                        : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    Use bank transfer
+                  </button>
+                </details>
               )}
               <label className="block text-xs font-medium text-slate-700">
                 Note (optional)
