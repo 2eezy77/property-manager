@@ -27,8 +27,8 @@ const STRIPE_PAY_LABELS = {
 };
 
 const STATUS_META = {
-  pending_approval: { label: 'Awaiting approval', color: 'bg-amber-100 text-amber-800' },
-  approved:         { label: 'Approved — ready to check in', color: 'bg-blue-100 text-blue-800' },
+  pending_approval: { label: 'Scheduling', color: 'bg-amber-100 text-amber-800' },
+  approved:         { label: 'Scheduled — ready to check in', color: 'bg-blue-100 text-blue-800' },
   completed:        { label: 'Completed', color: 'bg-emerald-100 text-emerald-800' },
   rejected:         { label: 'Rejected', color: 'bg-red-100 text-red-700' },
   cancelled:        { label: 'Cancelled', color: 'bg-slate-100 text-slate-600' },
@@ -390,9 +390,12 @@ function RequestVisitForm({ areas, minPlanned, minNow, onDone }) {
           purpose: purposes[unitId] || 'routine_inspection',
         })),
       });
+      window.dispatchEvent(new CustomEvent('api:toast', {
+        detail: { message: 'Visit scheduled. Tenants were notified — no owner approval needed.', variant: 'success' },
+      }));
       onDone();
     } catch (err) {
-      setError(apiErrorMessage(err, 'Request failed.'));
+      setError(apiErrorMessage(err, 'Could not schedule visit.'));
     } finally {
       setBusy(false);
     }
@@ -455,8 +458,8 @@ function RequestVisitForm({ areas, minPlanned, minNow, onDone }) {
         Planned visit (Norfolk time)
         <span className="block text-slate-500 font-normal mt-0.5">
           {needs24h
-            ? 'At least 24 hours ahead for occupied rooms (Norfolk time). You can approve or change this later.'
-            : 'Same-day OK for vacant showings. You can approve or change this later.'}
+            ? 'At least 24 hours ahead for occupied rooms (Norfolk time). Tenants are notified when you schedule — no owner approval.'
+            : 'Same-day OK for vacant showings. Tenants are notified when you schedule — no owner approval.'}
         </span>
         <input
           type="datetime-local"
@@ -480,7 +483,7 @@ function RequestVisitForm({ areas, minPlanned, minNow, onDone }) {
         disabled={busy}
         className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
       >
-        {busy ? 'Sending…' : 'Schedule visit'}
+        {busy ? 'Sending…' : 'Schedule visit & notify tenants'}
       </button>
     </form>
   );
@@ -775,6 +778,7 @@ function OwnerPayrollPanel() {
   const [cancelling, setCancelling] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('cash_app');
   const [note, setNote] = useState('');
+  const [customAmount, setCustomAmount] = useState('');
   const [error, setError] = useState('');
 
   const { year, month } = parseMonthValue(monthValue);
@@ -860,9 +864,9 @@ function OwnerPayrollPanel() {
     }
   }
 
-  async function payViaCashApp({ outstanding = false } = {}) {
+  async function payViaCashApp({ outstanding = false, customAmount: custom, payVisits } = {}) {
     const dueCount = outstanding ? payroll?.outstandingCount : payroll?.visitCount;
-    if (!dueCount) return;
+    if (!custom && !dueCount) return;
     setPaying(true);
     setError('');
     try {
@@ -870,6 +874,8 @@ function OwnerPayrollPanel() {
         year,
         month,
         outstanding,
+        payVisits,
+        customAmount: custom,
         note: note.trim() || undefined,
       }, { skipGlobalError: true });
 
@@ -925,6 +931,41 @@ function OwnerPayrollPanel() {
       }));
     } catch (e) {
       setError(apiErrorMessage(e, 'Could not mark payroll paid.'));
+    } finally {
+      setPaying(false);
+    }
+  }
+
+  async function payCustom(e) {
+    e.preventDefault();
+    const amount = Number(customAmount);
+    if (!Number.isFinite(amount) || amount < 0.5) {
+      setError('Enter at least $0.50 for other work.');
+      return;
+    }
+    if (paymentMethod === 'cash_app') {
+      await payViaCashApp({ customAmount: amount, payVisits: false });
+      return;
+    }
+    setPaying(true);
+    setError('');
+    try {
+      await api.post('/api/site-visits/payroll/pay', {
+        year,
+        month,
+        payVisits: false,
+        customAmount: amount,
+        paymentMethod,
+        note: note.trim() || undefined,
+      });
+      setNote('');
+      setCustomAmount('');
+      await loadPayroll();
+      window.dispatchEvent(new CustomEvent('api:toast', {
+        detail: { message: `Paid $${amount.toFixed(2)} for other work via ACH.`, variant: 'success' },
+      }));
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not pay other work.'));
     } finally {
       setPaying(false);
     }
@@ -1110,24 +1151,17 @@ function OwnerPayrollPanel() {
             </div>
           )}
 
-          {payroll.canPay && (payroll.visitCount > 0 || payroll.outstandingCount > 0) && (
-            <form onSubmit={markPaid} className="rounded-xl border border-violet-200 bg-violet-50/40 p-4 space-y-3">
+          {payroll.canPay && (
+            <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-4 space-y-4">
               <p className="text-sm font-semibold text-slate-900">
-                {payroll.visitCount > 0
-                  ? `Pay ${fmtMoney(payroll.totalCents)} for ${payroll.visitCount} visit${payroll.visitCount === 1 ? '' : 's'} (${payroll.monthLabel})`
-                  : `Pay outstanding ${fmtMoney(payroll.outstandingCents)} for ${payroll.outstandingCount} visit${payroll.outstandingCount === 1 ? '' : 's'}`}
+                Pay Konstantin anytime — unpaid visits or any other work.
               </p>
-              {payroll.outstandingCount > payroll.visitCount && (
-                <p className="text-xs text-slate-600">
-                  {payroll.outstandingCount} unpaid completed visit{payroll.outstandingCount === 1 ? '' : 's'} total ({fmtMoney(payroll.outstandingCents)}). Pay this month or all outstanding.
-                </p>
-              )}
               <p className="text-xs text-slate-600">
                 {paymentMethod === 'ach' ? (
                   payroll.propertyBank?.linked && payroll.payoutBank?.linked ? (
                     <>
                       ACH debits your property account ({payroll.propertyBank.institutionName} ····{payroll.propertyBank.accountMask})
-                      then Instant Payout to {payroll.manager.name}&apos;s bank ({payroll.payoutBank.institutionName} ····{payroll.payoutBank.accountMask}). ACH debit still has to clear; the bank payout is instant after that.
+                      then Instant Payout to {payroll.manager.name}&apos;s bank ({payroll.payoutBank.institutionName} ····{payroll.payoutBank.accountMask}).
                     </>
                   ) : (
                     <>Link both banks first — property account under Finance, manager payout bank under his Boots on site page.</>
@@ -1135,15 +1169,14 @@ function OwnerPayrollPanel() {
                 ) : paymentMethod === 'cash_app' ? (
                   payroll.cashAppPayAvailable && payroll.connectPayoutReady ? (
                     <>
-                      Pay {fmtMoney(payroll.totalCents)} with Cash App Pay. Confirm in your Cash App app — then Instant Payout to{' '}
-                      {payroll.manager.name}&apos;s bank ({payroll.payoutBank.institutionName} ····
-                      {payroll.payoutBank.accountMask}). No property bank debit.
+                      Cash App Pay, then Instant Payout to {payroll.manager.name}&apos;s bank
+                      {payroll.payoutBank?.accountMask ? ` (····${payroll.payoutBank.accountMask})` : ''}.
                     </>
                   ) : (
                     <>Enable Cash App Pay in Stripe and complete Konstantin&apos;s payout setup first.</>
                   )
                 ) : (
-                  <>Select a payment method above.</>
+                  <>Select a payment method.</>
                 )}
               </p>
               <div className="flex flex-wrap gap-2">
@@ -1162,46 +1195,76 @@ function OwnerPayrollPanel() {
                   </button>
                 ))}
               </div>
-              <div className="flex flex-wrap gap-3">
-                <label className="flex-1 min-w-[12rem] text-xs font-medium text-slate-700">
-                  Note (optional)
-                  <input
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    placeholder="Confirmation #, memo, etc."
-                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                  />
-                </label>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="submit"
-                  disabled={
-                    paying
-                    || (payroll.visitCount < 1 && payroll.outstandingCount < 1)
-                    || (paymentMethod === 'ach' && (
-                      !payroll.propertyBank?.linked
-                      || !payroll.payoutBank?.linked
-                      || payroll.connectPayoutReady === false
-                    ))
-                    || (paymentMethod === 'cash_app' && (
-                      !payroll.cashAppPayAvailable
-                      || !payroll.payoutBank?.linked
-                      || payroll.connectPayoutReady === false
-                    ))
-                  }
-                  className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
-                >
-                  {paying ? 'Processing…' : paymentMethod === 'ach'
-                    ? `Pay ${fmtMoney(payroll.visitCount > 0 ? payroll.totalCents : payroll.outstandingCents)} via ACH`
-                    : `Pay ${fmtMoney(payroll.visitCount > 0 ? payroll.totalCents : payroll.outstandingCents)} via Cash App Pay`}
-                </button>
-                {payroll.outstandingCount > payroll.visitCount && (
+              <label className="block text-xs font-medium text-slate-700">
+                Note (optional)
+                <input
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Visits, extra work, memo…"
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                />
+              </label>
+              {(payroll.visitCount > 0 || payroll.outstandingCount > 0) && (
+                <form onSubmit={markPaid} className="space-y-2">
+                  <p className="text-xs text-slate-700">
+                    {payroll.visitCount > 0
+                      ? `${payroll.visitCount} unpaid visit${payroll.visitCount === 1 ? '' : 's'} in ${payroll.monthLabel} — ${fmtMoney(payroll.totalCents)}`
+                      : `${payroll.outstandingCount} unpaid visit${payroll.outstandingCount === 1 ? '' : 's'} — ${fmtMoney(payroll.outstandingCents)}`}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="submit"
+                      disabled={
+                        paying
+                        || (payroll.visitCount < 1 && payroll.outstandingCount < 1)
+                        || (paymentMethod === 'ach' && (
+                          !payroll.propertyBank?.linked
+                          || !payroll.payoutBank?.linked
+                          || payroll.connectPayoutReady === false
+                        ))
+                        || (paymentMethod === 'cash_app' && (
+                          !payroll.cashAppPayAvailable
+                          || !payroll.payoutBank?.linked
+                          || payroll.connectPayoutReady === false
+                        ))
+                      }
+                      className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
+                    >
+                      {paying ? 'Processing…' : `Pay visits ${fmtMoney(payroll.visitCount > 0 ? payroll.totalCents : payroll.outstandingCents)}`}
+                    </button>
+                    {payroll.outstandingCount > payroll.visitCount && (
+                      <button
+                        type="button"
+                        onClick={(e) => markPaid(e, { outstanding: true })}
+                        disabled={paying}
+                        className="rounded-lg border border-violet-300 bg-white px-4 py-2 text-xs font-semibold text-violet-800 hover:bg-violet-50 disabled:opacity-50"
+                      >
+                        Pay all outstanding {fmtMoney(payroll.outstandingCents)}
+                      </button>
+                    )}
+                  </div>
+                </form>
+              )}
+              <form onSubmit={payCustom} className="space-y-2 border-t border-violet-100 pt-3">
+                <p className="text-xs font-semibold text-slate-800">Other work — any amount, anytime</p>
+                <div className="flex flex-wrap items-end gap-2">
+                  <label className="text-xs font-medium text-slate-700">
+                    Amount
+                    <input
+                      type="number"
+                      min="0.50"
+                      step="0.01"
+                      value={customAmount}
+                      onChange={(e) => setCustomAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="mt-1 block w-32 rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                    />
+                  </label>
                   <button
-                    type="button"
-                    onClick={(e) => markPaid(e, { outstanding: true })}
+                    type="submit"
                     disabled={
                       paying
+                      || !(Number(customAmount) >= 0.5)
                       || (paymentMethod === 'ach' && (
                         !payroll.propertyBank?.linked
                         || !payroll.payoutBank?.linked
@@ -1215,15 +1278,15 @@ function OwnerPayrollPanel() {
                     }
                     className="rounded-lg border border-violet-300 bg-white px-4 py-2 text-xs font-semibold text-violet-800 hover:bg-violet-50 disabled:opacity-50"
                   >
-                    Pay all outstanding {fmtMoney(payroll.outstandingCents)}
+                    {paying ? 'Processing…' : `Pay $${Number(customAmount || 0).toFixed(2)} for other work`}
                   </button>
-                )}
-              </div>
-            </form>
+                </div>
+              </form>
+            </div>
           )}
 
           {payroll.visitCount === 0 && payroll.outstandingCount === 0 && (
-            <p className="text-xs text-slate-500">No unpaid completed visits{payroll.monthLabel ? ` for ${payroll.monthLabel}` : ''}.</p>
+            <p className="text-xs text-slate-500">No unpaid completed visits{payroll.monthLabel ? ` for ${payroll.monthLabel}` : ''}. You can still pay other work above.</p>
           )}
 
           {payroll.visits?.length > 0 && (
@@ -1249,7 +1312,9 @@ function OwnerPayrollPanel() {
                     <span>
                       {p.periodLabel}
                       {' · '}
-                      {p.visitCount} visit{p.visitCount === 1 ? '' : 's'}
+                      {p.payoutKind === 'custom'
+                        ? 'other work'
+                        : `${p.visitCount} visit${p.visitCount === 1 ? '' : 's'}`}
                       {' · '}
                       {PAYMENT_METHOD_LABELS[p.paymentMethod] || p.paymentMethod}
                     </span>
@@ -1687,8 +1752,6 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
   const [minNow, setMinNow] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [rejectNote, setRejectNote] = useState('');
-  const [rejectId, setRejectId] = useState(null);
   const [completingId, setCompletingId] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const [showRequest, setShowRequest] = useState(false);
@@ -1716,37 +1779,8 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
 
   const usage = data.usage;
   const visits = data.visits || [];
-  const pending = visits.filter((v) => v.status === 'pending_approval');
-
-  async function approve(id) {
-    setBusyId(id);
-    try {
-      await api.post(`/api/site-visits/${id}/approve`);
-      await load();
-    } catch (e) {
-      window.dispatchEvent(new CustomEvent('api:toast', {
-        detail: { message: apiErrorMessage(e, 'Approve failed.'), variant: 'error' },
-      }));
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function reject(id) {
-    setBusyId(id);
-    try {
-      await api.post(`/api/site-visits/${id}/reject`, { note: rejectNote.trim() || undefined });
-      setRejectId(null);
-      setRejectNote('');
-      await load();
-    } catch (e) {
-      window.dispatchEvent(new CustomEvent('api:toast', {
-        detail: { message: apiErrorMessage(e, 'Reject failed.'), variant: 'error' },
-      }));
-    } finally {
-      setBusyId(null);
-    }
-  }
+  const scheduled = visits.filter((v) => v.status === 'approved');
+  const atCap = (usage?.visits_remaining ?? 0) < 1;
 
   async function cancel(id) {
     setBusyId(id);
@@ -1786,8 +1820,8 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
         title="Boots on site"
         subtitle={
           isOwner
-            ? 'Pay Konstantin whenever unpaid visits are ready. Occupied rooms get 24-hour notice (Norfolk time).'
-            : 'Schedule, change, cancel, or approve your own visits. Occupied rooms get 24-hour notice when you approve or move the date.'
+            ? 'Konstantin schedules on his own — you do not need to approve. Pay visits or any other work anytime.'
+            : 'Schedule and check in without waiting on the owner. Occupied rooms get 24-hour notice. 5 visits per month.'
         }
         actions={(
           <button
@@ -1803,10 +1837,10 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
       <div className="rounded-2xl border-2 border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-slate-700">
         <p className="font-bold text-slate-900">Inspection checklist</p>
         <p className="text-xs mt-1">
-          Every visit: kitchen/living + parking + lawn/porch (video proof each) · optional tenant rooms · $20/visit · $100/mo cap
+          Every visit: kitchen/living + parking + lawn/porch (video proof each) · optional tenant rooms · $20/visit · 5 visits / $100 per month
           {isOwner
-            ? ' · pay anytime · Instant Payout to Konstantin'
-            : ' · you can approve or change the date anytime'}
+            ? ' · no approval needed · pay visits or any amount anytime · Instant Payout'
+            : ' · no owner approval · change or cancel the date anytime'}
           {' · $350/lease signed after 3 rent months'}
         </p>
       </div>
@@ -1822,7 +1856,7 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <StatCard label="This month" value={fmtMoney(usage?.reserved_cents ?? 0)} sub={`of ${fmtMoney(usage?.cap_cents ?? 10000)}`} icon={<Banknote size={20} strokeWidth={2} />} tone="success" />
             <StatCard label="Visits left" value={usage?.visits_remaining ?? 0} sub={`$${(usage?.visit_amount_cents ?? 2000) / 100} each`} icon={<Footprints size={20} strokeWidth={2} />} tone="default" />
-            <StatCard label="Pending" value={pending.length} sub={isOwner ? 'You or Konstantin' : 'Approve anytime'} icon={<Clock size={20} strokeWidth={2} />} tone="warning" />
+            <StatCard label="Scheduled" value={scheduled.length} sub="Ready to check in" icon={<Clock size={20} strokeWidth={2} />} tone="warning" />
             <StatCard label="Timezone" value="Norfolk" sub="24h room notice" icon={<Clock size={20} strokeWidth={2} />} tone="admin" />
           </div>
 
@@ -1843,7 +1877,11 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
 
           {isManager && (
             <Panel title="Schedule inspection visit">
-              {showRequest ? (
+              {atCap ? (
+                <p className="text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2">
+                  Monthly cap reached (5 visits / $100). You can still change or cancel a scheduled visit.
+                </p>
+              ) : showRequest ? (
                 <RequestVisitForm
                   areas={areas}
                   minPlanned={minPlanned}
@@ -1859,121 +1897,6 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
                   Schedule a visit
                 </button>
               )}
-            </Panel>
-          )}
-
-          {isManager && pending.length > 0 && (
-            <Panel title="Ready to approve" className="!p-0">
-              <ul className="divide-y divide-slate-100">
-                {pending.map((v) => (
-                  <li key={v.id} className="px-4 py-4">
-                    <div className="flex flex-wrap justify-between gap-2">
-                      <div>
-                        <p className="text-xs text-slate-500">{scopeSummary(v)}</p>
-                        <VisitWhen visit={v} />
-                        {v.requestedNote && <p className="text-sm text-slate-700 mt-1">{v.requestedNote}</p>}
-                      </div>
-                      <span className="text-sm font-semibold text-emerald-700">$20</span>
-                    </div>
-                    {v.tenantsToNotify?.length > 0 && (
-                      <p className="mt-2 text-xs text-violet-800 bg-violet-50 rounded-lg px-3 py-2">
-                        Occupied rooms get 24-hour inbox notice when you approve or move this date.
-                      </p>
-                    )}
-                    <VisitScheduleEditor
-                      visit={v}
-                      minPlanned={minPlanned}
-                      minNow={minNow}
-                      busy={busyId === v.id}
-                      onReschedule={reschedule}
-                      onApprove={approve}
-                      onCancel={cancel}
-                      showApprove
-                    />
-                  </li>
-                ))}
-              </ul>
-            </Panel>
-          )}
-
-          {isOwner && pending.length > 0 && (
-            <Panel title="Needs your approval" className="!p-0">
-              <ul className="divide-y divide-slate-100">
-                {pending.map((v) => (
-                  <li key={v.id} className="px-4 py-4">
-                    <div className="flex flex-wrap justify-between gap-2">
-                      <div>
-                        <p className="font-medium text-slate-900">{v.managerName}</p>
-                        <p className="text-xs text-slate-500 mt-0.5">{scopeSummary(v)}</p>
-                        <VisitWhen visit={v} />
-                        {v.requestedNote && <p className="text-sm text-slate-700 mt-1">{v.requestedNote}</p>}
-                      </div>
-                      <span className="text-sm font-semibold text-emerald-700">$20</span>
-                    </div>
-                    {v.commonAreaAnnouncement && (
-                      <p className="mt-2 text-xs text-sky-800 bg-sky-50 rounded-lg px-3 py-2">
-                        <strong>Announcement (all tenants):</strong>{' '}
-                        {v.commonAreaAnnouncement.title}
-                        {' — '}
-                        {v.commonAreaAnnouncement.areas}
-                      </p>
-                    )}
-                    {v.tenantsToNotify?.length > 0 && (
-                      <p className="mt-2 text-xs text-violet-800 bg-violet-50 rounded-lg px-3 py-2">
-                        <strong>Inbox (specific tenants):</strong>{' '}
-                        {v.tenantsToNotify.map((t) => {
-                          const kind = PURPOSE_LABELS[t.scenario] || t.scenario;
-                          return `${t.tenantName} — ${kind} (${t.roomLabels.join(', ')})`;
-                        }).join('; ')}
-                      </p>
-                    )}
-                    {visitNeedsShortNoticeWarning(v) && (
-                      <p className="mt-2 text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2">
-                        Scheduled time is under 24 hours away. You can still approve — tenants get notice now.
-                        New or moved occupied-room visits must be at least 24 hours out.
-                      </p>
-                    )}
-                    <VisitScheduleEditor
-                      visit={v}
-                      minPlanned={minPlanned}
-                      minNow={minNow}
-                      busy={busyId === v.id}
-                      onReschedule={reschedule}
-                      onApprove={approve}
-                      onCancel={cancel}
-                      showApprove={false}
-                      showCancel={false}
-                    />
-                    {rejectId === v.id ? (
-                      <div className="mt-3 space-y-2">
-                        <input
-                          value={rejectNote}
-                          onChange={(e) => setRejectNote(e.target.value)}
-                          placeholder="Optional reason"
-                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                        />
-                        <div className="flex gap-2">
-                          <button type="button" onClick={() => reject(v.id)} disabled={busyId === v.id} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white">Confirm reject</button>
-                          <button type="button" onClick={() => setRejectId(null)} className="text-xs text-slate-500">Cancel</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => approve(v.id)}
-                          disabled={busyId === v.id || usage?.visits_remaining === 0}
-                          className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
-                        >
-                          Approve &amp; send notices
-                        </button>
-                        <button type="button" onClick={() => { setRejectId(v.id); setRejectNote(''); }} className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600">Reject</button>
-                        <button type="button" onClick={() => cancel(v.id)} className="text-xs text-slate-500 hover:text-slate-800">Cancel</button>
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
             </Panel>
           )}
 
@@ -2016,18 +1939,15 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
                           Check in with videos
                         </button>
                       )}
-                      {!(v.status === 'pending_approval') && (
-                        <VisitScheduleEditor
-                          visit={v}
-                          minPlanned={minPlanned}
-                          minNow={minNow}
-                          busy={busyId === v.id}
-                          onReschedule={reschedule}
-                          onApprove={approve}
-                          onCancel={cancel}
-                          showApprove={isManager}
-                        />
-                      )}
+                      <VisitScheduleEditor
+                        visit={v}
+                        minPlanned={minPlanned}
+                        minNow={minNow}
+                        busy={busyId === v.id}
+                        onReschedule={reschedule}
+                        onCancel={cancel}
+                        showApprove={false}
+                      />
                     </li>
                   );
                 })}

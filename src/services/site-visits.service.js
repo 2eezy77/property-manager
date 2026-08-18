@@ -28,6 +28,7 @@ const {
 
 const VISIT_AMOUNT_CENTS = 2000;
 const MONTHLY_CAP_CENTS = 10000;
+const MAX_VISITS_PER_MONTH = Math.floor(MONTHLY_CAP_CENTS / VISIT_AMOUNT_CENTS);
 const MAX_VIDEO_BYTES = 25 * 1024 * 1024;
 const MIN_VIDEO_BYTES = 50 * 1024;
 const UPLOAD_DIR = path.resolve(__dirname, '../../uploads/site-visits');
@@ -267,7 +268,7 @@ async function getVisit(id, orgId) {
 function assertCanReserve(capUsage) {
   if (capUsage.reserved_cents + VISIT_AMOUNT_CENTS > MONTHLY_CAP_CENTS) {
     const err = new Error(
-      `Approving this visit would exceed the $${MONTHLY_CAP_CENTS / 100}/month limit.`
+      `This would exceed the ${MAX_VISITS_PER_MONTH} visits ($${MONTHLY_CAP_CENTS / 100}) allowed this month.`
     );
     err.code = 'MONTHLY_CAP';
     err.statusCode = 409;
@@ -349,6 +350,36 @@ async function insertRoomTargets(client, visitId, roomRows) {
   }
 }
 
+async function sendScheduledVisitNotices({ visit, actorId, event = 'scheduled' }) {
+  const planned = visit.plannedVisitAt ? new Date(visit.plannedVisitAt) : null;
+  if (!planned) {
+    const err = new Error('Planned visit time is missing on this visit.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  await sendCommonAreaVisitAnnouncement({
+    visitId: visit.id,
+    orgId: visit.orgId,
+    propertyId: visit.propertyId,
+    senderId: actorId,
+    plannedVisitAt: planned,
+    scopeCommon: visit.scopeCommon,
+    event,
+  });
+
+  if (visit.roomTargets.length > 0) {
+    const roomTargets = await loadRoomTargetsForNotify(visit.id);
+    await sendApprovedVisitNotices({
+      visitId: visit.id,
+      propertyId: visit.propertyId,
+      managerId: visit.managerId,
+      plannedVisitAt: planned,
+      roomTargets,
+    });
+  }
+}
+
 async function requestVisit({
   managerId,
   note,
@@ -376,14 +407,17 @@ async function requestVisit({
   const needs24h = visitNeeds24hNotice(roomRows);
 
   const planned = parseRequiredPlannedAt(plannedVisitAt, needs24h);
+  const usage = await getMonthlyUsage(orgId);
+  assertCanReserve(usage);
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
       `INSERT INTO manager_site_visits
-         (org_id, property_id, manager_id, requested_note, planned_visit_at, scope_common)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+         (org_id, property_id, manager_id, requested_note, planned_visit_at, scope_common,
+          status, approved_by, approved_at)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, 'approved', $3, NOW())
        RETURNING id`,
       [orgId, propertyId, managerId, note?.trim() || null, planned, JSON.stringify(common)]
     );
@@ -391,10 +425,11 @@ async function requestVisit({
     await insertRoomTargets(client, visitId, roomRows);
     await client.query('COMMIT');
     const visit = await getVisit(visitId, orgId);
-    const { alertSiteVisitPendingApproval } = require('./ops-alert.service');
-    alertSiteVisitPendingApproval(visit).catch((err) => {
-      console.warn('[site-visits] pending-approval alert:', err.message);
-    });
+    try {
+      await sendScheduledVisitNotices({ visit, actorId: managerId });
+    } catch (err) {
+      console.warn('[site-visits] scheduled notices:', err.message);
+    }
     return visit;
   } catch (e) {
     await client.query('ROLLBACK');
@@ -433,7 +468,7 @@ function assertCanApproveVisit(visit, actorId, actorRole) {
   throw err;
 }
 
-async function approveVisit({ visitId, ownerId, actorId, actorRole }) {
+async function approveVisit({ visitId, ownerId, actorId, actorRole, skipCapCheck = false }) {
   const approverId = actorId || ownerId;
   const orgId = await resolveOrgIdForUser(approverId);
   const visit = await getVisit(visitId, orgId);
@@ -449,20 +484,13 @@ async function approveVisit({ visitId, ownerId, actorId, actorRole }) {
     throw err;
   }
 
-  const usage = await getMonthlyUsage(orgId);
-  assertCanReserve(usage);
+  if (!skipCapCheck) {
+    const usage = await getMonthlyUsage(orgId);
+    assertCanReserve(usage);
+  }
 
-  const hasRooms = visit.roomTargets.length > 0;
-  const needs24h = roomTargetsNeed24h(visit.roomTargets);
-  let planned = visit.plannedVisitAt ? new Date(visit.plannedVisitAt) : null;
-
-  // Occupied-room 24h notice is enforced on request/reschedule, not at approve time.
-  if (!planned) {
-    const err = new Error(
-      needs24h
-        ? 'Planned visit time is missing for occupied-room inspection.'
-        : 'Planned visit time is missing on this request.'
-    );
+  if (!visit.plannedVisitAt) {
+    const err = new Error('Planned visit time is missing on this visit.');
     err.statusCode = 400;
     throw err;
   }
@@ -472,34 +500,37 @@ async function approveVisit({ visitId, ownerId, actorId, actorRole }) {
         SET status = 'approved',
             approved_by = $1,
             approved_at = NOW(),
-            planned_visit_at = COALESCE(planned_visit_at, $3),
             updated_at = NOW()
       WHERE id = $2`,
-    [approverId, visitId, planned]
+    [approverId, visitId]
   );
 
-  await sendCommonAreaVisitAnnouncement({
-    visitId,
-    orgId,
-    propertyId: visit.propertyId,
-    senderId: approverId,
-    plannedVisitAt: planned,
-    scopeCommon: visit.scopeCommon,
-    event: 'scheduled',
-  });
+  const scheduled = await getVisit(visitId, orgId);
+  await sendScheduledVisitNotices({ visit: scheduled, actorId: approverId });
+  return scheduled;
+}
 
-  if (hasRooms) {
-    const roomTargets = await loadRoomTargetsForNotify(visitId);
-    await sendApprovedVisitNotices({
-      visitId,
-      propertyId: visit.propertyId,
-      managerId: visit.managerId,
-      plannedVisitAt: planned,
-      roomTargets,
-    });
+async function activatePendingVisits({ orgId, actorId, actorRole }) {
+  const { rows } = await pool.query(
+    `SELECT id FROM manager_site_visits
+      WHERE org_id = $1 AND status = 'pending_approval'
+      ORDER BY created_at ASC`,
+    [orgId]
+  );
+  const activated = [];
+  for (const row of rows) {
+    try {
+      activated.push(await approveVisit({
+        visitId: row.id,
+        actorId,
+        actorRole,
+        skipCapCheck: true,
+      }));
+    } catch (err) {
+      console.warn('[site-visits] activate pending', row.id, err.message);
+    }
   }
-
-  return getVisit(visitId, orgId);
+  return activated;
 }
 
 function parseRequiredPlannedAt(plannedVisitAt, needs24h) {
@@ -727,7 +758,7 @@ async function completeVisit({ visitId, managerId, photos }) {
     throw err;
   }
   if (visit.status !== 'approved') {
-    const err = new Error('This visit must be approved before check-in.');
+    const err = new Error('This visit is not scheduled for check-in.');
     err.statusCode = 409;
     throw err;
   }
@@ -840,6 +871,7 @@ async function completeVisit({ visitId, managerId, photos }) {
 module.exports = {
   VISIT_AMOUNT_CENTS,
   MONTHLY_CAP_CENTS,
+  MAX_VISITS_PER_MONTH,
   resolveOrgIdForUser,
   getDefaultPropertyId,
   getMonthlyUsage,
@@ -848,6 +880,7 @@ module.exports = {
   getVisit,
   requestVisit,
   approveVisit,
+  activatePendingVisits,
   assertCanApproveVisit,
   parseRequiredPlannedAt,
   visitNeeds24hNotice,
