@@ -16,6 +16,39 @@ export function formatPayDollars(cents) {
   return `$${n.toFixed(2)}`;
 }
 
+export const OWNER_PAY_METHOD_COPY = {
+  cash_app: {
+    label: 'Cash App Pay',
+    speed: '~30 min',
+    detail: 'Usually in his bank in about 30 minutes after you confirm in Cash App.',
+  },
+  ach: {
+    label: 'Bank transfer',
+    speed: '3–5 days',
+    detail: 'Debits the property account. Instant Payout waits until ACH settles (3–5 business days).',
+  },
+};
+
+export function payActionLabel(preview, method = 'cash_app') {
+  if (!preview || preview.primaryAction === 'none') return 'Pay';
+  const amount = preview.primaryAction === 'combined'
+    ? formatPayDollars(preview.combinedCents)
+    : preview.primaryAction === 'other'
+      ? formatPayDollars(preview.otherCents)
+      : formatPayDollars(preview.dueVisitCents);
+  if (method === 'cash_app') {
+    return preview.primaryAction === 'visits'
+      ? `Pay visits ${amount} in Cash App`
+      : `Pay ${amount} in Cash App`;
+  }
+  if (method === 'ach') {
+    return preview.primaryAction === 'visits'
+      ? `Pay visits ${amount} by bank transfer`
+      : `Pay ${amount} by bank transfer`;
+  }
+  return preview.primaryLabel;
+}
+
 export function payoutKindLabel(payout) {
   const kind = payout?.payoutKind;
   const n = Number(payout?.visitCount) || 0;

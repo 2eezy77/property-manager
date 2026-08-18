@@ -215,6 +215,8 @@ async function runMonthGroupChecks() {
   } = await import('../client/src/utils/siteVisitMonths.js');
   const {
     buildSiteVisitPayPreview,
+    OWNER_PAY_METHOD_COPY,
+    payActionLabel,
     payoutKindLabel,
   } = await import('../client/src/utils/siteVisitPayroll.js');
 
@@ -250,6 +252,10 @@ async function runMonthGroupChecks() {
   });
   assert(otherOnlyPreview.primaryAction === 'other' && otherOnlyPreview.primaryLabel === 'Pay $100 for other work', 'other work alone stays a custom pay');
   assert(payoutKindLabel({ payoutKind: 'mixed', visitCount: 1 }) === '1 visit + other work', 'history labels mixed payouts');
+  assert(payActionLabel(both, 'cash_app') === 'Pay $120 in Cash App', 'Cash App button names the fast rail');
+  assert(payActionLabel(both, 'ach') === 'Pay $120 by bank transfer', 'ACH button names the slow rail');
+  assert(OWNER_PAY_METHOD_COPY.cash_app.speed === '~30 min', 'Cash App is labeled as the 30-minute path');
+  assert(OWNER_PAY_METHOD_COPY.ach.speed === '3–5 days', 'bank transfer is labeled as multi-day');
 
   const juneLeftover = {
     id: 'june-1',

@@ -19,6 +19,8 @@ import {
 } from '@/utils/siteVisitMonths';
 import {
   buildSiteVisitPayPreview,
+  OWNER_PAY_METHOD_COPY,
+  payActionLabel,
   payoutKindLabel,
 } from '@/utils/siteVisitPayroll';
 
@@ -201,7 +203,7 @@ function HowVisitsWork({ isOwner }) {
         <li>Every visit covers kitchen, parking, and lawn — video at check-in.</li>
         <li>Occupied rooms need 24-hour Norfolk notice. Vacant showings can be same-day.</li>
         {isOwner ? (
-          <li>Konstantin schedules on his own. Pay visits or any other amount anytime.</li>
+          <li>Konstantin schedules on his own. Pay with Cash App — usually in his bank in about 30 minutes. Bank transfer takes 3–5 days.</li>
         ) : (
           <li>No owner approval. Change or cancel the date anytime.</li>
         )}
@@ -1196,7 +1198,7 @@ function OwnerPayrollPanel() {
                 {payroll.payout.paymentMethod === 'ach'
                   ? payroll.processingDetails?.stripeStatus === 'requires_action'
                     ? ` — waiting on microdeposit verification for your property bank${payroll.propertyBank?.accountMask ? ` (····${payroll.propertyBank.accountMask})` : ''}. Cancel below to pay with Cash App Pay from your Cash App account instead.`
-                    : ' — debited from your property account, then Instant Payout to Konstantin\'s bank when funds are available.'
+                    : ' — ACH is already at the bank (3–5 business days). Next time use Cash App to get him paid in about 30 minutes.'
                   : payroll.payout.paymentMethod === 'cash_app'
                     ? ' — finish confirming in your Cash App app, then refresh.'
                     : '.'}
@@ -1285,34 +1287,51 @@ function OwnerPayrollPanel() {
               <p className="text-xs text-slate-600">
                 {paymentMethod === 'ach' ? (
                   <>
-                    ACH from your property account, then Instant Payout to his bank.
+                    Slow path: bank transfer takes 3–5 business days before Instant Payout.
                   </>
                 ) : paymentMethod === 'cash_app' ? (
                   <>
-                    Cash App Pay, then Instant Payout to his bank
-                    {payroll.payoutBank?.accountMask ? ` (····${payroll.payoutBank.accountMask})` : ''}.
+                    Fast path: confirm in Cash App, then Instant Payout to his bank
+                    {payroll.payoutBank?.accountMask ? ` (····${payroll.payoutBank.accountMask})` : ''}
+                    {' '}in about 30 minutes.
                   </>
                 ) : (
                   <>Select a payment method.</>
                 )}
               </p>
               )}
-              <div className="flex flex-wrap gap-2">
-                {(payroll.paymentMethods || []).map((m) => (
+              {(payroll.paymentMethods || []).includes('cash_app') && (
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod('cash_app')}
+                  className={`rounded-lg px-3 py-2 text-xs font-semibold border ${
+                    paymentMethod === 'cash_app'
+                      ? 'border-violet-600 bg-violet-600 text-white'
+                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  {OWNER_PAY_METHOD_COPY.cash_app.label} · {OWNER_PAY_METHOD_COPY.cash_app.speed}
+                </button>
+              )}
+              {(payroll.paymentMethods || []).includes('ach') && (
+                <details className="rounded-lg border border-slate-200 bg-white px-3 py-2" open={paymentMethod === 'ach'}>
+                  <summary className="cursor-pointer text-xs font-semibold text-slate-600">
+                    {OWNER_PAY_METHOD_COPY.ach.label} · {OWNER_PAY_METHOD_COPY.ach.speed}
+                  </summary>
+                  <p className="mt-2 text-xs text-slate-600">{OWNER_PAY_METHOD_COPY.ach.detail}</p>
                   <button
-                    key={m}
                     type="button"
-                    onClick={() => setPaymentMethod(m)}
-                    className={`rounded-lg px-3 py-2 text-xs font-semibold border ${
-                      paymentMethod === m
+                    onClick={() => setPaymentMethod('ach')}
+                    className={`mt-2 rounded-lg px-3 py-1.5 text-xs font-semibold border ${
+                      paymentMethod === 'ach'
                         ? 'border-violet-600 bg-violet-600 text-white'
-                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                        : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
                     }`}
                   >
-                    {STRIPE_PAY_LABELS[m] || PAYMENT_METHOD_LABELS[m] || m}
+                    Use bank transfer
                   </button>
-                ))}
-              </div>
+                </details>
+              )}
               <label className="block text-xs font-medium text-slate-700">
                 Note (optional)
                 <input
@@ -1354,7 +1373,7 @@ function OwnerPayrollPanel() {
                     disabled={paying || payPreview.primaryAction === 'none' || payMethodBlocked}
                     className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
                   >
-                    {paying ? 'Processing…' : payPreview.primaryLabel}
+                    {paying ? 'Processing…' : payActionLabel(payPreview, paymentMethod)}
                   </button>
                   {payPreview.canCombine && (
                     <>
@@ -1592,7 +1611,9 @@ function OwnerLeaseSigningPanel() {
                     : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
                 }`}
               >
-                {STRIPE_PAY_LABELS[m] || m}
+                {OWNER_PAY_METHOD_COPY[m]
+                  ? `${OWNER_PAY_METHOD_COPY[m].label} · ${OWNER_PAY_METHOD_COPY[m].speed}`
+                  : STRIPE_PAY_LABELS[m] || m}
               </button>
             ))}
           </div>

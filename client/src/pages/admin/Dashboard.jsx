@@ -150,16 +150,17 @@ export default function AdminDashboardPage() {
             </p>
             <p className="mt-1 text-xs text-violet-800">
               {fmt(unpaidVisitCents / 100)} due{visitPayroll.visitCount > 0 ? ` for ${visitPayroll.monthLabel}` : ' from earlier months'}
+              {' · Cash App usually lands in about 30 minutes'}
               {visitPayroll.payoutBank?.linked
                 ? ` · ${visitPayroll.payoutBank.institutionName} ····${visitPayroll.payoutBank.accountMask}`
-                : ' · Zelle or bank on file in Boots on site'}
+                : ''}
             </p>
           </div>
           <Link
             to="/admin/site-visits#pay-konstantin"
             className="btn-motion inline-flex shrink-0 items-center justify-center rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-700"
           >
-            Pay now →
+            Pay in Cash App →
           </Link>
         </div>
       )}
