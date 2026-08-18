@@ -12,6 +12,8 @@ import {
   earlierMonthsCaption,
   groupVisitsByMonth,
   norfolkMonthValue,
+  splitUpcomingVisits,
+  visitIsLeftover,
   visitMonthKey,
   visitNeedsShortNoticeWarning,
 } from '@/utils/siteVisitMonths';
@@ -271,7 +273,7 @@ function VisitMonthList({ visits, openPast = false, paidMonths = {}, rowProps })
         <VisitMonthSection
           key={month.key}
           month={month}
-          defaultOpen={!month.isPast || openPast}
+          defaultOpen={(!month.isPast && month.leftoverCount === 0) || openPast}
         >
           {month.visits.map((visit) => (
             <VisitRow
@@ -1795,8 +1797,8 @@ function VisitRow({
 }) {
   const [showProof, setShowProof] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
-  const pastMonth = visitMonthKey(visit) < norfolkMonthValue();
-  const leftover = pastMonth && ['approved', 'pending_approval'].includes(visit.status);
+  const leftover = visitIsLeftover(visit);
+  const pastMonth = leftover;
   const meta = leftover
     ? { label: 'Leftover', color: 'bg-slate-100 text-slate-600' }
     : (STATUS_META[visit.status] || STATUS_META.cancelled);
@@ -1949,9 +1951,7 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
   const visits = data.visits || [];
   const paidMonths = data.paidMonths || {};
   const currentMonth = norfolkMonthValue();
-  const upcoming = visits.filter((v) => ['approved', 'pending_approval'].includes(v.status));
-  const upcomingNow = upcoming.filter((v) => visitMonthKey(v) >= currentMonth);
-  const upcomingPast = upcoming.filter((v) => visitMonthKey(v) < currentMonth);
+  const { upcomingNow, upcomingPast } = splitUpcomingVisits(visits, currentMonth);
   const upcomingPastGroups = groupVisitsByMonth(upcomingPast, { currentMonth, paidMonths });
   const done = visits.filter((v) => v.status === 'completed');
   const other = visits.filter((v) => ['cancelled', 'rejected'].includes(v.status));

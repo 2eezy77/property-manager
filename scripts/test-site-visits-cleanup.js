@@ -223,10 +223,20 @@ async function runMonthGroupChecks() {
     payoutId: null,
   };
   const split = splitUpcomingVisits([juneLeftover, augustOpen], '2026-08');
-  assert(split.upcomingNow.map((v) => v.id).join(',') === 'aug-1', 'this-month leftover stays in Upcoming');
-  assert(split.upcomingPast.map((v) => v.id).join(',') === 'june-1', 'past-month leftover leaves Upcoming');
+  assert(split.upcomingNow.map((v) => v.id).join(',') === '', 'past-dated August leftover leaves Upcoming');
+  assert(split.upcomingPast.map((v) => v.id).join(',') === 'june-1,aug-1', 'past-dated leftovers sit under closed months');
 
-  const pastGroups = groupVisitsByMonth(split.upcomingPast, {
+  const futureAug = {
+    id: 'aug-future',
+    status: 'approved',
+    plannedVisitAt: '2026-08-28T18:00:00.000Z',
+    payoutId: null,
+  };
+  const splitLive = splitUpcomingVisits([juneLeftover, futureAug], '2026-08', Date.parse('2026-08-18T06:00:00.000Z'));
+  assert(splitLive.upcomingNow.map((v) => v.id).join(',') === 'aug-future', 'future this-month visit stays in Upcoming');
+  assert(splitLive.upcomingPast.map((v) => v.id).join(',') === 'june-1', 'June leftover still leaves Upcoming');
+
+  const pastGroups = groupVisitsByMonth([juneLeftover], {
     currentMonth: '2026-08',
     paidMonths: { '2026-06': { amountCents: 4000 } },
   });
@@ -234,7 +244,7 @@ async function runMonthGroupChecks() {
   assert(pastGroups[0]?.isPaid === true, 'June is Paid from payroll even when leftover rows have no payoutId');
   assert(pastGroups[0]?.leftoverCount === 1, 'June leftover count is 1');
   assert(
-    earlierMonthsCaption(pastGroups) === 'Earlier months — already paid. Tap a month if you need to check.',
+    earlierMonthsCaption(pastGroups) === 'Already paid. Tap a month if you need to check.',
     'earlier-months copy says already paid'
   );
 

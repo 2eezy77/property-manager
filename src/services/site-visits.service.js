@@ -68,7 +68,11 @@ async function getMonthlyUsage(orgId, db = pool) {
         AND status IN ('approved', 'completed')
         AND (
           (status = 'completed' AND visited_at >= $2 AND visited_at < $3)
-          OR (status = 'approved' AND approved_at >= $2 AND approved_at < $3)
+          OR (
+            status = 'approved'
+            AND approved_at >= $2 AND approved_at < $3
+            AND (planned_visit_at IS NULL OR planned_visit_at >= NOW())
+          )
         )`,
     [orgId, start, end]
   );
