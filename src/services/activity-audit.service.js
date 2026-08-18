@@ -595,6 +595,17 @@ async function logPaymentConfirmed({
 }
 
 const SINCE_HOURS = { '24h': 24, '7d': 168, '30d': 720 };
+const SUCCESSFUL_AUTH_ACTIONS = new Set(['login', 'logout', 'session']);
+
+/** Successful sign-in / session / sign-out rows the owner UI hides by default. */
+function isSuccessfulAuthNoise(action, statusCode) {
+  if (!SUCCESSFUL_AUTH_ACTIONS.has(action)) return false;
+  return statusCode == null || Number(statusCode) < 400;
+}
+
+function shouldApplyHideAuth(hideAuth, category) {
+  return Boolean(hideAuth) && category !== 'auth';
+}
 
 async function listActivityLog({
   viewerUserId,
@@ -605,8 +616,8 @@ async function listActivityLog({
   actorRole,
   since,
   failedOnly,
-  /** When true (default UI), hide successful login/logout/session noise. */
-  hideAuth = false,
+  /** Default matches the owner UI: hide successful login/session/sign-out. */
+  hideAuth = true,
 }) {
   const orgId = await resolveOrgIdForUser(viewerUserId);
   if (!orgId) return { logs: [], total: 0 };
@@ -633,8 +644,7 @@ async function listActivityLog({
   if (failedOnly) {
     conditions.push('(l.status_code >= 400 OR COALESCE((l.metadata->>\'failed\')::boolean, false))');
   }
-  // Hide routine auth unless the viewer explicitly filtered to Sign-in
-  if (hideAuth && category !== 'auth') {
+  if (shouldApplyHideAuth(hideAuth, category)) {
     conditions.push(`NOT (
       l.action IN ('login', 'logout', 'session')
       AND COALESCE(l.status_code, 200) < 400
@@ -677,4 +687,6 @@ module.exports = {
   formatPaymentSummary,
   getActivityPolicy,
   SESSION_OPEN_DEBOUNCE_HOURS,
+  isSuccessfulAuthNoise,
+  shouldApplyHideAuth,
 };

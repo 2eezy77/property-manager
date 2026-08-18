@@ -7,6 +7,9 @@ const { shouldCapture, requestPath } = require('../src/middleware/activity-audit
 const {
   buildSummary,
   formatPaymentSummary,
+  isSuccessfulAuthNoise,
+  shouldApplyHideAuth,
+  SESSION_OPEN_DEBOUNCE_HOURS,
 } = require('../src/services/activity-audit.service');
 
 // Mount-safe path: router-relative req.path must not win over originalUrl
@@ -163,6 +166,22 @@ assert.strictEqual(
   }),
   true
 );
+assert.strictEqual(
+  shouldCapture({
+    user: { id: 'u1' },
+    method: 'PATCH',
+    originalUrl: '/api/owner/checklist/step-1',
+  }),
+  false
+);
+assert.strictEqual(
+  shouldCapture({
+    user: { id: 'u1' },
+    method: 'POST',
+    originalUrl: '/api/tenants/t1/offboarding/start',
+  }),
+  true
+);
 
 const actor = { first_name: 'Osanin', last_name: 'Murillo', email: 'o@x.com' };
 
@@ -282,5 +301,14 @@ assert.strictEqual(
   }),
   'Osanin Murillo started Stripe Identity verification'
 );
+
+assert.strictEqual(SESSION_OPEN_DEBOUNCE_HOURS, 24);
+assert.strictEqual(isSuccessfulAuthNoise('login', 200), true);
+assert.strictEqual(isSuccessfulAuthNoise('session', 200), true);
+assert.strictEqual(isSuccessfulAuthNoise('login', 401), false);
+assert.strictEqual(isSuccessfulAuthNoise('payment', 200), false);
+assert.strictEqual(shouldApplyHideAuth(true, ''), true);
+assert.strictEqual(shouldApplyHideAuth(true, 'auth'), false);
+assert.strictEqual(shouldApplyHideAuth(false, ''), false);
 
 console.log('test-activity-audit-summaries OK');
