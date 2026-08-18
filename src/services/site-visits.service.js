@@ -196,6 +196,7 @@ function visitRowToJson(row, extras = {}) {
     photoUrl: legacyPhoto,
     amountCents: row.amount_cents,
     amountDollars: row.amount_cents / 100,
+    payoutId: row.payout_id || null,
     completedAt: row.completed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

@@ -196,8 +196,80 @@ assert(
   'activity log records custom manager pay'
 );
 
-if (failed) {
-  console.error(`\n${failed} failure(s)`);
-  process.exit(1);
+async function runMonthGroupChecks() {
+  const {
+    earlierMonthsCaption,
+    groupVisitsByMonth,
+    splitUpcomingVisits,
+    visitNeedsShortNoticeWarning,
+  } = await import('../client/src/utils/siteVisitMonths.js');
+
+  const juneLeftover = {
+    id: 'june-1',
+    status: 'approved',
+    plannedVisitAt: '2026-06-11T18:00:00.000Z',
+    payoutId: null,
+  };
+  const junePaidDone = {
+    id: 'june-paid',
+    status: 'completed',
+    visitedAt: '2026-06-02T18:00:00.000Z',
+    payoutId: 'payout-june',
+  };
+  const augustOpen = {
+    id: 'aug-1',
+    status: 'approved',
+    plannedVisitAt: '2026-08-03T18:00:00.000Z',
+    payoutId: null,
+  };
+  const split = splitUpcomingVisits([juneLeftover, augustOpen], '2026-08');
+  assert(split.upcomingNow.map((v) => v.id).join(',') === 'aug-1', 'this-month leftover stays in Upcoming');
+  assert(split.upcomingPast.map((v) => v.id).join(',') === 'june-1', 'past-month leftover leaves Upcoming');
+
+  const pastGroups = groupVisitsByMonth(split.upcomingPast, {
+    currentMonth: '2026-08',
+    paidMonths: { '2026-06': { amountCents: 4000 } },
+  });
+  assert(pastGroups[0]?.key === '2026-06', 'past leftovers group under June');
+  assert(pastGroups[0]?.isPaid === true, 'June is Paid from payroll even when leftover rows have no payoutId');
+  assert(pastGroups[0]?.leftoverCount === 1, 'June leftover count is 1');
+  assert(
+    earlierMonthsCaption(pastGroups) === 'Earlier months — already paid. Tap a month if you need to check.',
+    'earlier-months copy says already paid'
+  );
+
+  const unpaidPast = groupVisitsByMonth([juneLeftover], { currentMonth: '2026-08', paidMonths: {} });
+  assert(unpaidPast[0]?.isPaid === false, 'June leftovers are not Paid without payroll or payoutId');
+  assert(
+    groupVisitsByMonth([junePaidDone], { currentMonth: '2026-08', paidMonths: {} })[0]?.isPaid === true,
+    'completed visits with payoutId mark the month Paid'
+  );
+
+  const occupiedTarget = { tenantId: 't1', roomPurpose: 'routine_inspection' };
+  assert(
+    visitNeedsShortNoticeWarning({
+      plannedVisitAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      roomTargets: [occupiedTarget],
+    }) === true,
+    'future visit inside 24h still warns'
+  );
+  assert(
+    visitNeedsShortNoticeWarning({
+      plannedVisitAt: '2026-06-11T18:00:00.000Z',
+      roomTargets: [occupiedTarget],
+    }) === false,
+    'past date does not show under-24h warning'
+  );
 }
-console.log('\nAll site-visit cleanup checks passed.');
+
+(async () => {
+  await runMonthGroupChecks();
+  if (failed) {
+    console.error(`\n${failed} failure(s)`);
+    process.exit(1);
+  }
+  console.log('\nAll site-visit cleanup checks passed.');
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

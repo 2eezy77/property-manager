@@ -321,6 +321,34 @@ async function loadProcessingPayoutForPeriod(orgId, managerId, year, month) {
   return payoutRowToJson(rows[0]);
 }
 
+async function listPaidVisitMonths({ orgId, managerId = null } = {}) {
+  const params = [orgId];
+  let where = 'p.org_id = $1 AND p.status = \'paid\'';
+  if (managerId) {
+    params.push(managerId);
+    where += ` AND p.manager_id = $${params.length}`;
+  }
+  const { rows } = await pool.query(
+    `SELECT p.period_year,
+            p.period_month,
+            MAX(p.paid_at) AS paid_at,
+            SUM(p.amount_cents)::int AS amount_cents
+       FROM manager_site_visit_payouts p
+      WHERE ${where}
+      GROUP BY p.period_year, p.period_month`,
+    params
+  );
+  const months = {};
+  for (const row of rows) {
+    const key = `${row.period_year}-${String(row.period_month).padStart(2, '0')}`;
+    months[key] = {
+      paidAt: row.paid_at,
+      amountCents: row.amount_cents,
+    };
+  }
+  return months;
+}
+
 async function listPayoutHistory(orgId, managerId, limit = 12) {
   const { rows } = await pool.query(
     `SELECT p.*,
@@ -1407,6 +1435,7 @@ module.exports = {
   syncCashAppPayroll,
   getManagerConnectOnboardingUrl,
   attemptInstantPayoutForPayroll,
+  listPaidVisitMonths,
   listPayoutHistory,
   ensureManagerConnectAccount,
   requireConnectTransfersReady,

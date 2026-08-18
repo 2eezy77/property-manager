@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
 import { useLocation } from 'react-router';
 import { loadStripe } from '@stripe/stripe-js';
 import api from '@/api/axios';
@@ -7,6 +8,13 @@ import { apiErrorMessage } from '@/utils/apiErrorMessage';
 import { usePlaidLink } from '@/hooks/usePlaidLink';
 import PageHeader from '@/components/ui/PageHeader';
 import Panel from '@/components/ui/Panel';
+import {
+  earlierMonthsCaption,
+  groupVisitsByMonth,
+  norfolkMonthValue,
+  visitMonthKey,
+  visitNeedsShortNoticeWarning,
+} from '@/utils/siteVisitMonths';
 
 const PAYMENT_METHOD_LABELS = {
   manual: 'Manual / other',
@@ -48,17 +56,6 @@ const PURPOSE_NOTICE = {
   vacant_showing: 'Courtesy inbox to other tenants — same-day OK',
 };
 
-const MS_24H = 24 * 60 * 60 * 1000;
-
-function visitNeedsShortNoticeWarning(visit) {
-  if (!visit?.plannedVisitAt) return false;
-  const needs24h = (visit.roomTargets || []).some(
-    (t) => t.tenantId && t.roomPurpose !== 'vacant_showing'
-  );
-  if (!needs24h) return false;
-  return new Date(visit.plannedVisitAt).getTime() - Date.now() < MS_24H;
-}
-
 function fmtMoney(cents) {
   return `$${(Number(cents) / 100).toFixed(0)}`;
 }
@@ -91,6 +88,7 @@ function VisitScheduleEditor({
   onCancel,
   showApprove,
   showCancel = true,
+  allowReschedule = true,
 }) {
   const saved = visit.plannedVisitAtLocal || '';
   const [draft, setDraft] = useState(saved);
@@ -108,6 +106,7 @@ function VisitScheduleEditor({
   return (
     <div className="mt-2">
       <div className="flex flex-wrap gap-3">
+        {allowReschedule && (
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
@@ -115,6 +114,7 @@ function VisitScheduleEditor({
         >
           {open ? 'Close date' : 'Change date'}
         </button>
+        )}
         {showApprove && visit.status === 'pending_approval' && (
           <button
             type="button"
@@ -136,7 +136,7 @@ function VisitScheduleEditor({
           </button>
         )}
       </div>
-      {open && (
+      {allowReschedule && open && (
         <div className="mt-2 flex flex-wrap items-end gap-2">
           <label className="text-xs font-medium text-slate-700">
             Visit date (Norfolk)
@@ -207,6 +207,93 @@ function HowVisitsWork({ isOwner }) {
 
 function extraRooms(visit) {
   return (visit.roomTargets || []).map((r) => r.roomLabel).filter(Boolean);
+}
+
+
+function VisitMonthSection({ month, defaultOpen, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  useEffect(() => {
+    setOpen(defaultOpen);
+  }, [defaultOpen, month.key]);
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left ${
+          month.isCurrent ? 'bg-slate-50' : 'bg-white hover:bg-slate-50'
+        }`}
+        aria-expanded={open}
+      >
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold text-slate-900">{month.label}</h3>
+            {month.isCurrent && (
+              <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+                This month
+              </span>
+            )}
+            {month.isPaid && (
+              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-emerald-800">
+                Paid
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 text-xs text-slate-500">
+            {month.leftoverCount > 0 && month.isPast
+              ? `${month.leftoverCount} leftover scheduled`
+              : `${month.count} visit${month.count === 1 ? '' : 's'}`}
+            {month.isPaid ? ' · already paid' : month.isPast ? ' · closed' : ''}
+          </p>
+        </div>
+        <ChevronDown
+          size={18}
+          strokeWidth={2}
+          className={`shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {open && (
+        <ul className="divide-y divide-slate-100 border-t border-slate-100">
+          {children}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function VisitMonthList({ visits, openPast = false, paidMonths = {}, rowProps }) {
+  const groups = groupVisitsByMonth(visits, { paidMonths });
+  return (
+    <div className="space-y-3">
+      {groups.map((month) => (
+        <VisitMonthSection
+          key={month.key}
+          month={month}
+          defaultOpen={!month.isPast || openPast}
+        >
+          {month.visits.map((visit) => (
+            <VisitRow
+              key={visit.id}
+              visit={visit}
+              isOwner={rowProps.isOwner}
+              isManager={rowProps.isManager}
+              completingId={rowProps.completingId}
+              setCompletingId={rowProps.setCompletingId}
+              onCompleteDone={rowProps.onCompleteDone}
+              busy={rowProps.busyId === visit.id}
+              minPlanned={rowProps.minPlanned}
+              minNow={rowProps.minNow}
+              onReschedule={rowProps.onReschedule}
+              onCancel={rowProps.onCancel}
+              monthPaid={Boolean(paidMonths[visitMonthKey(visit)])}
+            />
+          ))}
+        </VisitMonthSection>
+      ))}
+    </div>
+  );
 }
 
 function readFileAsDataUrl(file) {
@@ -521,17 +608,6 @@ function RequestVisitForm({ areas, minPlanned, minNow, onDone }) {
       </button>
     </form>
   );
-}
-
-function norfolkMonthValue(date = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    year: 'numeric',
-    month: '2-digit',
-  }).formatToParts(date);
-  const year = parts.find((p) => p.type === 'year')?.value;
-  const month = parts.find((p) => p.type === 'month')?.value;
-  return `${year}-${month}`;
 }
 
 function parseMonthValue(value) {
@@ -1715,10 +1791,15 @@ function VisitRow({
   minNow,
   onReschedule,
   onCancel,
+  monthPaid = false,
 }) {
   const [showProof, setShowProof] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
-  const meta = STATUS_META[visit.status] || STATUS_META.cancelled;
+  const pastMonth = visitMonthKey(visit) < norfolkMonthValue();
+  const leftover = pastMonth && ['approved', 'pending_approval'].includes(visit.status);
+  const meta = leftover
+    ? { label: 'Leftover', color: 'bg-slate-100 text-slate-600' }
+    : (STATUS_META[visit.status] || STATUS_META.cancelled);
   const rooms = extraRooms(visit);
   const photos = visit.photos || [];
   const hasProof = photos.length > 0 || visit.photoUrl;
@@ -1735,7 +1816,15 @@ function VisitRow({
             <span className="text-sm font-medium text-slate-900">
               {visit.visitWhen?.at || visit.plannedVisitAtFormatted || '—'}
             </span>
-            <span className="text-sm font-semibold text-emerald-700">${visit.amountDollars}</span>
+            {visit.payoutId ? (
+              <span className="text-xs font-semibold text-emerald-700">Paid</span>
+            ) : leftover && monthPaid ? (
+              <span className="text-xs text-slate-500">Never checked in</span>
+            ) : leftover ? (
+              <span className="text-xs text-slate-500">Closed</span>
+            ) : (
+              <span className="text-sm font-semibold text-emerald-700">${visit.amountDollars}</span>
+            )}
           </div>
           <p className="mt-0.5 text-xs text-slate-500">
             {rooms.length ? `Rooms: ${rooms.join(', ')}` : 'Common areas'}
@@ -1745,7 +1834,7 @@ function VisitRow({
           )}
         </div>
         <div className="flex flex-wrap gap-2">
-          {isManager && visit.status === 'approved' && completingId !== visit.id && (
+          {isManager && visit.status === 'approved' && !pastMonth && completingId !== visit.id && (
             <button
               type="button"
               onClick={() => setCompletingId(visit.id)}
@@ -1792,7 +1881,7 @@ function VisitRow({
           )}
         </div>
       )}
-      {isManager && visit.status === 'approved' && completingId === visit.id && (
+      {isManager && visit.status === 'approved' && !pastMonth && completingId === visit.id && (
         <CompleteVisitForm
           visit={visit}
           onDone={() => { setCompletingId(null); onCompleteDone(); }}
@@ -1807,6 +1896,7 @@ function VisitRow({
         onReschedule={onReschedule}
         onCancel={onCancel}
         showApprove={false}
+        allowReschedule={!pastMonth}
       />
     </li>
   );
@@ -1857,10 +1947,15 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
 
   const usage = data.usage;
   const visits = data.visits || [];
+  const paidMonths = data.paidMonths || {};
+  const currentMonth = norfolkMonthValue();
   const upcoming = visits.filter((v) => ['approved', 'pending_approval'].includes(v.status));
+  const upcomingNow = upcoming.filter((v) => visitMonthKey(v) >= currentMonth);
+  const upcomingPast = upcoming.filter((v) => visitMonthKey(v) < currentMonth);
+  const upcomingPastGroups = groupVisitsByMonth(upcomingPast, { currentMonth, paidMonths });
   const done = visits.filter((v) => v.status === 'completed');
   const other = visits.filter((v) => ['cancelled', 'rejected'].includes(v.status));
-  const filteredVisits = visitFilter === 'done' ? done : visitFilter === 'more' ? other : upcoming;
+  const filteredVisits = visitFilter === 'done' ? done : visitFilter === 'more' ? other : upcomingNow;
   const atCap = (usage?.visits_remaining ?? 0) < 1;
 
   function goSection(next) {
@@ -1900,6 +1995,19 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
     }
   }
 
+  const visitRowProps = {
+    isOwner,
+    isManager,
+    completingId,
+    setCompletingId,
+    onCompleteDone: load,
+    busyId,
+    minPlanned,
+    minNow,
+    onReschedule: reschedule,
+    onCancel: cancel,
+  };
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -1930,7 +2038,7 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
       ) : (
         <>
           <p className="text-sm text-slate-600">
-            <strong className="text-slate-900">{upcoming.length} scheduled</strong>
+            <strong className="text-slate-900">{upcomingNow.length} scheduled</strong>
             {' · '}{usage?.visits_remaining ?? 0} left this month
             {' · '}{fmtMoney(usage?.reserved_cents ?? 0)} of $100
             {done.length > 0 ? ` · ${done.length} done` : ''}
@@ -1942,12 +2050,12 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
             options={
               isOwner
                 ? [
-                    { id: 'visits', label: 'Visits', count: upcoming.length },
+                    { id: 'visits', label: 'Visits', count: upcomingNow.length },
                     { id: 'pay', label: 'Pay' },
                     { id: 'lease', label: 'Leases' },
                   ]
                 : [
-                    { id: 'visits', label: 'Visits', count: upcoming.length },
+                    { id: 'visits', label: 'Visits', count: upcomingNow.length },
                     { id: 'pay', label: 'Pay' },
                   ]
             }
@@ -1985,43 +2093,44 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
                   value={visitFilter}
                   onChange={setVisitFilter}
                   options={[
-                    { id: 'upcoming', label: 'Upcoming', count: upcoming.length },
+                    { id: 'upcoming', label: 'Upcoming', count: upcomingNow.length },
                     { id: 'done', label: 'Done', count: done.length },
                     { id: 'more', label: 'More', count: other.length },
                   ]}
                 />
               </div>
 
-              <Panel title={visitFilter === 'done' ? 'Completed' : visitFilter === 'more' ? 'Cancelled & rejected' : 'Upcoming'} className="!p-0">
-                {filteredVisits.length === 0 ? (
-                  <p className="px-4 py-8 text-center text-sm text-slate-500">
-                    {visitFilter === 'upcoming'
-                      ? (isManager ? 'Nothing scheduled. Add a visit above.' : 'Nothing scheduled.')
-                      : visitFilter === 'done'
-                        ? 'No completed visits in this list.'
-                        : 'No cancelled or rejected visits.'}
+              {visitFilter === 'upcoming' && (
+                <div className="space-y-3">
+                  {upcomingNow.length === 0 ? (
+                    <p className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+                      {isManager ? 'Nothing scheduled this month. Add a visit above.' : 'Nothing scheduled this month.'}
+                    </p>
+                  ) : (
+                    <VisitMonthList visits={upcomingNow} paidMonths={paidMonths} rowProps={visitRowProps} />
+                  )}
+                  {upcomingPast.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs text-slate-500">
+                        {earlierMonthsCaption(upcomingPastGroups)}
+                      </p>
+                      <VisitMonthList visits={upcomingPast} paidMonths={paidMonths} rowProps={visitRowProps} />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {visitFilter !== 'upcoming' && (
+                filteredVisits.length === 0 ? (
+                  <p className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+                    {visitFilter === 'done'
+                      ? 'No completed visits in this list.'
+                      : 'No cancelled or rejected visits.'}
                   </p>
                 ) : (
-                  <ul className="divide-y divide-slate-100">
-                    {filteredVisits.map((v) => (
-                      <VisitRow
-                        key={v.id}
-                        visit={v}
-                        isOwner={isOwner}
-                        isManager={isManager}
-                        completingId={completingId}
-                        setCompletingId={setCompletingId}
-                        onCompleteDone={load}
-                        busy={busyId === v.id}
-                        minPlanned={minPlanned}
-                        minNow={minNow}
-                        onReschedule={reschedule}
-                        onCancel={cancel}
-                      />
-                    ))}
-                  </ul>
-                )}
-              </Panel>
+                  <VisitMonthList visits={filteredVisits} paidMonths={paidMonths} rowProps={visitRowProps} />
+                )
+              )}
 
               <HowVisitsWork isOwner={isOwner} />
             </div>
