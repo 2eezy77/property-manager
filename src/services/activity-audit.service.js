@@ -230,6 +230,59 @@ function buildSummary({ actor, impersonator, method, path, body, statusCode }) {
     }
     return `${who} marked manager site-visit payroll paid for ${period} (${methodLabel})`;
   }
+  if (p === '/api/site-visits/payroll/cashapp/create-intent' && method === 'POST') {
+    if (statusCode >= 400) return `${who} failed to start Konstantin payroll in Cash App`;
+    if (b.customAmount && (b.payVisits === true || b.outstanding === true)) {
+      return `${who} started Cash App pay for site visits plus $${Number(b.customAmount).toFixed(2)} other work`;
+    }
+    if (b.customAmount && b.payVisits === false) {
+      return `${who} started Cash App pay of $${Number(b.customAmount).toFixed(2)} for other work`;
+    }
+    return `${who} started Cash App pay for Konstantin site-visit payroll`;
+  }
+  if (p === '/api/site-visits/payroll/cashapp/sync' && (method === 'GET' || method === 'POST')) {
+    if (statusCode >= 400) return `${who} failed to finish Konstantin payroll in Cash App`;
+    return `${who} finished Konstantin payroll via Cash App`;
+  }
+  if (p === '/api/site-visits/payroll/cancel-processing' && method === 'POST') {
+    if (statusCode >= 400) return `${who} failed to cancel an in-progress Konstantin payroll payment`;
+    return `${who} cancelled an in-progress Konstantin payroll payment`;
+  }
+  if (/\/api\/manager-compensation\/lease-signing\/[^/]+\/cashapp\/create-intent$/.test(p) && method === 'POST') {
+    if (statusCode >= 400) return `${who} failed to start Konstantin lease-signing fee in Cash App`;
+    return `${who} started Cash App pay for Konstantin $350 lease-signing fee`;
+  }
+  if (/\/api\/leases\/[^/]+\/identity\/fee$/.test(p) && method === 'POST') {
+    return formatPaymentSummary(who, {
+      paymentType: 'identity_verification_fee',
+      amount: b.amount,
+      method: paymentMethodLabel(b) || 'card',
+      statusCode,
+      phase: 'started',
+    });
+  }
+  if (/\/api\/leases\/[^/]+\/identity\/session$/.test(p) && method === 'POST') {
+    if (statusCode >= 400) return `${who} failed to start identity verification`;
+    return `${who} started Stripe Identity verification`;
+  }
+  if (p === '/api/leases/native' && method === 'POST') {
+    return `${who} created a native VA lease`;
+  }
+  if (/\/api\/leases\/[^/]+\/native\/send$/.test(p) && method === 'POST') {
+    return `${who} sent a native lease for signature`;
+  }
+  if (/\/api\/leases\/[^/]+\/native\/sign$/.test(p) && method === 'POST') {
+    return `${who} signed a native lease`;
+  }
+  if (p === '/api/utilities/bills/combine-monthly' && method === 'POST') {
+    return `${who} combined utility bills for the month`;
+  }
+  if (p === '/api/utilities/bills/prune-duplicates' && method === 'POST') {
+    return `${who} pruned duplicate utility bills`;
+  }
+  if (/\/api\/utilities\/splits\/[^/]+\/reject-dispute$/.test(p) && method === 'POST') {
+    return `${who} rejected a utility dispute`;
+  }
   if (p === '/api/owner/property-bank/plaid/exchange' && method === 'POST') {
     if (statusCode >= 400) return `${who} failed to link the property operating bank account`;
     return `${who} linked the joint property operating bank account`;
@@ -328,37 +381,42 @@ function buildSummary({ actor, impersonator, method, path, body, statusCode }) {
 /** Plain guidance returned to the Activity log UI (same for every owner viewer). */
 function getActivityPolicy() {
   return {
-    headline: 'Shared log — every owner sees the same events.',
+    headline: 'Shared log — meaningful portal changes only.',
     tracks: [
-      'Both owners (you and your co-owner), manager, and tenants',
-      'Password sign-in, portal opens (returning sessions), sign-out, failed sign-in',
-      'Payments like Stripe: ACH / card / Cash App for rent, deposit, and utilities (started + confirmed)',
-      'Billing runs, late fees, autopay, bank link',
-      'Utilities: bills, notify, disputes',
-      'Passwords, launch emails, announcements',
-      'Maintenance and portal previews',
+      'Payments (ACH / card / Cash App) for rent, deposit, utilities, and Konstantin payroll — started + confirmed',
+      'Failed sign-ins; at most one portal open per person per day',
+      'Utilities notify / disputes, billing, bank link, passwords',
+      'Maintenance, announcements, leases, identity, site visits',
     ],
     skips: [
-      'Routine page loads and /auth/me',
-      'Repeat session opens within 4 hours (debounced)',
+      'Page loads, inbox clicks, Plaid link-token, routine API chatter',
+      'Sign-out and repeat sign-ins within 24 hours',
       'Passwords and bank tokens (always redacted)',
     ],
     visibility: 'Owners only. Managers and tenants cannot open this page.',
     recommendation:
-      'One source of truth for the month — no need to ask each other who did what.',
+      'Filter to Payments when chasing a charge. Sign-ins stay hidden unless you ask for them.',
     shared: true,
   };
 }
 
 function inferCategory(path) {
   if (path.startsWith('/auth')) return 'auth';
-  if (path === '/events/payment_confirmed' || path.includes('/payments')) return 'payments';
+  if (
+    path === '/events/payment_confirmed'
+    || path.includes('/payments')
+    || path.includes('/site-visits/payroll')
+    || path.includes('/manager-compensation')
+  ) {
+    return 'payments';
+  }
   if (path.includes('/utilities')) return 'utilities';
   if (path.includes('/maintenance')) return 'maintenance';
   if (path.includes('/users') || path.includes('/admin/users')) return 'users';
   if (path.includes('/portal-launch')) return 'communications';
   if (path.includes('/announcements')) return 'communications';
   if (path.includes('/leases')) return 'leases';
+  if (path.includes('/site-visits')) return 'visits';
   if (path.includes('/tenants')) return 'tenants';
   if (path.includes('/messages')) return 'messages';
   return 'api';
@@ -459,30 +517,53 @@ async function logActivity({
   return rows[0];
 }
 
-const SESSION_OPEN_DEBOUNCE_HOURS = 4;
+/** One successful portal-open line per person inside this window (login or refresh). */
+const SESSION_OPEN_DEBOUNCE_HOURS = 24;
 
-/**
- * Log a returning portal session (refresh cookie), at most once per debounce window.
- * Password sign-ins still use /auth/login via logActivity.
- */
-async function logSessionOpen({ userId, ip }) {
-  if (!userId) return null;
+async function hasRecentPortalOpen(userId) {
   const { rows } = await pool.query(
     `SELECT 1
        FROM activity_audit_log
       WHERE actor_user_id = $1
         AND action IN ('login', 'session')
+        AND COALESCE(status_code, 200) < 400
         AND created_at > NOW() - ($2::int * INTERVAL '1 hour')
       LIMIT 1`,
     [userId, SESSION_OPEN_DEBOUNCE_HOURS]
   );
-  if (rows.length) return null;
+  return rows.length > 0;
+}
+
+/**
+ * Log a returning portal session (refresh cookie), at most once per debounce window.
+ */
+async function logSessionOpen({ userId, ip }) {
+  if (!userId) return null;
+  if (await hasRecentPortalOpen(userId)) return null;
   return logActivity({
     realActorId: userId,
     displayActorId: userId,
     method: 'POST',
     path: '/auth/refresh',
     statusCode: 200,
+    ip: ip ?? null,
+  });
+}
+
+/**
+ * Successful password sign-in — debounced with session opens so the feed is not login spam.
+ * Failed sign-ins still use logActivity directly (always recorded).
+ */
+async function logSignIn({ userId, ip, email }) {
+  if (!userId) return null;
+  if (await hasRecentPortalOpen(userId)) return null;
+  return logActivity({
+    realActorId: userId,
+    displayActorId: userId,
+    method: 'POST',
+    path: '/auth/login',
+    statusCode: 200,
+    body: email ? { email } : undefined,
     ip: ip ?? null,
   });
 }
@@ -514,6 +595,17 @@ async function logPaymentConfirmed({
 }
 
 const SINCE_HOURS = { '24h': 24, '7d': 168, '30d': 720 };
+const SUCCESSFUL_AUTH_ACTIONS = new Set(['login', 'logout', 'session']);
+
+/** Successful sign-in / session / sign-out rows the owner UI hides by default. */
+function isSuccessfulAuthNoise(action, statusCode) {
+  if (!SUCCESSFUL_AUTH_ACTIONS.has(action)) return false;
+  return statusCode == null || Number(statusCode) < 400;
+}
+
+function shouldApplyHideAuth(hideAuth, category) {
+  return Boolean(hideAuth) && category !== 'auth';
+}
 
 async function listActivityLog({
   viewerUserId,
@@ -524,6 +616,8 @@ async function listActivityLog({
   actorRole,
   since,
   failedOnly,
+  /** Default matches the owner UI: hide successful login/session/sign-out. */
+  hideAuth = true,
 }) {
   const orgId = await resolveOrgIdForUser(viewerUserId);
   if (!orgId) return { logs: [], total: 0 };
@@ -549,6 +643,12 @@ async function listActivityLog({
   }
   if (failedOnly) {
     conditions.push('(l.status_code >= 400 OR COALESCE((l.metadata->>\'failed\')::boolean, false))');
+  }
+  if (shouldApplyHideAuth(hideAuth, category)) {
+    conditions.push(`NOT (
+      l.action IN ('login', 'logout', 'session')
+      AND COALESCE(l.status_code, 200) < 400
+    )`);
   }
 
   const where = conditions.join(' AND ');
@@ -579,6 +679,7 @@ async function listActivityLog({
 module.exports = {
   logActivity,
   logSessionOpen,
+  logSignIn,
   logPaymentConfirmed,
   listActivityLog,
   isPrimaryOwner,
@@ -586,4 +687,6 @@ module.exports = {
   formatPaymentSummary,
   getActivityPolicy,
   SESSION_OPEN_DEBOUNCE_HOURS,
+  isSuccessfulAuthNoise,
+  shouldApplyHideAuth,
 };

@@ -18,7 +18,7 @@ const bcrypt   = require('bcrypt');
 
 const { signAccessToken, generateRefreshToken, hashRefreshToken } = require('../utils/jwt.utils');
 const authenticate = require('../middleware/authenticate');
-const { logActivity, logSessionOpen } = require('../services/activity-audit.service');
+const { logActivity, logSessionOpen, logSignIn } = require('../services/activity-audit.service');
 const {
   requestPasswordReset,
   completePasswordReset,
@@ -92,13 +92,9 @@ router.post('/login', async (req, res) => {
     // 5. Update last_login_at
     await pool.query(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [user.id]);
 
-    logActivity({
-      realActorId: user.id,
-      displayActorId: user.id,
-      method: 'POST',
-      path: '/auth/login',
-      statusCode: 200,
-      body: { email: user.email },
+    logSignIn({
+      userId: user.id,
+      email: user.email,
       ip: req.ip,
     }).catch((err) => console.error('[activity-audit login]', err.message));
 
@@ -200,23 +196,7 @@ router.post('/logout', async (req, res) => {
 
   if (raw) {
     const hash = hashRefreshToken(raw);
-    try {
-      const { rows: tok } = await pool.query(
-        `SELECT user_id FROM refresh_tokens WHERE token_hash = $1 LIMIT 1`,
-        [hash]
-      );
-      const uid = tok[0]?.user_id;
-      if (uid) {
-        logActivity({
-          realActorId: uid,
-          displayActorId: uid,
-          method: 'POST',
-          path: '/auth/logout',
-          statusCode: 200,
-          ip: req.ip,
-        }).catch(() => {});
-      }
-    } catch { /* best-effort */ }
+    // Sign-out is routine browser noise — do not write activity rows.
     await pool.query(
       `UPDATE refresh_tokens SET revoked_at = NOW() WHERE token_hash = $1 AND revoked_at IS NULL`,
       [hash]

@@ -264,6 +264,9 @@ router.get('/activity-log', async (req, res) => {
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 80));
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const failedOnly = req.query.failed === '1' || req.query.failed === 'true';
+    // Default: hide successful sign-in / session / sign-out spam. Pass hideAuth=0 to include.
+    const hideAuthRaw = req.query.hideAuth;
+    const hideAuth = !(hideAuthRaw === '0' || hideAuthRaw === 'false');
     const { logs, total } = await listActivityLog({
       viewerUserId: req.user.id,
       limit,
@@ -273,6 +276,7 @@ router.get('/activity-log', async (req, res) => {
       actorRole: req.query.role || null,
       since: req.query.since || null,
       failedOnly,
+      hideAuth,
     });
     res.json({
       logs,
