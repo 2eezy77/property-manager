@@ -34,6 +34,7 @@ const {
   cancelProcessingPayroll,
   parseYearMonth,
   norfolkYearMonth,
+  listPaidVisitMonths,
 } = require('../services/site-visits-payout.service');
 
 const router = express.Router();
@@ -90,10 +91,15 @@ router.get('/', Guards.staffOnly, async (req, res) => {
       orgId,
       managerId: isManager ? req.user.id : null,
     });
+    const paidMonths = await listPaidVisitMonths({
+      orgId,
+      managerId: isManager ? req.user.id : null,
+    });
 
     res.json({
       usage,
       visits,
+      paidMonths,
       policy: {
         perVisit: usage.visit_amount_cents / 100,
         monthlyCap: usage.cap_cents / 100,
