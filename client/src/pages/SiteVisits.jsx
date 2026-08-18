@@ -19,6 +19,8 @@ import {
 } from '@/utils/siteVisitMonths';
 import {
   buildSiteVisitPayPreview,
+  OWNER_PAY_METHOD_COPY,
+  payActionLabel,
   payoutKindLabel,
 } from '@/utils/siteVisitPayroll';
 
@@ -201,7 +203,7 @@ function HowVisitsWork({ isOwner }) {
         <li>Every visit covers kitchen, parking, and lawn — video at check-in.</li>
         <li>Occupied rooms need 24-hour Norfolk notice. Vacant showings can be same-day.</li>
         {isOwner ? (
-          <li>Konstantin schedules on his own. Pay visits or any other amount anytime.</li>
+          <li>Konstantin is the property manager. Associate pay is Cash App so Instant Payout hits his bank in about 30 minutes — not a 3–5 day vendor transfer.</li>
         ) : (
           <li>No owner approval. Change or cancel the date anytime.</li>
         )}
@@ -1196,7 +1198,7 @@ function OwnerPayrollPanel() {
                 {payroll.payout.paymentMethod === 'ach'
                   ? payroll.processingDetails?.stripeStatus === 'requires_action'
                     ? ` — waiting on microdeposit verification for your property bank${payroll.propertyBank?.accountMask ? ` (····${payroll.propertyBank.accountMask})` : ''}. Cancel below to pay with Cash App Pay from your Cash App account instead.`
-                    : ' — debited from your property account, then Instant Payout to Konstantin\'s bank when funds are available.'
+                    : ' — ACH is already at the bank (3–5 business days). Next time use Cash App to get him paid in about 30 minutes.'
                   : payroll.payout.paymentMethod === 'cash_app'
                     ? ' — finish confirming in your Cash App app, then refresh.'
                     : '.'}
@@ -1280,39 +1282,34 @@ function OwnerPayrollPanel() {
 
           {(!payroll.processing || payroll.processingDetails?.canCancel) && (
             <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-4 space-y-4">
-              <p className="text-sm font-semibold text-slate-900">Pay visits or other work</p>
+              <p className="text-sm font-semibold text-slate-900">Associate pay</p>
               {payroll.canPay && (
               <p className="text-xs text-slate-600">
                 {paymentMethod === 'ach' ? (
                   <>
-                    ACH from your property account, then Instant Payout to his bank.
+                    Cash App is unavailable, so this fallback bank transfer takes 3–5 business days.
                   </>
                 ) : paymentMethod === 'cash_app' ? (
                   <>
-                    Cash App Pay, then Instant Payout to his bank
-                    {payroll.payoutBank?.accountMask ? ` (····${payroll.payoutBank.accountMask})` : ''}.
+                    Property manager payroll: confirm in Cash App, then Instant Payout to his bank
+                    {payroll.payoutBank?.accountMask ? ` (····${payroll.payoutBank.accountMask})` : ''}
+                    {' '}in about 30 minutes.
                   </>
                 ) : (
                   <>Select a payment method.</>
                 )}
               </p>
               )}
-              <div className="flex flex-wrap gap-2">
-                {(payroll.paymentMethods || []).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setPaymentMethod(m)}
-                    className={`rounded-lg px-3 py-2 text-xs font-semibold border ${
-                      paymentMethod === m
-                        ? 'border-violet-600 bg-violet-600 text-white'
-                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                    }`}
-                  >
-                    {STRIPE_PAY_LABELS[m] || PAYMENT_METHOD_LABELS[m] || m}
-                  </button>
-                ))}
-              </div>
+              {(payroll.paymentMethods || []).includes('cash_app') && (
+                <p className="text-xs font-semibold text-violet-800">
+                  {OWNER_PAY_METHOD_COPY.cash_app.label} · {OWNER_PAY_METHOD_COPY.cash_app.speed}
+                </p>
+              )}
+              {(payroll.paymentMethods || []).includes('ach') && !(payroll.paymentMethods || []).includes('cash_app') && (
+                <p className="text-xs font-semibold text-slate-600">
+                  {OWNER_PAY_METHOD_COPY.ach.label} · {OWNER_PAY_METHOD_COPY.ach.speed}
+                </p>
+              )}
               <label className="block text-xs font-medium text-slate-700">
                 Note (optional)
                 <input
@@ -1354,7 +1351,7 @@ function OwnerPayrollPanel() {
                     disabled={paying || payPreview.primaryAction === 'none' || payMethodBlocked}
                     className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
                   >
-                    {paying ? 'Processing…' : payPreview.primaryLabel}
+                    {paying ? 'Processing…' : payActionLabel(payPreview, paymentMethod)}
                   </button>
                   {payPreview.canCombine && (
                     <>
@@ -1592,7 +1589,9 @@ function OwnerLeaseSigningPanel() {
                     : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
                 }`}
               >
-                {STRIPE_PAY_LABELS[m] || m}
+                {OWNER_PAY_METHOD_COPY[m]
+                  ? `${OWNER_PAY_METHOD_COPY[m].label} · ${OWNER_PAY_METHOD_COPY[m].speed}`
+                  : STRIPE_PAY_LABELS[m] || m}
               </button>
             ))}
           </div>

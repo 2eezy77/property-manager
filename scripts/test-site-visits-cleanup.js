@@ -14,6 +14,7 @@ const {
   canPayPayroll,
   parseCustomAmountCents,
   resolvePayrollCharge,
+  buildAvailableOwnerPayMethods,
 } = require('../src/services/site-visits-payout.service');
 const { resolveInstantPayoutAmount } = require('../src/services/stripe.service');
 const { toNorfolkDatetimeLocal, MS_24H } = require('../src/utils/norfolk-time');
@@ -125,6 +126,31 @@ assert(
   'cannot pay without a payment method'
 );
 
+assert(
+  JSON.stringify(buildAvailableOwnerPayMethods({
+    connectPayoutReady: true,
+    cashAppPayAvailable: true,
+    propertyBankLinked: true,
+  })) === JSON.stringify(['cash_app']),
+  'associate pay offers Cash App only when it is available'
+);
+assert(
+  JSON.stringify(buildAvailableOwnerPayMethods({
+    connectPayoutReady: true,
+    cashAppPayAvailable: false,
+    propertyBankLinked: true,
+  })) === JSON.stringify(['ach']),
+  'ACH is only a fallback when Cash App is unavailable'
+);
+assert(
+  JSON.stringify(buildAvailableOwnerPayMethods({
+    connectPayoutReady: false,
+    cashAppPayAvailable: true,
+    propertyBankLinked: true,
+  })) === JSON.stringify([]),
+  'no owner pay methods until Connect payout is ready'
+);
+
 assert(parseCustomAmountCents('') === 0, 'blank custom amount is zero');
 assert(parseCustomAmountCents('25') === 2500, 'parses dollar custom amount to cents');
 assert(parseCustomAmountCents('$1,200.50') === 120050, 'strips currency formatting');
@@ -215,6 +241,8 @@ async function runMonthGroupChecks() {
   } = await import('../client/src/utils/siteVisitMonths.js');
   const {
     buildSiteVisitPayPreview,
+    OWNER_PAY_METHOD_COPY,
+    payActionLabel,
     payoutKindLabel,
   } = await import('../client/src/utils/siteVisitPayroll.js');
 
@@ -250,6 +278,10 @@ async function runMonthGroupChecks() {
   });
   assert(otherOnlyPreview.primaryAction === 'other' && otherOnlyPreview.primaryLabel === 'Pay $100 for other work', 'other work alone stays a custom pay');
   assert(payoutKindLabel({ payoutKind: 'mixed', visitCount: 1 }) === '1 visit + other work', 'history labels mixed payouts');
+  assert(payActionLabel(both, 'cash_app') === 'Pay $120 in Cash App', 'Cash App button names the fast rail');
+  assert(payActionLabel(both, 'ach') === 'Pay $120 by bank transfer', 'ACH button names the slow rail');
+  assert(OWNER_PAY_METHOD_COPY.cash_app.speed === '~30 min', 'Cash App is labeled as the 30-minute path');
+  assert(OWNER_PAY_METHOD_COPY.ach.speed === '3–5 days', 'bank transfer is labeled as multi-day');
 
   const juneLeftover = {
     id: 'june-1',
