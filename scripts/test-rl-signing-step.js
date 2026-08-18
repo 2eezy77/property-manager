@@ -96,8 +96,22 @@ function assert(cond, msg) {
           { signer_role: 'Landlord', status: 'pending' },
         ],
       },
+    }) === 'awaiting_tenant_sign',
+    'sent envelope stays awaiting_tenant_sign even after tenant signed'
+  );
+  assert(
+    deriveSigningStep({
+      lease: { status: 'pending_manager_signature', rl_document_id: 'd1' },
+      docStatus: 'completed',
+      latestEnvelope: {
+        status: 'in_progress',
+        signers: [
+          { signer_role: 'Tenant', status: 'signed' },
+          { signer_role: 'Landlord', status: 'pending' },
+        ],
+      },
     }) === 'awaiting_signatures',
-    'tenant signed, others pending → awaiting_signatures'
+    'non-sent envelope after tenant signed → awaiting_signatures'
   );
   assert(
     deriveSigningStep({
