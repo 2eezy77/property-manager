@@ -26,6 +26,57 @@ function buildAvailableOwnerPayMethods({
   if (propertyBankLinked && connectPayoutReady) methods.push('ach');
   return methods;
 }
+
+/** Owner can pay visits or any other amount whenever payment methods are ready. */
+function canPayPayroll({
+  processing = false,
+  canCancelProcessing = false,
+  paymentMethodCount = 0,
+}) {
+  if (paymentMethodCount < 1) return false;
+  if (processing && !canCancelProcessing) return false;
+  return true;
+}
+
+function parseCustomAmountCents(raw) {
+  if (raw == null || raw === '') return 0;
+  const n = typeof raw === 'number' ? raw : parseFloat(String(raw).replace(/[$,\s]/g, ''));
+  if (!Number.isFinite(n) || n < 0) {
+    const err = new Error('Enter a valid dollar amount.');
+    err.statusCode = 400;
+    err.code = 'INVALID_AMOUNT';
+    throw err;
+  }
+  const cents = Math.round(n * 100);
+  if (cents > 1_000_000) {
+    const err = new Error('Custom pay is limited to $10,000 per payment.');
+    err.statusCode = 400;
+    err.code = 'AMOUNT_TOO_LARGE';
+    throw err;
+  }
+  return cents;
+}
+
+function resolvePayrollCharge({ visits = [], customAmountCents = 0 }) {
+  const visitCents = visits.reduce((sum, v) => sum + v.amountCents, 0);
+  const custom = Math.max(0, Number(customAmountCents) || 0);
+  const amountCents = visitCents + custom;
+  if (amountCents < 50) {
+    const err = new Error('Enter at least $0.50, or pay unpaid completed visits.');
+    err.statusCode = 400;
+    err.code = 'NOTHING_TO_PAY';
+    throw err;
+  }
+  let payoutKind = 'visits';
+  if (custom && visits.length) payoutKind = 'mixed';
+  else if (custom) payoutKind = 'custom';
+  return {
+    amountCents,
+    visitCount: visits.length,
+    payoutKind,
+    customAmountCents: custom,
+  };
+}
 const BANK_PURPOSE = 'manager_payout';
 
 function wrapStripePayrollError(err) {
@@ -147,6 +198,11 @@ function payoutRowToJson(row) {
     bankMask: row.bank_mask || null,
     stripePaymentIntentId: row.stripe_payment_intent_id || null,
     stripeChargeId: row.stripe_charge_id || null,
+    stripeInstantPayoutId: row.stripe_instant_payout_id || null,
+    instantPayoutStatus: row.instant_payout_status || null,
+    instantPayoutError: row.instant_payout_error || null,
+    instantPayoutAt: row.instant_payout_at || null,
+    payoutKind: row.payout_kind || (row.visit_count > 0 ? 'visits' : 'custom'),
   };
 }
 
@@ -188,14 +244,40 @@ async function loadPayableVisits(orgId, managerId, year, month) {
       ORDER BY v.visited_at ASC`,
     [orgId, managerId, start, end]
   );
-  return rows.map((r) => ({
+  return rows.map(mapPayableVisit);
+}
+
+function mapPayableVisit(r) {
+  return {
     id: r.id,
     visitedAt: r.visited_at,
     visitedAtFormatted: formatNorfolkDateTime(r.visited_at),
     amountCents: r.amount_cents,
     amountDollars: r.amount_cents / 100,
     completedAt: r.completed_at,
-  }));
+  };
+}
+
+async function loadAllPayableVisits(orgId, managerId) {
+  const { rows } = await pool.query(
+    `SELECT v.id, v.visited_at, v.amount_cents, v.completed_at,
+            TRIM(CONCAT(m.first_name, ' ', m.last_name)) AS manager_name
+       FROM manager_site_visits v
+       JOIN users m ON m.id = v.manager_id
+      WHERE v.org_id = $1
+        AND v.manager_id = $2
+        AND v.status = 'completed'
+        AND (
+          v.payout_id IS NULL
+          OR NOT EXISTS (
+            SELECT 1 FROM manager_site_visit_payouts p
+             WHERE p.id = v.payout_id AND p.status = 'paid'
+          )
+        )
+      ORDER BY v.visited_at ASC`,
+    [orgId, managerId]
+  );
+  return rows.map(mapPayableVisit);
 }
 
 async function loadPayoutForPeriod(orgId, managerId, year, month) {
@@ -210,7 +292,30 @@ async function loadPayoutForPeriod(orgId, managerId, year, month) {
       WHERE p.org_id = $1
         AND p.manager_id = $2
         AND p.period_year = $3
-        AND p.period_month = $4`,
+        AND p.period_month = $4
+      ORDER BY p.created_at DESC
+      LIMIT 1`,
+    [orgId, managerId, year, month]
+  );
+  return payoutRowToJson(rows[0]);
+}
+
+async function loadProcessingPayoutForPeriod(orgId, managerId, year, month) {
+  const { rows } = await pool.query(
+    `SELECT p.*,
+            TRIM(CONCAT(o.first_name, ' ', o.last_name)) AS payer_name,
+            ba.institution_name AS bank_institution,
+            ba.account_mask AS bank_mask
+       FROM manager_site_visit_payouts p
+       LEFT JOIN users o ON o.id = p.paid_by
+       LEFT JOIN bank_accounts ba ON ba.id = p.bank_account_id
+      WHERE p.org_id = $1
+        AND p.manager_id = $2
+        AND p.period_year = $3
+        AND p.period_month = $4
+        AND p.status = 'processing'
+      ORDER BY p.created_at DESC
+      LIMIT 1`,
     [orgId, managerId, year, month]
   );
   return payoutRowToJson(rows[0]);
@@ -404,7 +509,7 @@ async function cancelProcessingPayroll({ orgId, ownerId, year, month }) {
     throw err;
   }
 
-  const existing = await loadPayoutForPeriod(orgId, manager.id, year, month);
+  const existing = await loadProcessingPayoutForPeriod(orgId, manager.id, year, month);
   if (!existing || existing.status !== 'processing') {
     const err = new Error(`No in-progress payroll for ${monthLabel(year, month)}.`);
     err.statusCode = 400;
@@ -479,9 +584,12 @@ async function getPayrollMonth({ userId, userRole, year, month }) {
   }
 
   const visits = await loadPayableVisits(orgId, managerId, year, month);
+  const outstandingVisits = await loadAllPayableVisits(orgId, managerId);
   const totalCents = visits.reduce((sum, v) => sum + v.amountCents, 0);
-  const payout = await loadPayoutForPeriod(orgId, managerId, year, month);
-  const alreadyPaid = payout?.status === 'paid';
+  const outstandingCents = outstandingVisits.reduce((sum, v) => sum + v.amountCents, 0);
+  const processingPayout = await loadProcessingPayoutForPeriod(orgId, managerId, year, month);
+  let payout = processingPayout || await loadPayoutForPeriod(orgId, managerId, year, month);
+  const alreadyPaid = visits.length === 0 && payout?.status === 'paid';
   const processing = payout?.status === 'processing';
   const payoutBankFull = await getDefaultPayoutBankFull(managerId);
   const payoutBankRow = payoutBankFull;
@@ -519,9 +627,22 @@ async function getPayrollMonth({ userId, userRole, year, month }) {
     propertyBankLinked,
     paymentMethods,
   } = stripeContext;
-  const canPay = !alreadyPaid
-    && (!processing || processingDetails?.canCancel)
-    && paymentMethods.length > 0;
+  if (
+    userRole !== 'property_manager'
+    && payout?.status === 'paid'
+    && payout.instantPayoutStatus === 'pending_available'
+    && payout.id
+  ) {
+    await attemptInstantPayoutForPayroll(payout.id).catch(() => {});
+    const refreshed = await loadPayoutForPeriod(orgId, managerId, year, month);
+    if (refreshed) payout = refreshed;
+  }
+
+  const canPay = canPayPayroll({
+    processing,
+    canCancelProcessing: !!processingDetails?.canCancel,
+    paymentMethodCount: paymentMethods.length,
+  });
 
   return {
     year,
@@ -536,6 +657,9 @@ async function getPayrollMonth({ userId, userRole, year, month }) {
     visitCount: visits.length,
     totalCents,
     totalDollars: totalCents / 100,
+    outstandingCount: outstandingVisits.length,
+    outstandingCents,
+    outstandingDollars: outstandingCents / 100,
     alreadyPaid,
     processing,
     payout,
@@ -717,6 +841,9 @@ async function payManagerPayroll({
   ownerId,
   year,
   month,
+  outstanding = false,
+  payVisits,
+  customAmount,
   paymentMethod,
   note,
   ipAddress,
@@ -749,13 +876,7 @@ async function payManagerPayroll({
     throw err;
   }
 
-  const existing = await loadPayoutForPeriod(orgId, manager.id, year, month);
-  if (existing?.status === 'paid') {
-    const err = new Error(`Payroll for ${monthLabel(year, month)} is already marked paid.`);
-    err.statusCode = 409;
-    err.code = 'ALREADY_PAID';
-    throw err;
-  }
+  const existing = await loadProcessingPayoutForPeriod(orgId, manager.id, year, month);
   if (existing?.status === 'processing') {
     const err = new Error(`Payroll for ${monthLabel(year, month)} is already processing via ACH.`);
     err.statusCode = 409;
@@ -763,14 +884,17 @@ async function payManagerPayroll({
     throw err;
   }
 
-  const visits = await loadPayableVisits(orgId, manager.id, year, month);
-  if (!visits.length) {
-    const err = new Error(`No completed visits to pay for ${monthLabel(year, month)}.`);
-    err.statusCode = 400;
-    throw err;
-  }
-
-  const totalCents = visits.reduce((sum, v) => sum + v.amountCents, 0);
+  const customAmountCents = parseCustomAmountCents(customAmount);
+  const includeVisits = outstanding === true
+    || payVisits === true
+    || (customAmountCents === 0 && payVisits !== false);
+  const visits = includeVisits
+    ? (outstanding
+      ? await loadAllPayableVisits(orgId, manager.id)
+      : await loadPayableVisits(orgId, manager.id, year, month))
+    : [];
+  const charge = resolvePayrollCharge({ visits, customAmountCents });
+  const totalCents = charge.amountCents;
   const payoutBankFull = paymentMethod === 'ach'
     ? await getDefaultPayoutBankFull(manager.id)
     : await getDefaultPayoutBank(manager.id);
@@ -804,8 +928,8 @@ async function payManagerPayroll({
       `INSERT INTO manager_site_visit_payouts
          (org_id, manager_id, period_year, period_month,
           amount_cents, visit_count, status, payment_method,
-          bank_account_id, paid_by, paid_at, note)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+          bank_account_id, paid_by, paid_at, note, payout_kind)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        RETURNING *`,
       [
         orgId,
@@ -813,28 +937,32 @@ async function payManagerPayroll({
         year,
         month,
         totalCents,
-        visits.length,
+        charge.visitCount,
         initialStatus,
         paymentMethod,
         payoutBankFull?.id ?? null,
         ownerId,
         paidAt,
         note?.trim() || null,
+        charge.payoutKind,
       ]
     );
 
-    const visitIds = visits.map((v) => v.id);
-    await client.query(
-      `UPDATE manager_site_visits
-          SET payout_id = $1, updated_at = NOW()
-        WHERE id = ANY($2::uuid[])`,
-      [payoutRow.id, visitIds]
-    );
+    if (visits.length) {
+      const visitIds = visits.map((v) => v.id);
+      await client.query(
+        `UPDATE manager_site_visits
+            SET payout_id = $1, updated_at = NOW()
+          WHERE id = ANY($2::uuid[])`,
+        [payoutRow.id, visitIds]
+      );
+    }
 
     let paymentIntent = null;
     if (paymentMethod === 'ach') {
       const connectId = await ensureManagerConnectAccount(payoutBankFull, manager);
       await requireConnectTransfersReady(connectId);
+      await stripe.ensureConnectManualPayouts(connectId).catch(() => {});
       const accessToken = decrypt(propertyBankRow.plaid_access_token_encrypted);
       const { routing, account: acctNum } = await plaid.getAchAccountNumbers(
         accessToken,
@@ -856,12 +984,15 @@ async function payManagerPayroll({
           routingNumber: routing,
           accountNumber: acctNum,
           accountHolderName: holderName,
-          description: `Site visit payroll — ${monthLabel(year, month)}`,
+          description: charge.payoutKind === 'custom'
+            ? `Manager pay — ${note?.trim() || 'other work'}`
+            : `Site visit payroll — ${monthLabel(year, month)}`,
           metadata: {
             payment_type: 'manager_site_visit_payroll',
             payout_id: payoutRow.id,
             org_id: orgId,
             manager_id: manager.id,
+            payout_kind: charge.payoutKind,
           },
           transferDestination: connectId,
           ipAddress: ipAddress || '',
@@ -891,12 +1022,18 @@ async function payManagerPayroll({
     }
 
     await client.query('COMMIT');
-    return payoutRowToJson({
+    const json = payoutRowToJson({
       ...payoutRow,
       payer_name: null,
       bank_institution: payoutBankFull?.institution_name ?? null,
       bank_mask: payoutBankFull?.account_mask ?? null,
     });
+    if (payoutRow.status === 'paid') {
+      await attemptInstantPayoutForPayroll(payoutRow.id).catch((err) => {
+        console.warn('[site-visits-payout] instant payout:', err.message);
+      });
+    }
+    return json;
   } catch (e) {
     await client.query('ROLLBACK');
     if (e.code === '23505') {
@@ -954,6 +1091,9 @@ async function startCashAppPayroll({
   ownerId,
   year,
   month,
+  outstanding = false,
+  payVisits,
+  customAmount,
   note,
 }) {
   if (!stripe.isCashAppPayConfigured()) {
@@ -972,13 +1112,8 @@ async function startCashAppPayroll({
     throw err;
   }
 
-  const existing = await loadPayoutForPeriod(orgId, manager.id, year, month);
-  if (existing?.status === 'paid') {
-    const err = new Error(`Payroll for ${monthLabel(year, month)} is already marked paid.`);
-    err.statusCode = 409;
-    err.code = 'ALREADY_PAID';
-    throw err;
-  }
+  const existing = await loadProcessingPayoutForPeriod(orgId, manager.id, year, month)
+    || await loadPayoutForPeriod(orgId, manager.id, year, month);
   if (existing?.status === 'processing') {
     if (existing.stripePaymentIntentId) {
       const pi = await stripe.retrievePaymentIntent(existing.stripePaymentIntentId);
@@ -1002,12 +1137,16 @@ async function startCashAppPayroll({
     }
   }
 
-  const visits = await loadPayableVisits(orgId, manager.id, year, month);
-  if (!visits.length) {
-    const err = new Error(`No completed visits to pay for ${monthLabel(year, month)}.`);
-    err.statusCode = 400;
-    throw err;
-  }
+  const customAmountCents = parseCustomAmountCents(customAmount);
+  const includeVisits = outstanding === true
+    || payVisits === true
+    || (customAmountCents === 0 && payVisits !== false);
+  const visits = includeVisits
+    ? (outstanding
+      ? await loadAllPayableVisits(orgId, manager.id)
+      : await loadPayableVisits(orgId, manager.id, year, month))
+    : [];
+  const charge = resolvePayrollCharge({ visits, customAmountCents });
 
   const payoutBankFull = await getDefaultPayoutBankFull(manager.id);
   if (!payoutBankFull) {
@@ -1017,9 +1156,10 @@ async function startCashAppPayroll({
     throw err;
   }
 
-  const totalCents = visits.reduce((sum, v) => sum + v.amountCents, 0);
+  const totalCents = charge.amountCents;
   const connectId = await ensureManagerConnectAccount(payoutBankFull, manager);
   await requireConnectTransfersReady(connectId);
+  await stripe.ensureConnectManualPayouts(connectId).catch(() => {});
 
   const { rows: [ownerRow] } = await pool.query(
     `SELECT first_name, last_name, email FROM users WHERE id = $1`,
@@ -1038,8 +1178,8 @@ async function startCashAppPayroll({
       `INSERT INTO manager_site_visit_payouts
          (org_id, manager_id, period_year, period_month,
           amount_cents, visit_count, status, payment_method,
-          bank_account_id, paid_by, note)
-       VALUES ($1,$2,$3,$4,$5,$6,'processing','cash_app',$7,$8,$9)
+          bank_account_id, paid_by, note, payout_kind)
+       VALUES ($1,$2,$3,$4,$5,$6,'processing','cash_app',$7,$8,$9,$10)
        RETURNING *`,
       [
         orgId,
@@ -1047,33 +1187,39 @@ async function startCashAppPayroll({
         year,
         month,
         totalCents,
-        visits.length,
+        charge.visitCount,
         payoutBankFull.id,
         ownerId,
         note?.trim() || null,
+        charge.payoutKind,
       ]
     );
 
-    const visitIds = visits.map((v) => v.id);
-    await client.query(
-      `UPDATE manager_site_visits
-          SET payout_id = $1, updated_at = NOW()
-        WHERE id = ANY($2::uuid[])`,
-      [payoutRow.id, visitIds]
-    );
+    if (visits.length) {
+      const visitIds = visits.map((v) => v.id);
+      await client.query(
+        `UPDATE manager_site_visits
+            SET payout_id = $1, updated_at = NOW()
+          WHERE id = ANY($2::uuid[])`,
+        [payoutRow.id, visitIds]
+      );
+    }
 
     let paymentIntent;
     try {
       paymentIntent = await stripe.createCashAppPaymentIntent({
         amountCents: totalCents,
         customerId,
-        description: `Site visit payroll — ${monthLabel(year, month)}`,
+        description: charge.payoutKind === 'custom'
+          ? `Manager pay — ${note?.trim() || 'other work'}`
+          : `Site visit payroll — ${monthLabel(year, month)}`,
         metadata: {
           payment_type: 'manager_site_visit_payroll',
           payout_id: payoutRow.id,
           org_id: orgId,
           manager_id: manager.id,
           payment_method: 'cash_app',
+          payout_kind: charge.payoutKind,
         },
         transferDestination: connectId,
       });
@@ -1162,6 +1308,11 @@ async function syncCashAppPayroll({ orgId, ownerId, paymentIntentId }) {
       [localStatus, chargeId, payoutRow.id]
     );
   }
+  if (localStatus === 'paid') {
+    await attemptInstantPayoutForPayroll(payoutRow.id).catch((err) => {
+      console.warn('[site-visits-payout] instant payout:', err.message);
+    });
+  }
 
   const payroll = await getPayrollMonth({
     userId: ownerId,
@@ -1178,10 +1329,71 @@ async function syncCashAppPayroll({ orgId, ownerId, paymentIntentId }) {
   };
 }
 
+async function attemptInstantPayoutForPayroll(payoutId) {
+  if (!payoutId) return null;
+  const { rows: [row] } = await pool.query(
+    `SELECT p.id, p.amount_cents, p.status, p.stripe_instant_payout_id, p.instant_payout_status,
+            p.manager_id, ba.stripe_connect_account_id
+       FROM manager_site_visit_payouts p
+       LEFT JOIN bank_accounts ba ON ba.id = p.bank_account_id
+      WHERE p.id = $1`,
+    [payoutId]
+  );
+  if (!row || row.status !== 'paid') return null;
+  if (row.stripe_instant_payout_id && row.instant_payout_status === 'paid') return row;
+  if (!row.stripe_connect_account_id) {
+    await pool.query(
+      `UPDATE manager_site_visit_payouts
+          SET instant_payout_status = 'skipped',
+              instant_payout_error = 'No Connect account on payout bank',
+              updated_at = NOW()
+        WHERE id = $1`,
+      [payoutId]
+    );
+    return null;
+  }
+
+  try {
+    const payout = await stripe.createInstantPayout({
+      connectAccountId: row.stripe_connect_account_id,
+      amountCents: row.amount_cents,
+      metadata: {
+        payment_type: 'manager_site_visit_payroll',
+        payout_id: row.id,
+        manager_id: row.manager_id,
+      },
+    });
+    await pool.query(
+      `UPDATE manager_site_visit_payouts
+          SET stripe_instant_payout_id = $1,
+              instant_payout_status = $2,
+              instant_payout_error = NULL,
+              instant_payout_at = NOW(),
+              updated_at = NOW()
+        WHERE id = $3`,
+      [payout.id, payout.status || 'pending', payoutId]
+    );
+    return payout;
+  } catch (err) {
+    await pool.query(
+      `UPDATE manager_site_visit_payouts
+          SET instant_payout_status = $1,
+              instant_payout_error = $2,
+              updated_at = NOW()
+        WHERE id = $3`,
+      [err.code === 'INSTANT_NOT_AVAILABLE' ? 'pending_available' : 'failed', err.message, payoutId]
+    );
+    throw err;
+  }
+}
+
 module.exports = {
   PAYMENT_METHODS,
   STRIPE_OWNER_PAY_METHODS,
   buildAvailableOwnerPayMethods,
+  canPayPayroll,
+  parseCustomAmountCents,
+  resolvePayrollCharge,
   getOwnerStripePayContext,
   parseYearMonth,
   norfolkYearMonth,
@@ -1194,6 +1406,7 @@ module.exports = {
   startCashAppPayroll,
   syncCashAppPayroll,
   getManagerConnectOnboardingUrl,
+  attemptInstantPayoutForPayroll,
   listPayoutHistory,
   ensureManagerConnectAccount,
   requireConnectTransfersReady,

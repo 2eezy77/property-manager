@@ -54,6 +54,18 @@ const COMMON_COPY = {
       'We will send a new announcement if it is rescheduled.',
     ].join('\n'),
   }),
+  rescheduled: (when, areas) => ({
+    title: `Common area walkthrough moved — ${when}`,
+    body: [
+      `The common area walkthrough has been rescheduled to ${when}.`,
+      '',
+      `Areas: ${areas}`,
+      '',
+      'This covers kitchen/living, parking, and porch only — not your private room unless you received a separate inbox message.',
+      '',
+      'You do not need to be present, but you may be home if you wish.',
+    ].join('\n'),
+  }),
 };
 
 function commonAreaLabels(keys) {

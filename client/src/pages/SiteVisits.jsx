@@ -1,16 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router';
 import { loadStripe } from '@stripe/stripe-js';
-import {
-  Check, Footprints, Banknote, User, Landmark, FileText, Clock, CheckCircle2, PenLine,
-} from 'lucide-react';
 import api from '@/api/axios';
 import { useAuth } from '@/context/AuthContext';
 import { apiErrorMessage } from '@/utils/apiErrorMessage';
 import { usePlaidLink } from '@/hooks/usePlaidLink';
 import PageHeader from '@/components/ui/PageHeader';
 import Panel from '@/components/ui/Panel';
-import StatCard from '@/components/ui/StatCard';
 
 const PAYMENT_METHOD_LABELS = {
   manual: 'Manual / other',
@@ -27,9 +23,9 @@ const STRIPE_PAY_LABELS = {
 };
 
 const STATUS_META = {
-  pending_approval: { label: 'Awaiting approval', color: 'bg-amber-100 text-amber-800' },
-  approved:         { label: 'Approved — ready to check in', color: 'bg-blue-100 text-blue-800' },
-  completed:        { label: 'Completed', color: 'bg-emerald-100 text-emerald-800' },
+  pending_approval: { label: 'Scheduling', color: 'bg-amber-100 text-amber-800' },
+  approved:         { label: 'Scheduled', color: 'bg-blue-100 text-blue-800' },
+  completed:        { label: 'Done', color: 'bg-emerald-100 text-emerald-800' },
   rejected:         { label: 'Rejected', color: 'bg-red-100 text-red-700' },
   cancelled:        { label: 'Cancelled', color: 'bg-slate-100 text-slate-600' },
 };
@@ -79,14 +75,138 @@ function accountNeedsRelink(acct) {
   return acct?.linkStatus === 'needs_relink' || acct?.link_status === 'needs_relink';
 }
 
-function VisitWhen({ visit }) {
-  const w = visit?.visitWhen;
-  if (!w?.at) return null;
-  return (
-    <p className="text-xs font-medium text-slate-800 mt-1">
-      <span className="text-slate-500 font-normal">{w.label}:</span> {w.at}
-    </p>
+function visitNeeds24h(visit) {
+  return (visit?.roomTargets || []).some(
+    (t) => t.tenantId && t.roomPurpose !== 'vacant_showing'
   );
+}
+
+function VisitScheduleEditor({
+  visit,
+  minPlanned,
+  minNow,
+  busy,
+  onReschedule,
+  onApprove,
+  onCancel,
+  showApprove,
+  showCancel = true,
+}) {
+  const saved = visit.plannedVisitAtLocal || '';
+  const [draft, setDraft] = useState(saved);
+  const [open, setOpen] = useState(false);
+  const minDatetime = visitNeeds24h(visit) ? minPlanned : minNow;
+
+  useEffect(() => {
+    setDraft(saved);
+  }, [saved, visit.id]);
+
+  const canChange = ['pending_approval', 'approved'].includes(visit.status);
+
+  if (!canChange) return null;
+
+  return (
+    <div className="mt-2">
+      <div className="flex flex-wrap gap-3">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="text-xs font-semibold text-slate-600 hover:text-slate-900"
+        >
+          {open ? 'Close date' : 'Change date'}
+        </button>
+        {showApprove && visit.status === 'pending_approval' && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onApprove(visit.id)}
+            className="text-xs font-semibold text-violet-700 hover:text-violet-900"
+          >
+            Approve &amp; send notices
+          </button>
+        )}
+        {showCancel && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onCancel(visit.id)}
+            className="text-xs text-slate-500 hover:text-slate-800"
+          >
+            Cancel
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="mt-2 flex flex-wrap items-end gap-2">
+          <label className="text-xs font-medium text-slate-700">
+            Visit date (Norfolk)
+            <input
+              type="datetime-local"
+              value={draft}
+              min={minDatetime || undefined}
+              onChange={(e) => setDraft(e.target.value)}
+              className="mt-1 block rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            />
+          </label>
+          <button
+            type="button"
+            disabled={busy || !draft || draft === saved}
+            onClick={() => onReschedule(visit.id, draft)}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            Save date
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Segmented({ value, onChange, options }) {
+  return (
+    <div className="flex flex-wrap rounded-lg border border-slate-200 overflow-hidden text-sm w-fit">
+      {options.map((opt) => (
+        <button
+          key={opt.id}
+          type="button"
+          onClick={() => onChange(opt.id)}
+          className={`px-3.5 py-1.5 font-medium transition-colors ${
+            value === opt.id ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          {opt.label}
+          {opt.count != null && (
+            <span className={`ml-1.5 text-[11px] ${value === opt.id ? 'text-white/70' : 'text-slate-400'}`}>
+              {opt.count}
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function HowVisitsWork({ isOwner }) {
+  return (
+    <details className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-slate-600">
+      <summary className="cursor-pointer text-xs font-semibold text-slate-700">How visits work</summary>
+      <ul className="mt-2 list-disc space-y-1 pl-4 text-xs">
+        <li>$20 each, up to 5 visits / $100 a month.</li>
+        <li>Every visit covers kitchen, parking, and lawn — video at check-in.</li>
+        <li>Occupied rooms need 24-hour Norfolk notice. Vacant showings can be same-day.</li>
+        {isOwner ? (
+          <li>Konstantin schedules on his own. Pay visits or any other amount anytime.</li>
+        ) : (
+          <li>No owner approval. Change or cancel the date anytime.</li>
+        )}
+        <li>$350 per signed lease, paid after 3 months of rent.</li>
+      </ul>
+    </details>
+  );
+}
+
+function extraRooms(visit) {
+  return (visit.roomTargets || []).map((r) => r.roomLabel).filter(Boolean);
 }
 
 function readFileAsDataUrl(file) {
@@ -313,9 +433,12 @@ function RequestVisitForm({ areas, minPlanned, minNow, onDone }) {
           purpose: purposes[unitId] || 'routine_inspection',
         })),
       });
+      window.dispatchEvent(new CustomEvent('api:toast', {
+        detail: { message: 'Visit scheduled. Tenants were notified — no owner approval needed.', variant: 'success' },
+      }));
       onDone();
     } catch (err) {
-      setError(apiErrorMessage(err, 'Request failed.'));
+      setError(apiErrorMessage(err, 'Could not schedule visit.'));
     } finally {
       setBusy(false);
     }
@@ -323,20 +446,11 @@ function RequestVisitForm({ areas, minPlanned, minNow, onDone }) {
 
   return (
     <form onSubmit={submit} className="space-y-4">
+      <p className="text-xs text-slate-500">
+        Kitchen, parking, and lawn are included every visit (video at check-in).
+      </p>
       <div>
-        <p className="text-xs font-bold uppercase text-slate-500 mb-2">Common areas (required every visit)</p>
-        <ul className="rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2 text-xs text-slate-700 space-y-1">
-          {(areas?.common || []).map((a) => (
-            <li key={a.key} className="flex items-center gap-2">
-              <Check size={14} strokeWidth={2.5} className="text-emerald-600" />
-              {a.label}
-              <span className="text-slate-400">— video at check-in</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-      <div>
-        <p className="text-xs font-bold uppercase text-slate-500 mb-2">Tenant rooms</p>
+        <p className="text-xs font-bold uppercase text-slate-500 mb-2">Add tenant rooms (optional)</p>
         <div className="space-y-2">
           {(areas?.rooms || []).map((r) => {
             const selected = units.has(r.unitId);
@@ -375,11 +489,11 @@ function RequestVisitForm({ areas, minPlanned, minNow, onDone }) {
         </div>
       </div>
       <label className="block text-xs font-medium text-slate-700">
-        Planned visit (Norfolk time)
+        When (Norfolk)
         <span className="block text-slate-500 font-normal mt-0.5">
           {needs24h
-            ? 'Required before owner approval — at least 24 hours ahead for occupied rooms.'
-            : 'Required before owner approval — same-day OK for vacant showings.'}
+            ? 'Occupied rooms need 24 hours. Tenants are notified when you schedule.'
+            : 'Same-day is fine for vacant / common-only. Tenants are notified when you schedule.'}
         </span>
         <input
           type="datetime-local"
@@ -403,7 +517,7 @@ function RequestVisitForm({ areas, minPlanned, minNow, onDone }) {
         disabled={busy}
         className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
       >
-        {busy ? 'Sending…' : 'Request owner approval'}
+        {busy ? 'Scheduling…' : 'Schedule visit'}
       </button>
     </form>
   );
@@ -595,8 +709,7 @@ function ManagerPayoutBankSection({ onChanged }) {
   return (
     <Panel title="Payout bank account">
       <p className="text-xs text-slate-600 mb-3">
-        Link the account where Jose sends your monthly site-visit pay ($20/visit, $100/mo cap).
-        Used for reference when paying via Zelle or ACH — not auto-debited.
+        Where Instant Payouts land after Jose pays.
       </p>
       {loading ? (
         <p className="text-xs text-slate-500">Loading…</p>
@@ -678,7 +791,7 @@ function ManagerPayoutBankSection({ onChanged }) {
             </div>
           )}
           {accounts.length > 0 && connectSetup?.ready && (
-            <p className="mt-2 text-xs text-emerald-700">Stripe payout setup complete — ACH deposits enabled.</p>
+            <p className="mt-2 text-xs text-emerald-700">Stripe payout setup complete — Instant Payouts enabled.</p>
           )}
         </>
       )}
@@ -698,6 +811,7 @@ function OwnerPayrollPanel() {
   const [cancelling, setCancelling] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('cash_app');
   const [note, setNote] = useState('');
+  const [customAmount, setCustomAmount] = useState('');
   const [error, setError] = useState('');
 
   const { year, month } = parseMonthValue(monthValue);
@@ -783,14 +897,18 @@ function OwnerPayrollPanel() {
     }
   }
 
-  async function payViaCashApp() {
-    if (!payroll?.visitCount || payroll?.alreadyPaid) return;
+  async function payViaCashApp({ outstanding = false, customAmount: custom, payVisits } = {}) {
+    const dueCount = outstanding ? payroll?.outstandingCount : payroll?.visitCount;
+    if (!custom && !dueCount) return;
     setPaying(true);
     setError('');
     try {
       const { data } = await api.post('/api/site-visits/payroll/cashapp/create-intent', {
         year,
         month,
+        outstanding,
+        payVisits,
+        customAmount: custom,
         note: note.trim() || undefined,
       }, { skipGlobalError: true });
 
@@ -818,11 +936,13 @@ function OwnerPayrollPanel() {
     }
   }
 
-  async function markPaid(e) {
+  async function markPaid(e, { outstanding = false } = {}) {
     e.preventDefault();
-    if (!payroll?.visitCount || payroll?.alreadyPaid) return;
+    const payOutstanding = outstanding || (payroll?.visitCount < 1 && payroll?.outstandingCount > 0);
+    const dueCount = payOutstanding ? payroll?.outstandingCount : payroll?.visitCount;
+    if (!dueCount) return;
     if (paymentMethod === 'cash_app') {
-      await payViaCashApp();
+      await payViaCashApp({ outstanding: payOutstanding });
       return;
     }
     setPaying(true);
@@ -831,16 +951,54 @@ function OwnerPayrollPanel() {
       await api.post('/api/site-visits/payroll/pay', {
         year,
         month,
+        outstanding: payOutstanding,
         paymentMethod,
         note: note.trim() || undefined,
       });
       setNote('');
       await loadPayroll();
       window.dispatchEvent(new CustomEvent('api:toast', {
-        detail: { message: `${payroll.monthLabel} payroll submitted via ACH.`, variant: 'success' },
+        detail: { message: payOutstanding
+          ? 'Outstanding boots-on-site pay submitted via ACH.'
+          : `${payroll.monthLabel} payroll submitted via ACH.`, variant: 'success' },
       }));
     } catch (e) {
       setError(apiErrorMessage(e, 'Could not mark payroll paid.'));
+    } finally {
+      setPaying(false);
+    }
+  }
+
+  async function payCustom(e) {
+    e.preventDefault();
+    const amount = Number(customAmount);
+    if (!Number.isFinite(amount) || amount < 0.5) {
+      setError('Enter at least $0.50 for other work.');
+      return;
+    }
+    if (paymentMethod === 'cash_app') {
+      await payViaCashApp({ customAmount: amount, payVisits: false });
+      return;
+    }
+    setPaying(true);
+    setError('');
+    try {
+      await api.post('/api/site-visits/payroll/pay', {
+        year,
+        month,
+        payVisits: false,
+        customAmount: amount,
+        paymentMethod,
+        note: note.trim() || undefined,
+      });
+      setNote('');
+      setCustomAmount('');
+      await loadPayroll();
+      window.dispatchEvent(new CustomEvent('api:toast', {
+        detail: { message: `Paid $${amount.toFixed(2)} for other work via ACH.`, variant: 'success' },
+      }));
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not pay other work.'));
     } finally {
       setPaying(false);
     }
@@ -851,7 +1009,7 @@ function OwnerPayrollPanel() {
   const managerFirst = payroll?.manager?.name?.split(' ')[0] || 'Konstantin';
 
   return (
-    <Panel title={`Pay ${managerFirst} — boots on site`} id="pay-konstantin">
+    <Panel title={`Pay ${managerFirst}`} id="pay-konstantin">
       <div className="flex flex-wrap items-end gap-3 mb-4">
         <label className="text-xs font-medium text-slate-700">
           Pay period
@@ -877,55 +1035,43 @@ function OwnerPayrollPanel() {
         <p className="text-xs text-slate-500">No property manager on file for this organization.</p>
       ) : (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <StatCard
-              label="Completed visits"
-              value={payroll.visitCount}
-              sub={payroll.monthLabel}
-              icon={<Footprints size={20} strokeWidth={2} />}
-              tone="default"
-            />
-            <StatCard
-              label="Amount due"
-              value={fmtMoney(payroll.totalCents)}
-              sub={payroll.alreadyPaid ? 'Paid' : 'Unpaid'}
-              icon={<Banknote size={20} strokeWidth={2} />}
-              tone={payroll.alreadyPaid ? 'success' : 'warning'}
-            />
-            <StatCard
-              label="Manager"
-              value={payroll.manager.name?.split(' ')[0] || '—'}
-              sub={payroll.manager.email}
-              icon={<User size={20} strokeWidth={2} />}
-              tone="admin"
-            />
-            <StatCard
-              label="Payout bank"
-              value={payroll.payoutBank?.linked ? `···${payroll.payoutBank.accountMask}` : 'None'}
-              sub={payroll.payoutBank?.linked ? payroll.payoutBank.institutionName : 'Manager not linked'}
-              icon={<Landmark size={20} strokeWidth={2} />}
-              tone={payroll.payoutBank?.linked ? 'success' : 'warning'}
-            />
-          </div>
-
-          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">
-            <span className="font-semibold text-slate-900">Property account (pay from): </span>
-            {payroll.propertyBank?.linked ? (
-              <>
-                {payroll.propertyBank.institutionName} ····{payroll.propertyBank.accountMask}
-                {payroll.propertyBank.linkedByName ? ` · linked by ${payroll.propertyBank.linkedByName}` : ''}
-                {(payroll.propertyBank.linkStatus === 'needs_relink' || accountNeedsRelink(payroll.propertyBank)) && (
-                  <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-amber-800">reconnect needed</span>
-                )}
-              </>
-            ) : (
-              <>
-                Not linked —{' '}
+          <div>
+            <p className="text-2xl font-bold tabular-nums text-slate-900">
+              {fmtMoney(
+                payroll.visitCount > 0
+                  ? payroll.totalCents
+                  : (payroll.outstandingCents || payroll.totalCents || 0)
+              )}
+            </p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              {payroll.visitCount > 0
+                ? `${payroll.visitCount} unpaid visit${payroll.visitCount === 1 ? '' : 's'} · ${payroll.monthLabel}`
+                : payroll.outstandingCount > 0
+                  ? `${payroll.outstandingCount} unpaid visit${payroll.outstandingCount === 1 ? '' : 's'} from other months`
+                  : payroll.alreadyPaid
+                    ? `Paid · ${payroll.monthLabel}`
+                    : `Nothing unpaid · ${payroll.monthLabel}`}
+              {' · '}{managerFirst}
+            </p>
+            <p className="mt-2 text-xs text-slate-600">
+              His bank:{' '}
+              {payroll.payoutBank?.linked
+                ? `${payroll.payoutBank.institutionName} ····${payroll.payoutBank.accountMask}`
+                : 'not linked'}
+              {' · '}Your account:{' '}
+              {payroll.propertyBank?.linked ? (
+                <>
+                  {payroll.propertyBank.institutionName} ····{payroll.propertyBank.accountMask}
+                  {accountNeedsRelink(payroll.propertyBank) && (
+                    <span className="ml-1 rounded-full bg-amber-100 px-2 py-0.5 text-amber-800">reconnect</span>
+                  )}
+                </>
+              ) : (
                 <a href="/admin/finance" className="font-semibold text-violet-700 hover:underline">
-                  connect joint account in Finance
+                  link in Finance
                 </a>
-              </>
-            )}
+              )}
+            </p>
           </div>
 
           {payroll.propertyBank?.linked && accountNeedsRelink(payroll.propertyBank) && (
@@ -944,7 +1090,7 @@ function OwnerPayrollPanel() {
                 {payroll.payout.paymentMethod === 'ach'
                   ? payroll.processingDetails?.stripeStatus === 'requires_action'
                     ? ` — waiting on microdeposit verification for your property bank${payroll.propertyBank?.accountMask ? ` (····${payroll.propertyBank.accountMask})` : ''}. Cancel below to pay with Cash App Pay from your Cash App account instead.`
-                    : ' — debited from your property account and sent to manager bank. Settles in 4–5 business days.'
+                    : ' — debited from your property account, then Instant Payout to Konstantin\'s bank when funds are available.'
                   : payroll.payout.paymentMethod === 'cash_app'
                     ? ' — finish confirming in your Cash App app, then refresh.'
                     : '.'}
@@ -989,6 +1135,15 @@ function OwnerPayrollPanel() {
               <strong>Paid</strong> via {PAYMENT_METHOD_LABELS[payroll.payout.paymentMethod] || payroll.payout.paymentMethod}
               {payroll.payout.paidAt && ` on ${fmtWhen(payroll.payout.paidAt)}`}
               {payroll.payout.note && ` — ${payroll.payout.note}`}
+              {payroll.payout.instantPayoutStatus === 'pending' || payroll.payout.instantPayoutStatus === 'paid' ? (
+                <span> · Instant Payout {payroll.payout.instantPayoutStatus === 'paid' ? 'sent to his bank' : 'submitted'}</span>
+              ) : payroll.payout.instantPayoutStatus === 'pending_available' ? (
+                <span> · Instant Payout waits until Stripe funds are available, then hits his bank</span>
+              ) : payroll.payout.instantPayoutError ? (
+                <span> · Instant Payout: {payroll.payout.instantPayoutError}</span>
+              ) : (
+                <span> · Instant Payout to his bank when Stripe releases funds</span>
+              )}
             </div>
           )}
 
@@ -1017,35 +1172,25 @@ function OwnerPayrollPanel() {
             </div>
           )}
 
-          {!payroll.alreadyPaid && payroll.canPay && payroll.visitCount > 0 && (
-            <form onSubmit={markPaid} className="rounded-xl border border-violet-200 bg-violet-50/40 p-4 space-y-3">
-              <p className="text-sm font-semibold text-slate-900">
-                Pay {fmtMoney(payroll.totalCents)} for {payroll.visitCount} visit{payroll.visitCount === 1 ? '' : 's'} ({payroll.monthLabel})
-              </p>
+          {(!payroll.processing || payroll.processingDetails?.canCancel) && (
+            <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-4 space-y-4">
+              <p className="text-sm font-semibold text-slate-900">Pay visits or other work</p>
+              {payroll.canPay && (
               <p className="text-xs text-slate-600">
                 {paymentMethod === 'ach' ? (
-                  payroll.propertyBank?.linked && payroll.payoutBank?.linked ? (
-                    <>
-                      ACH debits your property account ({payroll.propertyBank.institutionName} ····{payroll.propertyBank.accountMask})
-                      and transfers to {payroll.manager.name}&apos;s bank ({payroll.payoutBank.institutionName} ····{payroll.payoutBank.accountMask}). Settles in 4–5 business days.
-                    </>
-                  ) : (
-                    <>Link both banks first — property account under Finance, manager payout bank under his Boots on site page.</>
-                  )
+                  <>
+                    ACH from your property account, then Instant Payout to his bank.
+                  </>
                 ) : paymentMethod === 'cash_app' ? (
-                  payroll.cashAppPayAvailable && payroll.connectPayoutReady ? (
-                    <>
-                      Pay {fmtMoney(payroll.totalCents)} with Cash App Pay. Confirm in your Cash App app — funds route to{' '}
-                      {payroll.manager.name}&apos;s bank ({payroll.payoutBank.institutionName} ····
-                      {payroll.payoutBank.accountMask}). No property bank debit required.
-                    </>
-                  ) : (
-                    <>Enable Cash App Pay in Stripe and complete Konstantin&apos;s payout setup first.</>
-                  )
+                  <>
+                    Cash App Pay, then Instant Payout to his bank
+                    {payroll.payoutBank?.accountMask ? ` (····${payroll.payoutBank.accountMask})` : ''}.
+                  </>
                 ) : (
-                  <>Select a payment method above.</>
+                  <>Select a payment method.</>
                 )}
               </p>
+              )}
               <div className="flex flex-wrap gap-2">
                 {(payroll.paymentMethods || []).map((m) => (
                   <button
@@ -1062,69 +1207,110 @@ function OwnerPayrollPanel() {
                   </button>
                 ))}
               </div>
-              <div className="flex flex-wrap gap-3">
-                <label className="flex-1 min-w-[12rem] text-xs font-medium text-slate-700">
-                  Note (optional)
-                  <input
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    placeholder="Confirmation #, memo, etc."
-                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                  />
-                </label>
-              </div>
-              <button
-                type="submit"
-                disabled={
-                  paying
-                  || (paymentMethod === 'ach' && (
-                    !payroll.propertyBank?.linked
-                    || !payroll.payoutBank?.linked
-                    || payroll.connectPayoutReady === false
-                  ))
-                  || (paymentMethod === 'cash_app' && (
-                    !payroll.cashAppPayAvailable
-                    || !payroll.payoutBank?.linked
-                    || payroll.connectPayoutReady === false
-                  ))
-                }
-                className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
-              >
-                {paying ? 'Processing…' : paymentMethod === 'ach'
-                  ? `Pay ${fmtMoney(payroll.totalCents)} via ACH`
-                  : `Pay ${fmtMoney(payroll.totalCents)} via Cash App Pay`}
-              </button>
-            </form>
-          )}
-
-          {!payroll.alreadyPaid && payroll.visitCount === 0 && (
-            <p className="text-xs text-slate-500">No completed visits for {payroll.monthLabel}.</p>
-          )}
-
-          {payroll.visits?.length > 0 && (
-            <div>
-              <p className="text-xs font-bold uppercase text-slate-500 mb-2">Visits in period</p>
-              <ul className="rounded-lg border border-slate-200 divide-y divide-slate-100 text-xs">
-                {payroll.visits.map((v) => (
-                  <li key={v.id} className="flex justify-between px-3 py-2">
-                    <span>{v.visitedAtFormatted}</span>
-                    <span className="font-semibold text-emerald-700">{fmtMoney(v.amountCents)}</span>
-                  </li>
-                ))}
-              </ul>
+              <label className="block text-xs font-medium text-slate-700">
+                Note (optional)
+                <input
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Visits, extra work, memo…"
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                />
+              </label>
+              {(payroll.visitCount > 0 || payroll.outstandingCount > 0) && (
+                <form onSubmit={markPaid} className="space-y-2">
+                  <p className="text-xs text-slate-700">
+                    {payroll.visitCount > 0
+                      ? `${payroll.visitCount} unpaid visit${payroll.visitCount === 1 ? '' : 's'} in ${payroll.monthLabel} — ${fmtMoney(payroll.totalCents)}`
+                      : `${payroll.outstandingCount} unpaid visit${payroll.outstandingCount === 1 ? '' : 's'} — ${fmtMoney(payroll.outstandingCents)}`}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="submit"
+                      disabled={
+                        paying
+                        || (payroll.visitCount < 1 && payroll.outstandingCount < 1)
+                        || (paymentMethod === 'ach' && (
+                          !payroll.propertyBank?.linked
+                          || !payroll.payoutBank?.linked
+                          || payroll.connectPayoutReady === false
+                        ))
+                        || (paymentMethod === 'cash_app' && (
+                          !payroll.cashAppPayAvailable
+                          || !payroll.payoutBank?.linked
+                          || payroll.connectPayoutReady === false
+                        ))
+                      }
+                      className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
+                    >
+                      {paying ? 'Processing…' : `Pay visits ${fmtMoney(payroll.visitCount > 0 ? payroll.totalCents : payroll.outstandingCents)}`}
+                    </button>
+                    {payroll.outstandingCount > payroll.visitCount && (
+                      <button
+                        type="button"
+                        onClick={(e) => markPaid(e, { outstanding: true })}
+                        disabled={paying}
+                        className="rounded-lg border border-violet-300 bg-white px-4 py-2 text-xs font-semibold text-violet-800 hover:bg-violet-50 disabled:opacity-50"
+                      >
+                        Pay all outstanding {fmtMoney(payroll.outstandingCents)}
+                      </button>
+                    )}
+                  </div>
+                </form>
+              )}
+              <form onSubmit={payCustom} className="space-y-2 border-t border-violet-100 pt-3">
+                <p className="text-xs font-semibold text-slate-800">Other work — any amount, anytime</p>
+                <div className="flex flex-wrap items-end gap-2">
+                  <label className="text-xs font-medium text-slate-700">
+                    Amount
+                    <input
+                      type="number"
+                      min="0.50"
+                      step="0.01"
+                      value={customAmount}
+                      onChange={(e) => setCustomAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="mt-1 block w-32 rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={
+                      paying
+                      || !(Number(customAmount) >= 0.5)
+                      || (paymentMethod === 'ach' && (
+                        !payroll.propertyBank?.linked
+                        || !payroll.payoutBank?.linked
+                        || payroll.connectPayoutReady === false
+                      ))
+                      || (paymentMethod === 'cash_app' && (
+                        !payroll.cashAppPayAvailable
+                        || !payroll.payoutBank?.linked
+                        || payroll.connectPayoutReady === false
+                      ))
+                    }
+                    className="rounded-lg border border-violet-300 bg-white px-4 py-2 text-xs font-semibold text-violet-800 hover:bg-violet-50 disabled:opacity-50"
+                  >
+                    {paying ? 'Processing…' : `Pay $${Number(customAmount || 0).toFixed(2)} for other work`}
+                  </button>
+                </div>
+              </form>
             </div>
           )}
 
           {history.length > 0 && (
-            <div>
-              <p className="text-xs font-bold uppercase text-slate-500 mb-2">Payout history</p>
-              <ul className="rounded-lg border border-slate-200 divide-y divide-slate-100 text-xs">
+            <details className="text-xs text-slate-600">
+              <summary className="cursor-pointer font-semibold text-slate-700">
+                Payout history ({history.length})
+              </summary>
+              <ul className="mt-2 rounded-lg border border-slate-200 divide-y divide-slate-100">
                 {history.map((p) => (
                   <li key={p.id} className="flex flex-wrap justify-between gap-2 px-3 py-2">
                     <span>
                       {p.periodLabel}
                       {' · '}
-                      {p.visitCount} visit{p.visitCount === 1 ? '' : 's'}
+                      {p.payoutKind === 'custom'
+                        ? 'other work'
+                        : `${p.visitCount} visit${p.visitCount === 1 ? '' : 's'}`}
                       {' · '}
                       {PAYMENT_METHOD_LABELS[p.paymentMethod] || p.paymentMethod}
                     </span>
@@ -1132,7 +1318,7 @@ function OwnerPayrollPanel() {
                   </li>
                 ))}
               </ul>
-            </div>
+            </details>
           )}
         </div>
       )}
@@ -1271,11 +1457,13 @@ function OwnerLeaseSigningPanel() {
 
   return (
     <Panel title="Lease signing pay">
-      <p className="text-xs text-slate-600 mb-3">
-        Konstantin earns ${amount} per signed lease, but you only pay after the tenant has paid{' '}
-        <strong>{rentMonths} months of rent</strong> — so you are not out $350 if they bail early.
-        Use <strong>Sync signed leases</strong> to add records for active leases (and former tenants who paid 3+ rent months).
-      </p>
+      <details className="mb-3 text-xs text-slate-600">
+        <summary className="cursor-pointer font-semibold text-slate-700">When the $350 is due</summary>
+        <p className="mt-2">
+          Konstantin earns ${amount} per signed lease after the tenant has paid{' '}
+          <strong>{rentMonths} months of rent</strong>. Sync signed leases to add records.
+        </p>
+      </details>
       <div className="flex flex-wrap gap-2 mb-4">
         <button
           type="button"
@@ -1317,36 +1505,12 @@ function OwnerLeaseSigningPanel() {
         <p className="text-xs text-slate-500">Loading…</p>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 mb-4 lg:grid-cols-4">
-            <StatCard
-              label="Ready to pay"
-              value={data?.summary?.owedCount ?? 0}
-              sub={fmtMoney(data?.summary?.owedCents ?? 0)}
-              icon={<FileText size={20} strokeWidth={2} />}
-              tone="warning"
-            />
-            <StatCard
-              label="Waiting on rent"
-              value={data?.summary?.pendingCount ?? 0}
-              sub={`${rentMonths} months required`}
-              icon={<Clock size={20} strokeWidth={2} />}
-              tone="default"
-            />
-            <StatCard
-              label="Paid"
-              value={data?.summary?.paidCount ?? 0}
-              sub={fmtMoney(data?.summary?.paidCents ?? 0)}
-              icon={<CheckCircle2 size={20} strokeWidth={2} />}
-              tone="success"
-            />
-            <StatCard
-              label="Per lease"
-              value={`$${amount}`}
-              sub="After 3 rent mos"
-              icon={<PenLine size={20} strokeWidth={2} />}
-              tone="admin"
-            />
-          </div>
+          <p className="mb-4 text-sm text-slate-700">
+            <strong>{owed.length} ready</strong>
+            {owed.length > 0 ? ` · ${fmtMoney(data?.summary?.owedCents ?? 0)}` : ''}
+            {' · '}{pending.length} waiting on rent
+            {' · '}{paid.length} paid
+          </p>
 
           {pending.length > 0 && (
             <div className="mb-4">
@@ -1368,8 +1532,10 @@ function OwnerLeaseSigningPanel() {
           )}
 
           {cancelled.length > 0 && (
-            <div className="mb-4">
-              <p className="text-xs font-bold uppercase text-slate-500 mb-2">Not payable (left early)</p>
+            <details className="mb-4">
+              <summary className="cursor-pointer text-xs font-semibold text-slate-600">
+                Not payable — left early ({cancelled.length})
+              </summary>
               <ul className="rounded-lg border border-slate-200 divide-y divide-slate-100 text-xs text-slate-500">
                 {cancelled.map((f) => (
                   <li key={f.id} className="px-3 py-2">
@@ -1384,7 +1550,7 @@ function OwnerLeaseSigningPanel() {
                   </li>
                 ))}
               </ul>
-            </div>
+            </details>
           )}
 
           {owed.length > 0 && (
@@ -1421,9 +1587,11 @@ function OwnerLeaseSigningPanel() {
           )}
 
           {paid.length > 0 && (
-            <div>
-              <p className="text-xs font-bold uppercase text-slate-500 mb-2">Paid</p>
-              <ul className="rounded-lg border border-slate-200 divide-y divide-slate-100 text-xs">
+            <details>
+              <summary className="cursor-pointer text-xs font-semibold text-slate-600">
+                Paid lease fees ({paid.length})
+              </summary>
+              <ul className="mt-2 rounded-lg border border-slate-200 divide-y divide-slate-100 text-xs">
                 {paid.slice(0, 8).map((f) => (
                   <li key={f.id} className="flex flex-wrap justify-between gap-2 px-3 py-2">
                     <span>
@@ -1434,7 +1602,7 @@ function OwnerLeaseSigningPanel() {
                   </li>
                 ))}
               </ul>
-            </div>
+            </details>
           )}
         </>
       )}
@@ -1455,34 +1623,14 @@ function ManagerLeaseSigningPanel() {
   if (!data) return null;
 
   return (
-    <Panel title="Lease signing earnings">
-      <p className="text-xs text-slate-600 mb-3">
-        ${data.policy?.amountPerLease ?? 350} per signed lease — owner pays after{' '}
-        {data.policy?.rentMonthsRequired ?? 3} months of tenant rent.
+    <Panel title="Lease signing">
+      <p className="text-sm text-slate-700">
+        ${data.policy?.amountPerLease ?? 350} after {data.policy?.rentMonthsRequired ?? 3} rent months
+        {' · '}
+        <strong>{data.summary?.owedCount ?? 0} ready</strong>
+        {' · '}{data.summary?.pendingCount ?? 0} waiting
+        {' · '}{data.summary?.paidCount ?? 0} paid
       </p>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-        <StatCard
-          label="Ready to pay"
-          value={data.summary?.owedCount ?? 0}
-          sub={fmtMoney(data.summary?.owedCents ?? 0)}
-          icon={<FileText size={20} strokeWidth={2} />}
-          tone="warning"
-        />
-        <StatCard
-          label="Waiting on rent"
-          value={data.summary?.pendingCount ?? 0}
-          sub={`${data.policy?.rentMonthsRequired ?? 3} months`}
-          icon={<Clock size={20} strokeWidth={2} />}
-          tone="default"
-        />
-        <StatCard
-          label="Paid"
-          value={data.summary?.paidCount ?? 0}
-          sub={`$${data.policy?.amountPerLease ?? 350} each`}
-          icon={<CheckCircle2 size={20} strokeWidth={2} />}
-          tone="success"
-        />
-      </div>
     </Panel>
   );
 }
@@ -1512,31 +1660,27 @@ function ManagerEarningsPanel() {
 
   return (
     <Panel title="Your earnings">
-      <label className="text-xs font-medium text-slate-700 block mb-3">
-        Month
-        <input
-          type="month"
-          value={monthValue}
-          onChange={(e) => setMonthValue(e.target.value)}
-          className="mt-1 block rounded-lg border border-slate-200 px-3 py-2 text-sm"
-        />
-      </label>
-      <div className="grid grid-cols-2 gap-3">
-        <StatCard
-          label="Completed"
-          value={payroll?.visitCount ?? 0}
-          sub={payroll?.monthLabel}
-          icon={<CheckCircle2 size={20} strokeWidth={2} />}
-          tone="success"
-        />
-        <StatCard
-          label="Earned"
-          value={fmtMoney(payroll?.totalCents ?? 0)}
-          sub={payroll?.alreadyPaid ? 'Paid' : 'Awaiting payout'}
-          icon={<Banknote size={20} strokeWidth={2} />}
-          tone={payroll?.alreadyPaid ? 'success' : 'warning'}
-        />
+      <div className="flex flex-wrap items-end gap-3 mb-3">
+        <label className="text-xs font-medium text-slate-700">
+          Month
+          <input
+            type="month"
+            value={monthValue}
+            onChange={(e) => setMonthValue(e.target.value)}
+            className="mt-1 block rounded-lg border border-slate-200 px-3 py-2 text-sm"
+          />
+        </label>
       </div>
+      <p className="text-2xl font-bold tabular-nums text-slate-900">
+        {fmtMoney((payroll?.outstandingCents ?? payroll?.totalCents) || 0)}
+      </p>
+      <p className="mt-0.5 text-xs text-slate-500">
+        {payroll?.visitCount ?? 0} completed
+        {payroll?.outstandingCount > 0
+          ? ` · ${payroll.outstandingCount} unpaid`
+          : payroll?.alreadyPaid ? ' · paid' : ' · awaiting payout'}
+        {payroll?.monthLabel ? ` · ${payroll.monthLabel}` : ''}
+      </p>
       {payroll?.alreadyPaid && payroll.payout && (
         <p className="mt-3 text-xs text-emerald-800 bg-emerald-50 rounded-lg px-3 py-2">
           {payroll.monthLabel} marked paid via {PAYMENT_METHOD_LABELS[payroll.payout.paymentMethod] || payroll.payout.paymentMethod}
@@ -1547,8 +1691,130 @@ function ManagerEarningsPanel() {
   );
 }
 
+function sectionFromHash(hash) {
+  if (hash === '#pay-konstantin') return 'pay';
+  if (hash === '#lease-signing') return 'lease';
+  return 'visits';
+}
+
+function hashForSection(section) {
+  if (section === 'pay') return '#pay-konstantin';
+  if (section === 'lease') return '#lease-signing';
+  return '';
+}
+
+function VisitRow({
+  visit,
+  isOwner,
+  isManager,
+  completingId,
+  setCompletingId,
+  onCompleteDone,
+  busy,
+  minPlanned,
+  minNow,
+  onReschedule,
+  onCancel,
+}) {
+  const [showProof, setShowProof] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const meta = STATUS_META[visit.status] || STATUS_META.cancelled;
+  const rooms = extraRooms(visit);
+  const photos = visit.photos || [];
+  const hasProof = photos.length > 0 || visit.photoUrl;
+  const shortNotice = visitNeedsShortNoticeWarning(visit);
+
+  return (
+    <li className="px-4 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${meta.color}`}>
+              {meta.label}
+            </span>
+            <span className="text-sm font-medium text-slate-900">
+              {visit.visitWhen?.at || visit.plannedVisitAtFormatted || '—'}
+            </span>
+            <span className="text-sm font-semibold text-emerald-700">${visit.amountDollars}</span>
+          </div>
+          <p className="mt-0.5 text-xs text-slate-500">
+            {rooms.length ? `Rooms: ${rooms.join(', ')}` : 'Common areas'}
+          </p>
+          {shortNotice && (
+            <p className="mt-0.5 text-xs text-amber-700">Under 24-hour notice</p>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {isManager && visit.status === 'approved' && completingId !== visit.id && (
+            <button
+              type="button"
+              onClick={() => setCompletingId(visit.id)}
+              className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white"
+            >
+              Check in
+            </button>
+          )}
+          {hasProof && (
+            <button
+              type="button"
+              onClick={() => setShowProof((v) => !v)}
+              className="text-xs font-semibold text-slate-600 hover:text-slate-900"
+            >
+              {showProof ? 'Hide proof' : 'Proof'}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowDetails((v) => !v)}
+            className="text-xs text-slate-500 hover:text-slate-800"
+          >
+            {showDetails ? 'Less' : 'Details'}
+          </button>
+        </div>
+      </div>
+      {showDetails && (
+        <div className="mt-2 text-xs text-slate-500 space-y-1">
+          <p>{scopeSummary(visit)}</p>
+          {visit.notices?.length > 0 && (
+            <p className="text-violet-700">Tenants notified {fmtWhen(visit.notices[0]?.sent_at)}</p>
+          )}
+          {isOwner && visit.managerName && <p>{visit.managerName}</p>}
+          {visit.requestedNote && <p>Note: {visit.requestedNote}</p>}
+        </div>
+      )}
+      {showProof && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {photos.map((p) => (
+            <MediaProof key={p.id} item={p} />
+          ))}
+          {visit.photoUrl && !photos.length && (
+            <MediaProof item={{ photoUrl: visit.photoUrl, mediaType: 'photo' }} />
+          )}
+        </div>
+      )}
+      {isManager && visit.status === 'approved' && completingId === visit.id && (
+        <CompleteVisitForm
+          visit={visit}
+          onDone={() => { setCompletingId(null); onCompleteDone(); }}
+          onCancel={() => setCompletingId(null)}
+        />
+      )}
+      <VisitScheduleEditor
+        visit={visit}
+        minPlanned={minPlanned}
+        minNow={minNow}
+        busy={busy}
+        onReschedule={onReschedule}
+        onCancel={onCancel}
+        showApprove={false}
+      />
+    </li>
+  );
+}
+
 export default function SiteVisitsPage({ portal = 'manager' }) {
   const { user } = useAuth();
+  const location = useLocation();
   const isOwner = portal === 'admin' || user?.role === 'owner' || user?.role === 'super_admin';
   const isManager = user?.role === 'property_manager';
 
@@ -1558,11 +1824,11 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
   const [minNow, setMinNow] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [rejectNote, setRejectNote] = useState('');
-  const [rejectId, setRejectId] = useState(null);
   const [completingId, setCompletingId] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const [showRequest, setShowRequest] = useState(false);
+  const [section, setSection] = useState(() => sectionFromHash(location.hash));
+  const [visitFilter, setVisitFilter] = useState('upcoming');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1585,38 +1851,22 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    setSection(sectionFromHash(location.hash));
+  }, [location.hash]);
+
   const usage = data.usage;
   const visits = data.visits || [];
-  const pending = visits.filter((v) => v.status === 'pending_approval');
+  const upcoming = visits.filter((v) => ['approved', 'pending_approval'].includes(v.status));
+  const done = visits.filter((v) => v.status === 'completed');
+  const other = visits.filter((v) => ['cancelled', 'rejected'].includes(v.status));
+  const filteredVisits = visitFilter === 'done' ? done : visitFilter === 'more' ? other : upcoming;
+  const atCap = (usage?.visits_remaining ?? 0) < 1;
 
-  async function approve(id) {
-    setBusyId(id);
-    try {
-      await api.post(`/api/site-visits/${id}/approve`);
-      await load();
-    } catch (e) {
-      window.dispatchEvent(new CustomEvent('api:toast', {
-        detail: { message: apiErrorMessage(e, 'Approve failed.'), variant: 'error' },
-      }));
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function reject(id) {
-    setBusyId(id);
-    try {
-      await api.post(`/api/site-visits/${id}/reject`, { note: rejectNote.trim() || undefined });
-      setRejectId(null);
-      setRejectNote('');
-      await load();
-    } catch (e) {
-      window.dispatchEvent(new CustomEvent('api:toast', {
-        detail: { message: apiErrorMessage(e, 'Reject failed.'), variant: 'error' },
-      }));
-    } finally {
-      setBusyId(null);
-    }
+  function goSection(next) {
+    setSection(next);
+    const nextHash = hashForSection(next);
+    window.history.replaceState({}, '', `${location.pathname}${location.search}${nextHash}`);
   }
 
   async function cancel(id) {
@@ -1633,15 +1883,32 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
     }
   }
 
+  async function reschedule(id, plannedVisitAt) {
+    setBusyId(id);
+    try {
+      await api.post(`/api/site-visits/${id}/reschedule`, { plannedVisitAt });
+      await load();
+      window.dispatchEvent(new CustomEvent('api:toast', {
+        detail: { message: 'Visit date updated.', variant: 'success' },
+      }));
+    } catch (e) {
+      window.dispatchEvent(new CustomEvent('api:toast', {
+        detail: { message: apiErrorMessage(e, 'Could not change the visit date.'), variant: 'error' },
+      }));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <PageHeader
         portal={portal}
         title="Boots on site"
         subtitle={
           isOwner
-            ? 'Approve inspection scope before Konstantin goes. Tenant rooms get 24h notice (Norfolk time).'
-            : 'Select areas, get owner approval, then check in with photos from the property.'
+            ? 'Konstantin schedules on his own. Pay anytime.'
+            : 'Schedule and check in — no owner approval.'
         }
         actions={(
           <button
@@ -1654,11 +1921,6 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
         )}
       />
 
-      <div className="rounded-2xl border-2 border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-slate-700">
-        <p className="font-bold text-slate-900">Inspection checklist</p>
-        <p className="text-xs mt-1">Every visit: kitchen/living + parking + lawn/porch (video proof each) · optional tenant rooms · $20/visit · $100/mo cap · $350/lease signed after 3 rent months</p>
-      </div>
-
       {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
 
       {loading ? (
@@ -1667,169 +1929,118 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <StatCard label="This month" value={fmtMoney(usage?.reserved_cents ?? 0)} sub={`of ${fmtMoney(usage?.cap_cents ?? 10000)}`} icon={<Banknote size={20} strokeWidth={2} />} tone="success" />
-            <StatCard label="Visits left" value={usage?.visits_remaining ?? 0} sub={`$${(usage?.visit_amount_cents ?? 2000) / 100} each`} icon={<Footprints size={20} strokeWidth={2} />} tone="default" />
-            <StatCard label="Pending" value={pending.length} sub={isOwner ? 'Your approval' : 'Owner'} icon={<Clock size={20} strokeWidth={2} />} tone="warning" />
-            <StatCard label="Timezone" value="Norfolk" sub="24h room notice" icon={<Clock size={20} strokeWidth={2} />} tone="admin" />
-          </div>
+          <p className="text-sm text-slate-600">
+            <strong className="text-slate-900">{upcoming.length} scheduled</strong>
+            {' · '}{usage?.visits_remaining ?? 0} left this month
+            {' · '}{fmtMoney(usage?.reserved_cents ?? 0)} of $100
+            {done.length > 0 ? ` · ${done.length} done` : ''}
+          </p>
 
-          {isOwner && (
-            <>
-              <OwnerPayrollPanel />
-              <OwnerLeaseSigningPanel />
-            </>
-          )}
+          <Segmented
+            value={section}
+            onChange={goSection}
+            options={
+              isOwner
+                ? [
+                    { id: 'visits', label: 'Visits', count: upcoming.length },
+                    { id: 'pay', label: 'Pay' },
+                    { id: 'lease', label: 'Leases' },
+                  ]
+                : [
+                    { id: 'visits', label: 'Visits', count: upcoming.length },
+                    { id: 'pay', label: 'Pay' },
+                  ]
+            }
+          />
 
-          {isManager && (
-            <>
-              <ManagerPayoutBankSection />
-              <ManagerEarningsPanel />
-              <ManagerLeaseSigningPanel />
-            </>
-          )}
-
-          {isManager && (
-            <Panel title="Request inspection visit">
-              {showRequest ? (
-                <RequestVisitForm
-                  areas={areas}
-                  minPlanned={minPlanned}
-                  minNow={minNow}
-                  onDone={() => { setShowRequest(false); load(); }}
-                />
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setShowRequest(true)}
-                  className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700"
-                >
-                  New visit request
-                </button>
+          {section === 'visits' && (
+            <div className="space-y-4">
+              {isManager && (
+                <Panel title="Schedule">
+                  {atCap ? (
+                    <p className="text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2">
+                      Monthly cap reached (5 / $100). You can still change or cancel a scheduled visit.
+                    </p>
+                  ) : showRequest ? (
+                    <RequestVisitForm
+                      areas={areas}
+                      minPlanned={minPlanned}
+                      minNow={minNow}
+                      onDone={() => { setShowRequest(false); load(); }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setShowRequest(true)}
+                      className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700"
+                    >
+                      Schedule a visit
+                    </button>
+                  )}
+                </Panel>
               )}
-            </Panel>
+
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <Segmented
+                  value={visitFilter}
+                  onChange={setVisitFilter}
+                  options={[
+                    { id: 'upcoming', label: 'Upcoming', count: upcoming.length },
+                    { id: 'done', label: 'Done', count: done.length },
+                    { id: 'more', label: 'More', count: other.length },
+                  ]}
+                />
+              </div>
+
+              <Panel title={visitFilter === 'done' ? 'Completed' : visitFilter === 'more' ? 'Cancelled & rejected' : 'Upcoming'} className="!p-0">
+                {filteredVisits.length === 0 ? (
+                  <p className="px-4 py-8 text-center text-sm text-slate-500">
+                    {visitFilter === 'upcoming'
+                      ? (isManager ? 'Nothing scheduled. Add a visit above.' : 'Nothing scheduled.')
+                      : visitFilter === 'done'
+                        ? 'No completed visits in this list.'
+                        : 'No cancelled or rejected visits.'}
+                  </p>
+                ) : (
+                  <ul className="divide-y divide-slate-100">
+                    {filteredVisits.map((v) => (
+                      <VisitRow
+                        key={v.id}
+                        visit={v}
+                        isOwner={isOwner}
+                        isManager={isManager}
+                        completingId={completingId}
+                        setCompletingId={setCompletingId}
+                        onCompleteDone={load}
+                        busy={busyId === v.id}
+                        minPlanned={minPlanned}
+                        minNow={minNow}
+                        onReschedule={reschedule}
+                        onCancel={cancel}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </Panel>
+
+              <HowVisitsWork isOwner={isOwner} />
+            </div>
           )}
 
-          {isOwner && pending.length > 0 && (
-            <Panel title="Needs your approval" className="!p-0">
-              <ul className="divide-y divide-slate-100">
-                {pending.map((v) => (
-                  <li key={v.id} className="px-4 py-4">
-                    <div className="flex flex-wrap justify-between gap-2">
-                      <div>
-                        <p className="font-medium text-slate-900">{v.managerName}</p>
-                        <p className="text-xs text-slate-500 mt-0.5">{scopeSummary(v)}</p>
-                        <VisitWhen visit={v} />
-                        {v.requestedNote && <p className="text-sm text-slate-700 mt-1">{v.requestedNote}</p>}
-                      </div>
-                      <span className="text-sm font-semibold text-emerald-700">$20</span>
-                    </div>
-                    {v.commonAreaAnnouncement && (
-                      <p className="mt-2 text-xs text-sky-800 bg-sky-50 rounded-lg px-3 py-2">
-                        <strong>Announcement (all tenants):</strong>{' '}
-                        {v.commonAreaAnnouncement.title}
-                        {' — '}
-                        {v.commonAreaAnnouncement.areas}
-                      </p>
-                    )}
-                    {v.tenantsToNotify?.length > 0 && (
-                      <p className="mt-2 text-xs text-violet-800 bg-violet-50 rounded-lg px-3 py-2">
-                        <strong>Inbox (specific tenants):</strong>{' '}
-                        {v.tenantsToNotify.map((t) => {
-                          const kind = PURPOSE_LABELS[t.scenario] || t.scenario;
-                          return `${t.tenantName} — ${kind} (${t.roomLabels.join(', ')})`;
-                        }).join('; ')}
-                      </p>
-                    )}
-                    {visitNeedsShortNoticeWarning(v) && (
-                      <p className="mt-2 text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2">
-                        Scheduled time is under 24 hours away. You can still approve — tenants get notice now.
-                        Konstantin had to request at least 24h out; approval is not blocked by that rule.
-                      </p>
-                    )}
-                    {rejectId === v.id ? (
-                      <div className="mt-3 space-y-2">
-                        <input
-                          value={rejectNote}
-                          onChange={(e) => setRejectNote(e.target.value)}
-                          placeholder="Optional reason"
-                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                        />
-                        <div className="flex gap-2">
-                          <button type="button" onClick={() => reject(v.id)} disabled={busyId === v.id} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white">Confirm reject</button>
-                          <button type="button" onClick={() => setRejectId(null)} className="text-xs text-slate-500">Cancel</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => approve(v.id)}
-                          disabled={busyId === v.id || usage?.visits_remaining === 0}
-                          className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
-                        >
-                          Approve &amp; send notices
-                        </button>
-                        <button type="button" onClick={() => { setRejectId(v.id); setRejectNote(''); }} className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600">Reject</button>
-                        <button type="button" onClick={() => cancel(v.id)} className="text-xs text-slate-500 hover:text-slate-800">Cancel</button>
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </Panel>
+          {section === 'pay' && (
+            <div className="space-y-4">
+              {isOwner && <OwnerPayrollPanel />}
+              {isManager && (
+                <>
+                  <ManagerEarningsPanel />
+                  <ManagerPayoutBankSection />
+                  <ManagerLeaseSigningPanel />
+                </>
+              )}
+            </div>
           )}
 
-          <Panel title="All visits" className="!p-0">
-            {visits.length === 0 ? (
-              <p className="px-4 py-10 text-center text-sm text-slate-500">No visits yet.</p>
-            ) : (
-              <ul className="divide-y divide-slate-100">
-                {visits.map((v) => {
-                  const meta = STATUS_META[v.status] || STATUS_META.cancelled;
-                  return (
-                    <li key={v.id} className="px-4 py-4">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${meta.color}`}>{meta.label}</span>
-                            {isOwner && <span className="text-sm font-medium">{v.managerName}</span>}
-                            <span className="text-sm font-semibold text-emerald-700">${v.amountDollars}</span>
-                          </div>
-                          <p className="text-xs text-slate-500 mt-1">{scopeSummary(v)}</p>
-                          <VisitWhen visit={v} />
-                          {v.notices?.length > 0 && (
-                            <p className="text-xs text-violet-700 mt-1">Tenants notified {fmtWhen(v.notices[0]?.sent_at)}</p>
-                          )}
-                        </div>
-                        <div className="flex flex-wrap gap-1">
-                          {(v.photos || []).map((p) => (
-                            <MediaProof key={p.id} item={p} />
-                          ))}
-                          {v.photoUrl && !v.photos?.length && (
-                            <MediaProof item={{ photoUrl: v.photoUrl, mediaType: 'photo' }} />
-                          )}
-                        </div>
-                      </div>
-                      {isManager && v.status === 'approved' && completingId === v.id && (
-                        <CompleteVisitForm visit={v} onDone={() => { setCompletingId(null); load(); }} onCancel={() => setCompletingId(null)} />
-                      )}
-                      {isManager && v.status === 'approved' && completingId !== v.id && (
-                        <button type="button" onClick={() => setCompletingId(v.id)} className="mt-2 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white">
-                          Check in with videos
-                        </button>
-                      )}
-                      {['pending_approval', 'approved'].includes(v.status) && (
-                        <button type="button" onClick={() => cancel(v.id)} disabled={busyId === v.id} className="mt-2 ml-2 text-xs text-slate-500 hover:text-slate-800">
-                          Cancel
-                        </button>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </Panel>
+          {section === 'lease' && isOwner && <OwnerLeaseSigningPanel />}
         </>
       )}
     </div>

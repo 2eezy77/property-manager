@@ -10,6 +10,8 @@ const {
   listVisits,
   requestVisit,
   approveVisit,
+  activatePendingVisits,
+  rescheduleVisit,
   rejectVisit,
   cancelVisit,
   completeVisit,
@@ -78,6 +80,11 @@ router.get('/', Guards.staffOnly, async (req, res) => {
     if (!orgId) return res.status(400).json({ error: 'NO_ORG', message: 'No organization found.' });
 
     const isManager = req.user.role === 'property_manager';
+    await activatePendingVisits({
+      orgId,
+      actorId: req.user.id,
+      actorRole: req.user.role,
+    });
     const usage = await getMonthlyUsage(orgId);
     const visits = await listVisits({
       orgId,
@@ -90,9 +97,10 @@ router.get('/', Guards.staffOnly, async (req, res) => {
       policy: {
         perVisit: usage.visit_amount_cents / 100,
         monthlyCap: usage.cap_cents / 100,
+        monthlyVisitCap: 5,
         noticeHours: 24,
         timezone: 'America/New_York',
-        flow: 'All 3 common areas every visit → owner approves (24h tenant notice when applicable) → video per area at check-in.',
+        flow: 'Manager schedules (5 visits/month) → 24h tenant notice when applicable → video per area at check-in. No owner approval. Pay visits or any other amount anytime; Instant Payout to manager bank.',
         roomPurposes: ['routine_inspection', 'maintenance_followup', 'vacant_showing'],
       },
     });
@@ -295,6 +303,9 @@ router.post('/payroll/pay', Guards.ownerAndAbove, async (req, res) => {
       ownerId: req.user.id,
       year,
       month,
+      outstanding: req.body?.outstanding === true,
+      payVisits: req.body?.payVisits,
+      customAmount: req.body?.customAmount,
       paymentMethod: req.body?.paymentMethod ?? 'manual',
       note: req.body?.note,
       ipAddress: req.ip,
@@ -332,6 +343,9 @@ router.post('/payroll/cashapp/create-intent', Guards.ownerAndAbove, async (req, 
       ownerId: req.user.id,
       year,
       month,
+      outstanding: req.body?.outstanding === true,
+      payVisits: req.body?.payVisits,
+      customAmount: req.body?.customAmount,
       note: req.body?.note,
     });
 
@@ -393,7 +407,7 @@ router.post('/request', Guards.staffOnly, async (req, res) => {
     if (req.user.role !== 'property_manager') {
       return res.status(403).json({
         error: 'MANAGER_ONLY',
-        message: 'Only the property manager can request on-site visits.',
+        message: 'Only the property manager can schedule on-site visits.',
       });
     }
     const visit = await requestVisit({
@@ -411,12 +425,32 @@ router.post('/request', Guards.staffOnly, async (req, res) => {
   }
 });
 
-router.post('/:id/approve', Guards.ownerAndAbove, async (req, res) => {
+router.post('/:id/approve', Guards.staffOnly, async (req, res) => {
   try {
-    const visit = await approveVisit({ visitId: req.params.id, ownerId: req.user.id });
+    const visit = await approveVisit({
+      visitId: req.params.id,
+      ownerId: req.user.id,
+      actorId: req.user.id,
+      actorRole: req.user.role,
+    });
     res.json({ visit, usage: await getMonthlyUsage(visit.orgId) });
   } catch (err) {
     console.error('[POST /site-visits/:id/approve]', err);
+    sendErr(res, err);
+  }
+});
+
+router.post('/:id/reschedule', Guards.staffOnly, async (req, res) => {
+  try {
+    const visit = await rescheduleVisit({
+      visitId: req.params.id,
+      actorId: req.user.id,
+      actorRole: req.user.role,
+      plannedVisitAt: req.body?.plannedVisitAt,
+    });
+    res.json({ visit });
+  } catch (err) {
+    console.error('[POST /site-visits/:id/reschedule]', err);
     sendErr(res, err);
   }
 });
