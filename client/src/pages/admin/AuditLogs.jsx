@@ -139,11 +139,6 @@ export default function ActivityLogPage() {
         )}
       />
 
-      <p className="text-sm text-slate-600">
-        {policy?.recommendation
-          || 'Paid charges and real portal changes only. Sign-ins and payment starts stay hidden.'}
-      </p>
-
       <Panel className="!p-3">
         <div className="flex flex-wrap items-center gap-2">
           {WHEN_OPTIONS.map(([v, l]) => (
