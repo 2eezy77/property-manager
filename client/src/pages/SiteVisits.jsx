@@ -1768,7 +1768,7 @@ export default function SiteVisitsPage({ portal = 'manager' }) {
       await api.post(`/api/site-visits/${id}/reschedule`, { plannedVisitAt });
       await load();
       window.dispatchEvent(new CustomEvent('api:toast', {
-        detail: { message: 'Visit date updated. Tenants were notified when the visit was already approved.', variant: 'success' },
+        detail: { message: 'Visit date updated.', variant: 'success' },
       }));
     } catch (e) {
       window.dispatchEvent(new CustomEvent('api:toast', {
