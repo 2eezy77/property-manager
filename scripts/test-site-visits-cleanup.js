@@ -131,8 +131,8 @@ assert(
     connectPayoutReady: true,
     cashAppPayAvailable: true,
     propertyBankLinked: true,
-  })) === JSON.stringify(['cash_app']),
-  'associate pay offers Cash App only when it is available'
+  })) === JSON.stringify(['cash_app', 'ach']),
+  'associate pay prefers Cash App and still offers ACH'
 );
 assert(
   JSON.stringify(buildAvailableOwnerPayMethods({
@@ -140,7 +140,15 @@ assert(
     cashAppPayAvailable: false,
     propertyBankLinked: true,
   })) === JSON.stringify(['ach']),
-  'ACH is only a fallback when Cash App is unavailable'
+  'ACH remains available when Cash App is down'
+);
+assert(
+  JSON.stringify(buildAvailableOwnerPayMethods({
+    connectPayoutReady: true,
+    cashAppPayAvailable: true,
+    propertyBankLinked: false,
+  })) === JSON.stringify(['cash_app']),
+  'Cash App still works without a property bank'
 );
 assert(
   JSON.stringify(buildAvailableOwnerPayMethods({

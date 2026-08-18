@@ -23,12 +23,8 @@ function buildAvailableOwnerPayMethods({
 }) {
   const methods = [];
   if (!connectPayoutReady) return methods;
-  // Associate / property-manager pay uses the fast rail. ACH is vendor-slow
-  // (3–5 days) and only offered when Cash App Pay is not available.
-  if (cashAppPayAvailable) {
-    methods.push('cash_app');
-    return methods;
-  }
+  // Associate pay prefers Cash App (~30 min). Keep ACH as a fallback.
+  if (cashAppPayAvailable) methods.push('cash_app');
   if (propertyBankLinked) methods.push('ach');
   return methods;
 }

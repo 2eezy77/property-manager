@@ -25,7 +25,7 @@ export const OWNER_PAY_METHOD_COPY = {
   ach: {
     label: 'Bank transfer',
     speed: '3–5 days',
-    detail: 'Fallback only when Cash App is unavailable. Instant Payout waits until ACH settles (3–5 business days).',
+    detail: 'Just in case — debit the property account if Cash App is down. Instant Payout waits until ACH settles (3–5 business days).',
   },
 };
 
