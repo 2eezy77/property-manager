@@ -708,7 +708,7 @@ function ManagerPayoutBankSection({ onChanged }) {
     linkTokenPath: '/api/site-visits/payout-bank/plaid/link-token',
     exchangePath: '/api/site-visits/payout-bank/plaid/exchange',
     returnTo: location.pathname,
-    enabled: !updateLinkToken,
+    enabled: !loading && accounts.length === 0 && !updateLinkToken,
   });
 
   const {

@@ -19,6 +19,7 @@ const oversight = require('../services/owner-oversight.service');
 const playbook = require('../services/manager-playbook.service');
 const { listActivityLog, getActivityPolicy } = require('../services/activity-audit.service');
 const plaid = require('../services/plaid.service');
+const { linkTokenCreateErrorMessage } = require('../utils/plaid-errors');
 const {
   getPropertyBankForOwner,
   linkPropertyBank,
@@ -167,8 +168,11 @@ router.post('/property-bank/plaid/link-token', async (req, res) => {
     const linkToken = await plaid.createLinkToken(req.user.id);
     res.json({ linkToken });
   } catch (err) {
-    console.error('[POST /owner/property-bank/plaid/link-token]', err.message);
-    res.status(500).json({ error: 'PLAID_ERROR', message: 'Could not create Plaid Link token.' });
+    console.error('[POST /owner/property-bank/plaid/link-token]', err.response?.data ?? err.message);
+    res.status(500).json({
+      error: 'PLAID_ERROR',
+      message: linkTokenCreateErrorMessage(err, 'Could not create Plaid Link token.'),
+    });
   }
 });
 
@@ -190,8 +194,11 @@ router.post('/property-bank/plaid/update-link-token', async (req, res) => {
     if (err.code === 'NOT_FOUND') {
       return res.status(404).json({ error: 'NOT_FOUND', message: err.message });
     }
-    console.error('[POST /owner/property-bank/plaid/update-link-token]', err.message);
-    res.status(500).json({ error: 'PLAID_ERROR', message: 'Could not create Plaid update token.' });
+    console.error('[POST /owner/property-bank/plaid/update-link-token]', err.response?.data ?? err.message);
+    res.status(500).json({
+      error: 'PLAID_ERROR',
+      message: linkTokenCreateErrorMessage(err, 'Could not create Plaid update token.'),
+    });
   }
 });
 

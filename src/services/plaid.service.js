@@ -18,14 +18,19 @@
  * Optional:
  *   PLAID_WEBHOOK_URL, PLAID_SIGNAL_ENABLED, PLAID_BALANCE_CHECK_ENABLED
  *   PLAID_SIGNAL_RULESET_KEY, PLAID_WEBHOOK_VERIFY_DISABLED (local dev only)
+ *   PLAID_LINK_CUSTOMIZATION_NAME — Dashboard Link customization (defaults to "default")
  */
 
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } = require('plaid');
 
+function getPlaidEnv() {
+  return String(process.env.PLAID_ENV || 'sandbox').trim().toLowerCase();
+}
+
 const config = new Configuration({
-  basePath: PlaidEnvironments[process.env.PLAID_ENV ?? 'sandbox'],
+  basePath: PlaidEnvironments[getPlaidEnv()] || PlaidEnvironments.sandbox,
   baseOptions: {
     headers: {
       'PLAID-CLIENT-ID': process.env.PLAID_CLIENT_ID,
@@ -59,18 +64,24 @@ function getPlaidWebhookUrl() {
   return process.env.PLAID_WEBHOOK_URL || null;
 }
 
+function getPlaidLinkCustomizationName() {
+  const name = process.env.PLAID_LINK_CUSTOMIZATION_NAME;
+  if (name == null) return null;
+  const trimmed = String(name).trim();
+  return trimmed || null;
+}
+
 /**
- * Create a Plaid Link token (new link or Update Mode).
+ * Build /link/token/create body (exported for unit tests).
  *
  * @param {string} userId
  * @param {{ updateMode?: boolean, accessToken?: string }} [options]
- * @returns {Promise<string>} link_token
  */
-async function createLinkToken(userId, options = {}) {
+function buildLinkTokenRequest(userId, options = {}) {
   const { updateMode = false, accessToken = null } = options;
 
   const request = {
-    user:          { client_user_id: userId },
+    user:          { client_user_id: String(userId) },
     client_name:   'Property Manager',
     country_codes: [CountryCode.Us],
     language:      'en',
@@ -101,7 +112,23 @@ async function createLinkToken(userId, options = {}) {
     request.webhook = webhook;
   }
 
-  const { data } = await client.linkTokenCreate(request);
+  const customization = getPlaidLinkCustomizationName();
+  if (customization) {
+    request.link_customization_name = customization;
+  }
+
+  return request;
+}
+
+/**
+ * Create a Plaid Link token (new link or Update Mode).
+ *
+ * @param {string} userId
+ * @param {{ updateMode?: boolean, accessToken?: string }} [options]
+ * @returns {Promise<string>} link_token
+ */
+async function createLinkToken(userId, options = {}) {
+  const { data } = await client.linkTokenCreate(buildLinkTokenRequest(userId, options));
   return data.link_token;
 }
 
@@ -311,9 +338,10 @@ async function probeLinkToken(userId = '00000000-0000-0000-0000-healthcheck01') 
   const linkToken = await createLinkToken(userId);
   return {
     ok: true,
-    env: process.env.PLAID_ENV ?? 'sandbox',
+    env: getPlaidEnv(),
     redirectUri: getPlaidRedirectUri(),
     webhookUrl: getPlaidWebhookUrl(),
+    linkCustomizationName: getPlaidLinkCustomizationName(),
     signalEnabled: envFlag('PLAID_SIGNAL_ENABLED'),
     balanceCheckEnabled: envFlag('PLAID_BALANCE_CHECK_ENABLED'),
     linkTokenLength: linkToken.length,
@@ -321,6 +349,7 @@ async function probeLinkToken(userId = '00000000-0000-0000-0000-healthcheck01') 
 }
 
 module.exports = {
+  buildLinkTokenRequest,
   createLinkToken,
   exchangePublicToken,
   createStripeBankAccountToken,

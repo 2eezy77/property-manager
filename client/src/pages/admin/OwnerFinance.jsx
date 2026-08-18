@@ -95,7 +95,7 @@ function PropertyOperatingBankPanel() {
     linkTokenPath: '/api/owner/property-bank/plaid/link-token',
     exchangePath: '/api/owner/property-bank/plaid/exchange',
     returnTo: '/admin/finance',
-    enabled: !account,
+    enabled: !loading && !account,
   });
 
   const {

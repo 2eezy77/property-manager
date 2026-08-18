@@ -22,6 +22,7 @@ const {
   norfolkNowLocalString,
 } = require('../services/site-visits.service');
 const plaid = require('../services/plaid.service');
+const { linkTokenCreateErrorMessage } = require('../utils/plaid-errors');
 const {
   getPayrollMonth,
   getManagerPayoutAccounts,
@@ -170,8 +171,11 @@ router.post('/payout-bank/plaid/link-token', Guards.staffOnly, async (req, res) 
     const linkToken = await plaid.createLinkToken(req.user.id);
     res.json({ linkToken });
   } catch (err) {
-    console.error('[POST /site-visits/payout-bank/plaid/link-token]', err);
-    res.status(500).json({ error: 'PLAID_ERROR', message: 'Could not create Plaid Link token.' });
+    console.error('[POST /site-visits/payout-bank/plaid/link-token]', err.response?.data ?? err);
+    res.status(500).json({
+      error: 'PLAID_ERROR',
+      message: linkTokenCreateErrorMessage(err, 'Could not create Plaid Link token.'),
+    });
   }
 });
 
@@ -199,8 +203,11 @@ router.post('/payout-bank/plaid/update-link-token', Guards.staffOnly, async (req
     if (err.code === 'NOT_FOUND') {
       return res.status(404).json({ error: 'NOT_FOUND', message: err.message });
     }
-    console.error('[POST /site-visits/payout-bank/plaid/update-link-token]', err);
-    res.status(500).json({ error: 'PLAID_ERROR', message: 'Could not create Plaid update token.' });
+    console.error('[POST /site-visits/payout-bank/plaid/update-link-token]', err.response?.data ?? err);
+    res.status(500).json({
+      error: 'PLAID_ERROR',
+      message: linkTokenCreateErrorMessage(err, 'Could not create Plaid update token.'),
+    });
   }
 });
 
