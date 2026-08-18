@@ -477,6 +477,7 @@ async function payLeaseSigningFee({
     paymentIntent = await stripe.chargeACH({
       amountCents: row.amount_cents,
       customerId: propertyBankRow.stripe_customer_id,
+      paymentMethodId: propertyBankRow.stripe_bank_account_id || undefined,
       routingNumber: routing,
       accountNumber: acctNum,
       accountHolderName: holderName,

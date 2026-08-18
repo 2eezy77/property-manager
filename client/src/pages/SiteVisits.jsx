@@ -1196,7 +1196,7 @@ function OwnerPayrollPanel() {
                 {payroll.payout.paymentMethod === 'ach'
                   ? payroll.processingDetails?.stripeStatus === 'requires_action'
                     ? ` — waiting on microdeposit verification for your property bank${payroll.propertyBank?.accountMask ? ` (····${payroll.propertyBank.accountMask})` : ''}. Cancel below to pay with Cash App Pay from your Cash App account instead.`
-                    : ' — debited from your property account, then Instant Payout to Konstantin\'s bank when funds are available.'
+                    : ' — ACH is already submitted from your property account. Nothing else to complete in Stripe. Instant Payout hits Konstantin\'s bank after the debit settles.'}
                   : payroll.payout.paymentMethod === 'cash_app'
                     ? ' — finish confirming in your Cash App app, then refresh.'
                     : '.'}

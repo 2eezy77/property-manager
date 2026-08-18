@@ -15,7 +15,7 @@ const {
   parseCustomAmountCents,
   resolvePayrollCharge,
 } = require('../src/services/site-visits-payout.service');
-const { resolveInstantPayoutAmount } = require('../src/services/stripe.service');
+const { resolveInstantPayoutAmount, buildAchIntentParams } = require('../src/services/stripe.service');
 const { toNorfolkDatetimeLocal, MS_24H } = require('../src/utils/norfolk-time');
 const { buildSummary } = require('../src/services/activity-audit.service');
 
@@ -141,6 +141,27 @@ assert(
   throwsCode(() => resolvePayrollCharge({ visits: [], customAmountCents: 0 }), 'NOTHING_TO_PAY') === 'NOTHING_TO_PAY',
   'rejects empty payroll under 50 cents'
 );
+
+const verifiedAch = buildAchIntentParams({
+  amountCents: 12000,
+  customerId: 'cus_test',
+  paymentMethodId: 'ba_verified',
+  description: 'payroll',
+  metadata: { payout_kind: 'mixed' },
+  transferDestination: 'acct_mgr',
+});
+assert(verifiedAch.payment_method === 'ba_verified' && verifiedAch.off_session === true, 'verified bank ACH reuses ba_/pm_');
+assert(!verifiedAch.payment_method_data, 'verified bank ACH does not send raw routing numbers');
+const freshAch = buildAchIntentParams({
+  amountCents: 2000,
+  customerId: 'cus_test',
+  routingNumber: '021000021',
+  accountNumber: '123456789',
+  accountHolderName: 'Jose',
+  description: 'payroll',
+  metadata: {},
+});
+assert(!!freshAch.payment_method_data && !freshAch.payment_method, 'new bank ACH still uses routing numbers');
 
 const tooSmall = resolveInstantPayoutAmount(20, 5000);
 assert(tooSmall.ok === false && tooSmall.code === 'INSTANT_AMOUNT', 'instant payout rejects < 50¢');
