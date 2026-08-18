@@ -31,6 +31,11 @@ const express = require('express');
 
 const { constructWebhookEvent } = require('../services/stripe.service');
 const { maybeSettleBill }       = require('../use-cases/utilities');
+const { attemptInstantPayoutForPayroll } = require('../services/site-visits-payout.service');
+const {
+  releaseUtilitySplitsForFailedPayment,
+  markUtilitySplitsPaidForPayment,
+} = require('../services/utility-portal-charge.service');
 const { logPaymentConfirmed }   = require('../services/activity-audit.service');
 const {
   notifyPaymentReceived,
@@ -222,6 +227,9 @@ async function updateManagerPayoutByPaymentIntent(pi, { status, eventId, chargeI
         rows[0].id,
       ]
     );
+    await attemptInstantPayoutForPayroll(rows[0].id).catch((err) => {
+      console.warn('[stripe-webhook] instant payroll payout:', err.message);
+    });
   }
 
   console.log(`[stripe-webhook] manager payroll ${status}: payout ${rows[0].id} PI ${pi.id}`);
@@ -255,6 +263,9 @@ async function updateManagerPayoutByCharge(charge, { status, eventId }) {
         rows[0].id,
       ]
     );
+    await attemptInstantPayoutForPayroll(rows[0].id).catch((err) => {
+      console.warn('[stripe-webhook] instant payroll payout:', err.message);
+    });
   }
 
   console.log(`[stripe-webhook] manager payroll ${status}: payout ${rows[0].id} charge ${charge.id}`);
@@ -554,15 +565,7 @@ async function onChargeSucceeded(charge, eventId) {
         ]
       );
     } else if (payment_type === 'utility') {
-      const { rows: splitRows } = await client.query(
-        `UPDATE utility_bill_splits
-            SET status     = 'paid',
-                updated_at = NOW()
-          WHERE payment_id = $1
-         RETURNING bill_id`,
-        [paymentId]
-      );
-      utilityBillIds = [...new Set(splitRows.map((r) => r.bill_id).filter(Boolean))];
+      utilityBillIds = await markUtilitySplitsPaidForPayment(client, paymentId);
       utilityBillId = utilityBillIds[0] ?? null;
 
       await client.query(
@@ -657,20 +660,8 @@ async function onChargeFailed(charge, eventId) {
 
   if (!rows[0]) return;
 
-  let utilityBillId = null;
-  let utilityBillIds = [];
   if (rows[0].payment_type === 'utility') {
-    const { rows: splitRows } = await pool.query(
-      `UPDATE utility_bill_splits
-          SET status = 'failed',
-              payment_id = NULL,
-              updated_at = NOW()
-        WHERE payment_id = $1
-       RETURNING bill_id`,
-      [rows[0].id]
-    );
-    utilityBillIds = [...new Set(splitRows.map((r) => r.bill_id).filter(Boolean))];
-    utilityBillId = utilityBillIds[0] ?? null;
+    await releaseUtilitySplitsForFailedPayment(pool, rows[0].id);
   }
 
   const label = rows[0].payment_type === 'utility' ? 'utility' : 'rent';
@@ -733,16 +724,22 @@ async function onCanceled(pi, eventId) {
   const payment = await findPaymentForIntent(pi.id);
   if (!payment || payment.status === 'succeeded') return;
 
-  await pool.query(
+  const { rows } = await pool.query(
     `UPDATE payments
         SET status = 'failed',
             failure_reason = 'Payment canceled.',
             stripe_webhook_event_id = $1,
             updated_at = NOW()
       WHERE stripe_payment_intent_id = $2
-        AND status IN ('pending', 'processing')`,
+        AND status IN ('pending', 'processing')
+     RETURNING id, payment_type`,
     [eventId, pi.id]
   );
+
+  if (rows[0]?.payment_type === 'utility') {
+    await releaseUtilitySplitsForFailedPayment(pool, rows[0].id);
+  }
+
   console.log(`[stripe-webhook] payment canceled: ${pi.id}`);
 }
 
@@ -803,15 +800,7 @@ async function onSucceeded(pi, eventId) {
 
     if (payment_type === 'utility') {
       // Utility payment — flip the linked split to paid and possibly settle the bill
-      const { rows: splitRows } = await client.query(
-        `UPDATE utility_bill_splits
-            SET status     = 'paid',
-                updated_at = NOW()
-          WHERE payment_id = $1
-         RETURNING bill_id`,
-        [paymentId]
-      );
-      utilityBillIds = [...new Set(splitRows.map((r) => r.bill_id).filter(Boolean))];
+      utilityBillIds = await markUtilitySplitsPaidForPayment(client, paymentId);
       utilityBillId = utilityBillIds[0] ?? null;
 
       await client.query(
@@ -995,20 +984,8 @@ async function onFailed(pi, eventId) {
   if (!rows[0]) return;
 
   // Flip any utility split that was charging → failed (tenant can retry in portal)
-  let utilityBillId = null;
-  let utilityBillIds = [];
   if (rows[0].payment_type === 'utility') {
-    const { rows: splitRows } = await pool.query(
-      `UPDATE utility_bill_splits
-          SET status = 'failed',
-              payment_id = NULL,
-              updated_at = NOW()
-        WHERE payment_id = $1
-       RETURNING bill_id`,
-      [rows[0].id]
-    );
-    utilityBillIds = [...new Set(splitRows.map((r) => r.bill_id).filter(Boolean))];
-    utilityBillId = utilityBillIds[0] ?? null;
+    await releaseUtilitySplitsForFailedPayment(pool, rows[0].id);
   }
 
   const label = rows[0].payment_type === 'utility' ? 'utility' : 'rent';

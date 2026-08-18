@@ -240,8 +240,11 @@ app.get('/health', async (_req, res) => {
     try {
       const plaid = require('./services/plaid.service');
       payload.plaid = await plaid.probeLinkToken();
-    } catch {
-      payload.plaid = { ok: false, error: 'probe_failed' };
+    } catch (err) {
+      payload.plaid = {
+        ok: false,
+        error: err.response?.data?.error_code || 'probe_failed',
+      };
     }
   }
   res.json(payload);

@@ -170,4 +170,15 @@ assert.ok(
   }).includes('paid $10.00 rent via ACH')
 );
 
+assert.strictEqual(
+  buildSummary({
+    actor,
+    method: 'POST',
+    path: '/api/site-visits/visit-1/reschedule',
+    statusCode: 200,
+    body: {},
+  }),
+  'Osanin Murillo changed a boots-on-site visit date (tenant notices updated when applicable)'
+);
+
 console.log('test-activity-audit-summaries OK');

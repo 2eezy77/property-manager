@@ -6,6 +6,7 @@ const {
   personDisplayName,
   withPayerLabel,
   payerMetadata,
+  toStripeMetadata,
 } = require('../src/services/stripe.service');
 
 assert.strictEqual(
@@ -43,5 +44,19 @@ assert.strictEqual(
   require('../src/services/stripe.service').formatPropertyLabel('743 A Ave', '2'),
   '743 A Ave U2'
 );
+
+{
+  const stripeMeta = toStripeMetadata({
+    payment_type: 'utility',
+    portal_utility: true,
+    utility_split_ids: ['s1', 's2'],
+    utility_bill_ids: ['b1', 'b2'],
+    skip: null,
+  });
+  assert.strictEqual(stripeMeta.portal_utility, 'true');
+  assert.strictEqual(stripeMeta.utility_split_ids, 's1,s2');
+  assert.strictEqual(stripeMeta.utility_bill_ids, 'b1,b2');
+  assert.strictEqual(stripeMeta.skip, undefined);
+}
 
 console.log('test-stripe-payer-labels: ok');

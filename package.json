@@ -33,6 +33,7 @@
     "test:utility-portal-charge": "node scripts/test-utility-portal-charge.js",
     "test:utility-split-refresh": "node scripts/test-utility-split-refresh-safety.js",
     "test:activity-audit": "node scripts/test-activity-audit-summaries.js",
+    "test:site-visits-cleanup": "node scripts/test-site-visits-cleanup.js",
     "import:cashapp": "node scripts/import-cashapp-payments.js",
     "import:cashapp:apply": "node scripts/import-cashapp-payments.js --apply",
     "import:dominion": "node scripts/import-dominion-billing-history.js",
@@ -76,6 +77,7 @@
     "assert:portal-pay": "node scripts/assert-portal-pay-guards.js",
     "test:processing-fee": "node scripts/test-processing-fee.js",
     "test:balance-paid": "node scripts/test-balance-paid-month.js",
+    "test:plaid-link-token": "node scripts/test-plaid-link-token.js",
     "test:identity-crypto": "node scripts/test-identity-crypto.js",
     "test:lease-invite-identity": "node scripts/test-lease-invite-identity.js",
     "test:identity:all": "npm run test:identity-crypto && npm run test:lease-invite-identity"

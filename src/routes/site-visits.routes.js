@@ -10,6 +10,8 @@ const {
   listVisits,
   requestVisit,
   approveVisit,
+  activatePendingVisits,
+  rescheduleVisit,
   rejectVisit,
   cancelVisit,
   completeVisit,
@@ -20,6 +22,7 @@ const {
   norfolkNowLocalString,
 } = require('../services/site-visits.service');
 const plaid = require('../services/plaid.service');
+const { linkTokenCreateErrorMessage } = require('../utils/plaid-errors');
 const {
   getPayrollMonth,
   getManagerPayoutAccounts,
@@ -32,6 +35,7 @@ const {
   cancelProcessingPayroll,
   parseYearMonth,
   norfolkYearMonth,
+  listPaidVisitMonths,
 } = require('../services/site-visits-payout.service');
 
 const router = express.Router();
@@ -78,8 +82,17 @@ router.get('/', Guards.staffOnly, async (req, res) => {
     if (!orgId) return res.status(400).json({ error: 'NO_ORG', message: 'No organization found.' });
 
     const isManager = req.user.role === 'property_manager';
+    await activatePendingVisits({
+      orgId,
+      actorId: req.user.id,
+      actorRole: req.user.role,
+    });
     const usage = await getMonthlyUsage(orgId);
     const visits = await listVisits({
+      orgId,
+      managerId: isManager ? req.user.id : null,
+    });
+    const paidMonths = await listPaidVisitMonths({
       orgId,
       managerId: isManager ? req.user.id : null,
     });
@@ -87,12 +100,14 @@ router.get('/', Guards.staffOnly, async (req, res) => {
     res.json({
       usage,
       visits,
+      paidMonths,
       policy: {
         perVisit: usage.visit_amount_cents / 100,
         monthlyCap: usage.cap_cents / 100,
+        monthlyVisitCap: 5,
         noticeHours: 24,
         timezone: 'America/New_York',
-        flow: 'All 3 common areas every visit → owner approves (24h tenant notice when applicable) → video per area at check-in.',
+        flow: 'Manager schedules (5 visits/month) → 24h tenant notice when applicable → video per area at check-in. No owner approval. Pay visits or any other amount anytime; Instant Payout to manager bank.',
         roomPurposes: ['routine_inspection', 'maintenance_followup', 'vacant_showing'],
       },
     });
@@ -156,8 +171,11 @@ router.post('/payout-bank/plaid/link-token', Guards.staffOnly, async (req, res) 
     const linkToken = await plaid.createLinkToken(req.user.id);
     res.json({ linkToken });
   } catch (err) {
-    console.error('[POST /site-visits/payout-bank/plaid/link-token]', err);
-    res.status(500).json({ error: 'PLAID_ERROR', message: 'Could not create Plaid Link token.' });
+    console.error('[POST /site-visits/payout-bank/plaid/link-token]', err.response?.data ?? err);
+    res.status(500).json({
+      error: 'PLAID_ERROR',
+      message: linkTokenCreateErrorMessage(err, 'Could not create Plaid Link token.'),
+    });
   }
 });
 
@@ -185,8 +203,11 @@ router.post('/payout-bank/plaid/update-link-token', Guards.staffOnly, async (req
     if (err.code === 'NOT_FOUND') {
       return res.status(404).json({ error: 'NOT_FOUND', message: err.message });
     }
-    console.error('[POST /site-visits/payout-bank/plaid/update-link-token]', err);
-    res.status(500).json({ error: 'PLAID_ERROR', message: 'Could not create Plaid update token.' });
+    console.error('[POST /site-visits/payout-bank/plaid/update-link-token]', err.response?.data ?? err);
+    res.status(500).json({
+      error: 'PLAID_ERROR',
+      message: linkTokenCreateErrorMessage(err, 'Could not create Plaid update token.'),
+    });
   }
 });
 
@@ -295,6 +316,9 @@ router.post('/payroll/pay', Guards.ownerAndAbove, async (req, res) => {
       ownerId: req.user.id,
       year,
       month,
+      outstanding: req.body?.outstanding === true,
+      payVisits: req.body?.payVisits,
+      customAmount: req.body?.customAmount,
       paymentMethod: req.body?.paymentMethod ?? 'manual',
       note: req.body?.note,
       ipAddress: req.ip,
@@ -332,6 +356,9 @@ router.post('/payroll/cashapp/create-intent', Guards.ownerAndAbove, async (req, 
       ownerId: req.user.id,
       year,
       month,
+      outstanding: req.body?.outstanding === true,
+      payVisits: req.body?.payVisits,
+      customAmount: req.body?.customAmount,
       note: req.body?.note,
     });
 
@@ -393,7 +420,7 @@ router.post('/request', Guards.staffOnly, async (req, res) => {
     if (req.user.role !== 'property_manager') {
       return res.status(403).json({
         error: 'MANAGER_ONLY',
-        message: 'Only the property manager can request on-site visits.',
+        message: 'Only the property manager can schedule on-site visits.',
       });
     }
     const visit = await requestVisit({
@@ -411,12 +438,32 @@ router.post('/request', Guards.staffOnly, async (req, res) => {
   }
 });
 
-router.post('/:id/approve', Guards.ownerAndAbove, async (req, res) => {
+router.post('/:id/approve', Guards.staffOnly, async (req, res) => {
   try {
-    const visit = await approveVisit({ visitId: req.params.id, ownerId: req.user.id });
+    const visit = await approveVisit({
+      visitId: req.params.id,
+      ownerId: req.user.id,
+      actorId: req.user.id,
+      actorRole: req.user.role,
+    });
     res.json({ visit, usage: await getMonthlyUsage(visit.orgId) });
   } catch (err) {
     console.error('[POST /site-visits/:id/approve]', err);
+    sendErr(res, err);
+  }
+});
+
+router.post('/:id/reschedule', Guards.staffOnly, async (req, res) => {
+  try {
+    const visit = await rescheduleVisit({
+      visitId: req.params.id,
+      actorId: req.user.id,
+      actorRole: req.user.role,
+      plannedVisitAt: req.body?.plannedVisitAt,
+    });
+    res.json({ visit });
+  } catch (err) {
+    console.error('[POST /site-visits/:id/reschedule]', err);
     sendErr(res, err);
   }
 });

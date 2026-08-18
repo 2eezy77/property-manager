@@ -62,6 +62,27 @@ function payerMetadata({ name, email, userId, propertyLabel } = {}) {
 }
 
 /**
+ * Stripe PaymentIntent metadata values must be strings (max 500 chars).
+ * Utility portal pay was spreading UUID arrays / booleans and Stripe rejected
+ * the create with "Metadata values must be strings".
+ */
+function toStripeMetadata(metadata = {}) {
+  const out = {};
+  for (const [key, value] of Object.entries(metadata || {})) {
+    if (value == null) continue;
+    const k = String(key).slice(0, 40);
+    let s;
+    if (typeof value === 'string') s = value;
+    else if (typeof value === 'number' || typeof value === 'boolean') s = String(value);
+    else if (Array.isArray(value)) s = value.map((v) => String(v)).join(',');
+    else s = JSON.stringify(value);
+    if (!s) continue;
+    out[k] = s.length > 500 ? s.slice(0, 500) : s;
+  }
+  return out;
+}
+
+/**
  * Keep Stripe Customer.name / email filled so Dashboard "Customer" isn't blank.
  */
 async function syncCustomerProfile(customerId, { name, email } = {}) {
@@ -244,7 +265,75 @@ function connectSiteBusinessProfile(displayName) {
 async function updateConnectAccountBusinessProfile(accountId, displayName) {
   return stripe.accounts.update(accountId, {
     business_profile: connectSiteBusinessProfile(displayName),
+    settings: {
+      payouts: {
+        schedule: { interval: 'manual' },
+      },
+    },
   });
+}
+
+/** Instant-available USD cents on a Connect account (0 if Instant Payouts not eligible). */
+async function getConnectInstantAvailableCents(connectAccountId) {
+  const balance = await stripe.balance.retrieve({ stripeAccount: connectAccountId });
+  const usd = (balance.instant_available || []).find((b) => b.currency === 'usd');
+  return Number(usd?.amount) || 0;
+}
+
+/** Decide Instant Payout cents from requested amount vs Stripe instant_available. */
+function resolveInstantPayoutAmount(wantCents, availableCents) {
+  const want = Math.round(Number(wantCents));
+  if (!Number.isFinite(want) || want < 50) {
+    return { ok: false, code: 'INSTANT_AMOUNT', amount: 0, availableCents: 0 };
+  }
+  const available = Math.max(0, Math.round(Number(availableCents) || 0));
+  const amount = Math.min(want, available);
+  if (amount < 50) {
+    return { ok: false, code: 'INSTANT_NOT_AVAILABLE', amount: 0, availableCents: available };
+  }
+  return { ok: true, amount, availableCents: available };
+}
+
+/** Instant Payouts require a manual Connect payout schedule (not automatic daily). */
+async function ensureConnectManualPayouts(connectAccountId) {
+  return stripe.accounts.update(connectAccountId, {
+    settings: {
+      payouts: { schedule: { interval: 'manual' } },
+    },
+  });
+}
+
+/**
+ * Pay out Connect available funds to the manager's bank via Instant Payouts (~30 min).
+ * Platform Instant Payouts must be enabled (Stripe Dashboard → Instant Payouts).
+ */
+async function createInstantPayout({
+  connectAccountId,
+  amountCents,
+  metadata = {},
+  destination = undefined,
+}) {
+  const available = await getConnectInstantAvailableCents(connectAccountId);
+  const resolved = resolveInstantPayoutAmount(amountCents, available);
+  if (!resolved.ok) {
+    const err = new Error(
+      resolved.code === 'INSTANT_AMOUNT'
+        ? 'Instant payout amount is too small.'
+        : 'Instant payout is not available yet — funds are still settling on the manager Connect account.'
+    );
+    err.code = resolved.code;
+    err.availableCents = resolved.availableCents;
+    throw err;
+  }
+  await ensureConnectManualPayouts(connectAccountId).catch(() => {});
+  const params = {
+    amount: resolved.amount,
+    currency: 'usd',
+    method: 'instant',
+    metadata: toStripeMetadata(metadata),
+  };
+  if (destination) params.destination = destination;
+  return stripe.payouts.create(params, { stripeAccount: connectAccountId });
 }
 
 async function createConnectExpressPayoutAccount({
@@ -259,6 +348,11 @@ async function createConnectExpressPayoutAccount({
     capabilities: {
       transfers:      { requested: true },
       card_payments:  { requested: true },
+    },
+    settings: {
+      payouts: {
+        schedule: { interval: 'manual' },
+      },
     },
     business_profile: connectSiteBusinessProfile(displayName),
     metadata: {
@@ -324,7 +418,7 @@ async function chargeACH({
     },
     confirm:              true,
     description,
-    metadata,
+    metadata: toStripeMetadata(metadata),
     mandate_data: {
       customer_acceptance: {
         type:   'online',
@@ -561,7 +655,7 @@ async function createCashAppPaymentIntent({
     customer: customerId,
     payment_method_types: ['cashapp'],
     description,
-    metadata,
+    metadata: toStripeMetadata(metadata),
   };
   if (transferDestination) {
     params.transfer_data = { destination: transferDestination };
@@ -582,7 +676,7 @@ async function createCardPaymentIntent({
     payment_method_types: ['card'],
     capture_method: 'automatic',
     description,
-    metadata,
+    metadata: toStripeMetadata(metadata),
   });
 }
 
@@ -623,6 +717,10 @@ module.exports = {
   createUsBankPaymentMethod,
   createConnectExpressPayoutAccount,
   updateConnectAccountBusinessProfile,
+  getConnectInstantAvailableCents,
+  resolveInstantPayoutAmount,
+  ensureConnectManualPayouts,
+  createInstantPayout,
   retrieveConnectAccount,
   isConnectTransfersActive,
   createConnectAccountLink,
@@ -652,5 +750,6 @@ module.exports = {
   formatPropertyLabel,
   withPayerLabel,
   payerMetadata,
+  toStripeMetadata,
   syncCustomerProfile,
 };

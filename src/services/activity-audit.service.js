@@ -183,10 +183,13 @@ function buildSummary({ actor, impersonator, method, path, body, statusCode }) {
     return `${who} opened a portal preview as another user`;
   }
   if (p === '/api/site-visits/request' && method === 'POST') {
-    return `${who} requested a boots-on-site inspection (awaiting owner approval)`;
+    return `${who} scheduled a boots-on-site visit (tenant notices sent; no owner approval)`;
   }
   if (/\/api\/site-visits\/[^/]+\/approve$/.test(p) && method === 'POST') {
-    return `${who} approved a manager on-site visit ($20; common-area announcement + room inbox notices when applicable)`;
+    return `${who} approved a boots-on-site visit ($20; tenant notices sent when applicable)`;
+  }
+  if (/\/api\/site-visits\/[^/]+\/reschedule$/.test(p) && method === 'POST') {
+    return `${who} changed a boots-on-site visit date (tenant notices updated when applicable)`;
   }
   if (/\/api\/site-visits\/[^/]+\/reject$/.test(p) && method === 'POST') {
     return `${who} rejected a manager on-site visit request`;
@@ -219,6 +222,12 @@ function buildSummary({ actor, impersonator, method, path, body, statusCode }) {
     if (statusCode >= 400) return `${who} failed to mark manager visit payroll paid`;
     const methodLabel = b.paymentMethod ? String(b.paymentMethod).replace(/_/g, ' ') : 'manual';
     const period = b.year && b.month ? `${b.month}/${b.year}` : 'selected month';
+    if (b.customAmount && (b.payVisits === true || b.outstanding === true)) {
+      return `${who} paid Konstantin site visits plus $${Number(b.customAmount).toFixed(2)} other work (${methodLabel})`;
+    }
+    if (b.customAmount && b.payVisits === false) {
+      return `${who} paid Konstantin $${Number(b.customAmount).toFixed(2)} for other work (${methodLabel})`;
+    }
     return `${who} marked manager site-visit payroll paid for ${period} (${methodLabel})`;
   }
   if (p === '/api/owner/property-bank/plaid/exchange' && method === 'POST') {
