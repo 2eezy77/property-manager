@@ -1175,29 +1175,22 @@ function OwnerPayrollPanel() {
           {(!payroll.processing || payroll.processingDetails?.canCancel) && (
             <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-4 space-y-4">
               <p className="text-sm font-semibold text-slate-900">Pay visits or other work</p>
+              {payroll.canPay && (
               <p className="text-xs text-slate-600">
                 {paymentMethod === 'ach' ? (
-                  payroll.propertyBank?.linked && payroll.payoutBank?.linked ? (
-                    <>
-                      ACH debits your property account ({payroll.propertyBank.institutionName} ····{payroll.propertyBank.accountMask})
-                      then Instant Payout to {payroll.manager.name}&apos;s bank ({payroll.payoutBank.institutionName} ····{payroll.payoutBank.accountMask}).
-                    </>
-                  ) : (
-                    <>Link both banks first — property account under Finance, manager payout bank under his Boots on site page.</>
-                  )
+                  <>
+                    ACH from your property account, then Instant Payout to his bank.
+                  </>
                 ) : paymentMethod === 'cash_app' ? (
-                  payroll.cashAppPayAvailable && payroll.connectPayoutReady ? (
-                    <>
-                      Cash App Pay, then Instant Payout to {payroll.manager.name}&apos;s bank
-                      {payroll.payoutBank?.accountMask ? ` (····${payroll.payoutBank.accountMask})` : ''}.
-                    </>
-                  ) : (
-                    <>Enable Cash App Pay in Stripe and complete Konstantin&apos;s payout setup first.</>
-                  )
+                  <>
+                    Cash App Pay, then Instant Payout to his bank
+                    {payroll.payoutBank?.accountMask ? ` (····${payroll.payoutBank.accountMask})` : ''}.
+                  </>
                 ) : (
                   <>Select a payment method.</>
                 )}
               </p>
+              )}
               <div className="flex flex-wrap gap-2">
                 {(payroll.paymentMethods || []).map((m) => (
                   <button
@@ -1746,7 +1739,6 @@ function VisitRow({
           </div>
           <p className="mt-0.5 text-xs text-slate-500">
             {rooms.length ? `Rooms: ${rooms.join(', ')}` : 'Common areas'}
-            {isOwner && visit.managerName ? ` · ${visit.managerName}` : ''}
           </p>
           {shortNotice && (
             <p className="mt-0.5 text-xs text-amber-700">Under 24-hour notice</p>
@@ -1786,6 +1778,7 @@ function VisitRow({
           {visit.notices?.length > 0 && (
             <p className="text-violet-700">Tenants notified {fmtWhen(visit.notices[0]?.sent_at)}</p>
           )}
+          {isOwner && visit.managerName && <p>{visit.managerName}</p>}
           {visit.requestedNote && <p>Note: {visit.requestedNote}</p>}
         </div>
       )}
