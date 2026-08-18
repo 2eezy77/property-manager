@@ -20,12 +20,12 @@ export const OWNER_PAY_METHOD_COPY = {
   cash_app: {
     label: 'Cash App Pay',
     speed: '~30 min',
-    detail: 'Usually in his bank in about 30 minutes after you confirm in Cash App.',
+    detail: 'Associate pay — confirm in Cash App and Instant Payout usually hits his bank in about 30 minutes.',
   },
   ach: {
     label: 'Bank transfer',
     speed: '3–5 days',
-    detail: 'Debits the property account. Instant Payout waits until ACH settles (3–5 business days).',
+    detail: 'Fallback only when Cash App is unavailable. Instant Payout waits until ACH settles (3–5 business days).',
   },
 };
 

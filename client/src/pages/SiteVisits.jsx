@@ -203,7 +203,7 @@ function HowVisitsWork({ isOwner }) {
         <li>Every visit covers kitchen, parking, and lawn — video at check-in.</li>
         <li>Occupied rooms need 24-hour Norfolk notice. Vacant showings can be same-day.</li>
         {isOwner ? (
-          <li>Konstantin schedules on his own. Pay with Cash App — usually in his bank in about 30 minutes. Bank transfer takes 3–5 days.</li>
+          <li>Konstantin is the property manager. Associate pay is Cash App so Instant Payout hits his bank in about 30 minutes — not a 3–5 day vendor transfer.</li>
         ) : (
           <li>No owner approval. Change or cancel the date anytime.</li>
         )}
@@ -1282,16 +1282,16 @@ function OwnerPayrollPanel() {
 
           {(!payroll.processing || payroll.processingDetails?.canCancel) && (
             <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-4 space-y-4">
-              <p className="text-sm font-semibold text-slate-900">Pay visits or other work</p>
+              <p className="text-sm font-semibold text-slate-900">Associate pay</p>
               {payroll.canPay && (
               <p className="text-xs text-slate-600">
                 {paymentMethod === 'ach' ? (
                   <>
-                    Slow path: bank transfer takes 3–5 business days before Instant Payout.
+                    Cash App is unavailable, so this fallback bank transfer takes 3–5 business days.
                   </>
                 ) : paymentMethod === 'cash_app' ? (
                   <>
-                    Fast path: confirm in Cash App, then Instant Payout to his bank
+                    Property manager payroll: confirm in Cash App, then Instant Payout to his bank
                     {payroll.payoutBank?.accountMask ? ` (····${payroll.payoutBank.accountMask})` : ''}
                     {' '}in about 30 minutes.
                   </>
@@ -1301,36 +1301,14 @@ function OwnerPayrollPanel() {
               </p>
               )}
               {(payroll.paymentMethods || []).includes('cash_app') && (
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod('cash_app')}
-                  className={`rounded-lg px-3 py-2 text-xs font-semibold border ${
-                    paymentMethod === 'cash_app'
-                      ? 'border-violet-600 bg-violet-600 text-white'
-                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
+                <p className="text-xs font-semibold text-violet-800">
                   {OWNER_PAY_METHOD_COPY.cash_app.label} · {OWNER_PAY_METHOD_COPY.cash_app.speed}
-                </button>
+                </p>
               )}
-              {(payroll.paymentMethods || []).includes('ach') && (
-                <details className="rounded-lg border border-slate-200 bg-white px-3 py-2" open={paymentMethod === 'ach'}>
-                  <summary className="cursor-pointer text-xs font-semibold text-slate-600">
-                    {OWNER_PAY_METHOD_COPY.ach.label} · {OWNER_PAY_METHOD_COPY.ach.speed}
-                  </summary>
-                  <p className="mt-2 text-xs text-slate-600">{OWNER_PAY_METHOD_COPY.ach.detail}</p>
-                  <button
-                    type="button"
-                    onClick={() => setPaymentMethod('ach')}
-                    className={`mt-2 rounded-lg px-3 py-1.5 text-xs font-semibold border ${
-                      paymentMethod === 'ach'
-                        ? 'border-violet-600 bg-violet-600 text-white'
-                        : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
-                    }`}
-                  >
-                    Use bank transfer
-                  </button>
-                </details>
+              {(payroll.paymentMethods || []).includes('ach') && !(payroll.paymentMethods || []).includes('cash_app') && (
+                <p className="text-xs font-semibold text-slate-600">
+                  {OWNER_PAY_METHOD_COPY.ach.label} · {OWNER_PAY_METHOD_COPY.ach.speed}
+                </p>
               )}
               <label className="block text-xs font-medium text-slate-700">
                 Note (optional)

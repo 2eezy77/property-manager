@@ -14,6 +14,7 @@ const {
   canPayPayroll,
   parseCustomAmountCents,
   resolvePayrollCharge,
+  buildAvailableOwnerPayMethods,
 } = require('../src/services/site-visits-payout.service');
 const { resolveInstantPayoutAmount } = require('../src/services/stripe.service');
 const { toNorfolkDatetimeLocal, MS_24H } = require('../src/utils/norfolk-time');
@@ -123,6 +124,31 @@ assert(
     paymentMethodCount: 0,
   }) === false,
   'cannot pay without a payment method'
+);
+
+assert(
+  JSON.stringify(buildAvailableOwnerPayMethods({
+    connectPayoutReady: true,
+    cashAppPayAvailable: true,
+    propertyBankLinked: true,
+  })) === JSON.stringify(['cash_app']),
+  'associate pay offers Cash App only when it is available'
+);
+assert(
+  JSON.stringify(buildAvailableOwnerPayMethods({
+    connectPayoutReady: true,
+    cashAppPayAvailable: false,
+    propertyBankLinked: true,
+  })) === JSON.stringify(['ach']),
+  'ACH is only a fallback when Cash App is unavailable'
+);
+assert(
+  JSON.stringify(buildAvailableOwnerPayMethods({
+    connectPayoutReady: false,
+    cashAppPayAvailable: true,
+    propertyBankLinked: true,
+  })) === JSON.stringify([]),
+  'no owner pay methods until Connect payout is ready'
 );
 
 assert(parseCustomAmountCents('') === 0, 'blank custom amount is zero');

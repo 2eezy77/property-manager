@@ -150,7 +150,7 @@ export default function AdminDashboardPage() {
             </p>
             <p className="mt-1 text-xs text-violet-800">
               {fmt(unpaidVisitCents / 100)} due{visitPayroll.visitCount > 0 ? ` for ${visitPayroll.monthLabel}` : ' from earlier months'}
-              {' · Cash App usually lands in about 30 minutes'}
+              {' · Associate pay via Cash App, usually in his bank in about 30 minutes'}
               {visitPayroll.payoutBank?.linked
                 ? ` · ${visitPayroll.payoutBank.institutionName} ····${visitPayroll.payoutBank.accountMask}`
                 : ''}
