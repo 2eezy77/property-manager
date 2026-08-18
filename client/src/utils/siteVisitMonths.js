@@ -38,11 +38,19 @@ export function visitNeedsShortNoticeWarning(visit, now = Date.now()) {
   return msLeft > 0 && msLeft < MS_24H;
 }
 
-export function splitUpcomingVisits(visits, currentMonth = norfolkMonthValue()) {
+export function visitIsLeftover(visit, now = Date.now(), currentMonth = norfolkMonthValue()) {
+  if (!UPCOMING_STATUSES.has(visit?.status)) return false;
+  const monthKey = visitMonthKey(visit);
+  if (monthKey !== 'unknown' && monthKey < currentMonth) return true;
+  if (!visit?.plannedVisitAt) return false;
+  return new Date(visit.plannedVisitAt).getTime() < now;
+}
+
+export function splitUpcomingVisits(visits, currentMonth = norfolkMonthValue(), now = Date.now()) {
   const upcoming = (visits || []).filter((v) => UPCOMING_STATUSES.has(v.status));
   return {
-    upcomingNow: upcoming.filter((v) => visitMonthKey(v) >= currentMonth),
-    upcomingPast: upcoming.filter((v) => visitMonthKey(v) < currentMonth),
+    upcomingNow: upcoming.filter((v) => !visitIsLeftover(v, now, currentMonth)),
+    upcomingPast: upcoming.filter((v) => visitIsLeftover(v, now, currentMonth)),
   };
 }
 
@@ -79,7 +87,7 @@ export function groupVisitsByMonth(visits, { currentMonth = norfolkMonthValue(),
 export function earlierMonthsCaption(groups) {
   if (!groups?.length) return '';
   if (groups.every((g) => g.isPaid)) {
-    return 'Earlier months — already paid. Tap a month if you need to check.';
+    return 'Already paid. Tap a month if you need to check.';
   }
-  return 'Earlier months — already closed. Tap a month if you need to check.';
+  return 'Closed leftovers. Tap a month if you need to check.';
 }

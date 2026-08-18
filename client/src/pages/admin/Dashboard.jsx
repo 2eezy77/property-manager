@@ -101,6 +101,15 @@ export default function AdminDashboardPage() {
   const tenantPreview = data.tenants.slice(0, 5);
   const maintCount = oversight?.recent?.maintenance?.length ?? 0;
   const inboxCount = oversight?.recent?.inbox_threads?.length ?? 0;
+  const unpaidVisitCount = visitPayroll?.visitCount > 0
+    ? visitPayroll.visitCount
+    : (visitPayroll?.outstandingCount || 0);
+  const unpaidVisitCents = visitPayroll?.visitCount > 0
+    ? (visitPayroll.totalCents || 0)
+    : (visitPayroll?.outstandingCents || 0);
+  const showVisitPayNag = !loading
+    && unpaidVisitCount > 0
+    && !visitPayroll?.processing;
 
   return (
     <div className="stagger-section space-y-6">
@@ -128,19 +137,19 @@ export default function AdminDashboardPage() {
           { to: '/admin/users',       label: 'Users',         icon: <User size={22} strokeWidth={2} /> },
           { to: '/manager/utilities', label: 'Utilities',     icon: <Zap size={22} strokeWidth={2} /> },
           { to: '/admin/portal-launch', label: 'Launch emails', icon: <Mail size={22} strokeWidth={2} /> },
-          { to: '/admin/site-visits',   label: 'Boots on site', icon: <Footprints size={22} strokeWidth={2} /> },
+          { to: '/admin/site-visits',   label: 'Boots on site', icon: <Footprints size={22} strokeWidth={2} />, badge: unpaidVisitCount },
           { to: '/admin/activity',      label: 'Activity log',  icon: <ScrollText size={22} strokeWidth={2} /> },
         ]}
       />
 
-      {!loading && visitPayroll?.visitCount > 0 && !visitPayroll?.alreadyPaid && !visitPayroll?.processing && (
+      {showVisitPayNag && (
         <div className="rounded-xl border border-violet-200 bg-violet-50 px-5 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-semibold text-violet-950">
-              Pay {visitPayroll.manager?.name || 'Konstantin'} — {visitPayroll.visitCount} site visit{visitPayroll.visitCount === 1 ? '' : 's'}
+              Pay {visitPayroll.manager?.name || 'Konstantin'} — {unpaidVisitCount} site visit{unpaidVisitCount === 1 ? '' : 's'}
             </p>
             <p className="mt-1 text-xs text-violet-800">
-              {fmt(visitPayroll.totalDollars ?? visitPayroll.totalCents / 100)} due for {visitPayroll.monthLabel}
+              {fmt(unpaidVisitCents / 100)} due{visitPayroll.visitCount > 0 ? ` for ${visitPayroll.monthLabel}` : ' from earlier months'}
               {visitPayroll.payoutBank?.linked
                 ? ` · ${visitPayroll.payoutBank.institutionName} ····${visitPayroll.payoutBank.accountMask}`
                 : ' · Zelle or bank on file in Boots on site'}
