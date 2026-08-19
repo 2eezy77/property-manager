@@ -124,6 +124,7 @@ async function syncCashAppFromGmail(userId, role, { apply = true, ...options } =
 }
 
 module.exports = {
+  parsePaymentText,
   parsePaymentEmail,
   fetchCashAppPaymentsFromGmail,
   buildGmailImportPlan,
