@@ -723,6 +723,7 @@ module.exports = {
   createInstantPayout,
   retrieveConnectAccount,
   isConnectTransfersActive,
+  normalizeAchNumbers,
   createConnectAccountLink,
   chargeACH,
   createTransfer,
