@@ -540,5 +540,6 @@ module.exports = {
   runPaymentsHealth,
   expectedWebhookUrl,
   expectedWebhookUrls,
+  stripeKeyMode,
   buildStripeSubsection,
 };
