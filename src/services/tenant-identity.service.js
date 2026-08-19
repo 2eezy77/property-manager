@@ -639,6 +639,13 @@ async function applyIdentitySessionUpdate(session) {
 module.exports = {
   IDENTITY_FEE_BASE_CENTS,
   IDENTITY_FEE_GRACE_HOURS,
+  isWithinGrace,
+  isAlertStatus,
+  statusFromSession,
+  dateOfBirthFromOutputs,
+  legalNameFromOutputs,
+  idNumberFromOutputs,
+  missingCollectionsProfileReason,
   ensureIdentityRow,
   createIdentityFeeIntent,
   createIdentitySession,

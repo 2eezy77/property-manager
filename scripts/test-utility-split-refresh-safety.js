@@ -155,6 +155,45 @@ async function main() {
     assert.strictEqual(client.calls.length, 1); // only SELECT
   }
 
+  // Upsert: disputed / failed keep status while amount refreshes (not reopened as notified)
+  for (const preserveStatus of ['disputed', 'failed']) {
+    const openId = `33333333-3333-3333-3333-33333333333${preserveStatus === 'failed' ? '1' : '0'}`;
+    const leaseOpen = `cccccccc-cccc-cccc-cccc-ccccccccccc${preserveStatus === 'failed' ? '1' : '0'}`;
+    const client = makeFakeClient([
+      {
+        rows: [
+          {
+            id: openId,
+            lease_id: leaseOpen,
+            tenant_id: 't-preserve',
+            amount: '40.00',
+            status: preserveStatus,
+            payment_id: null,
+          },
+        ],
+      },
+      { rows: [], rowCount: 1 },
+    ]);
+
+    const result = await upsertBillSplits(
+      client,
+      { id: `bill-${preserveStatus}`, status: 'notified' },
+      [{ leaseId: leaseOpen, tenantId: 't-preserve', amount: '55.55' }]
+    );
+    assert.strictEqual(result.updated, 1, `${preserveStatus} split should update amount`);
+    assert.strictEqual(result.skippedFrozen, 0, `${preserveStatus} is not frozen`);
+
+    const updateCall = client.calls.find((c) => c.sql.startsWith('UPDATE utility_bill_splits'));
+    assert.ok(updateCall, `expected UPDATE for ${preserveStatus} split`);
+    assert.strictEqual(updateCall.params[0], openId);
+    assert.strictEqual(updateCall.params[1], '55.55');
+    assert.strictEqual(
+      updateCall.params[3],
+      preserveStatus,
+      `${preserveStatus} status must be preserved on recalc`
+    );
+  }
+
   // Upsert: insert missing lease as notified when bill notified
   {
     const client = makeFakeClient([

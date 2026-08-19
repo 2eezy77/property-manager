@@ -1452,4 +1452,7 @@ module.exports = {
   getDefaultPayoutBankFull,
   getPropertyBankForAch,
   wrapStripePayrollError,
+  mapStripeStatus,
+  isCancellablePayrollIntent,
+  payrollProcessingDetails,
 };

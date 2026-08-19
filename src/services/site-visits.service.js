@@ -897,4 +897,9 @@ module.exports = {
   minPlannedVisitLocalString,
   norfolkNowLocalString,
   formatNorfolkDateTime,
+  // Pure helpers exported for unit tests (behavior unchanged).
+  assertCanReserve,
+  defaultPurpose,
+  normalizeRoomPurpose,
+  parseVideoPayload,
 };
