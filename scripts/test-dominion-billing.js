@@ -4,6 +4,7 @@ const {
   parseDominionAmounts,
   resolveElectricChargeAmount,
   computeChargeableAfter,
+  periodFromDominionStatement,
   isElectricBillChargeable,
   validateElectricAmount,
 } = require('../src/services/dominion-billing.service');
@@ -41,6 +42,23 @@ assert(
 );
 
 assert('chargeable after period end', computeChargeableAfter('2026-05-14') === '2026-05-14');
+
+{
+  const cycle = periodFromDominionStatement({ statementDate: '2026-07-17', billingDays: 30 });
+  assert('Dominion 30-day period_end is statement', cycle.period_end === '2026-07-17');
+  assert('Dominion 30-day period_start', cycle.period_start === '2026-06-18', cycle);
+}
+{
+  const bad = periodFromDominionStatement({ statementDate: '2026-07-17', billingDays: 0 });
+  assert('invalid billingDays keeps null start', bad.period_start == null && bad.period_end === '2026-07-17');
+}
+{
+  const fromDate = periodFromDominionStatement({
+    statementDate: new Date('2026-08-14T15:00:00Z'),
+    billingDays: 31,
+  });
+  assert('Date object statementDate', fromDate.period_end === '2026-08-14' && fromDate.period_start === '2026-07-15', fromDate);
+}
 
 assert(
   'chargeable when period ended',
