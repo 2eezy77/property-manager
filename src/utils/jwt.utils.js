@@ -110,4 +110,5 @@ module.exports = {
   verifyAccessToken,
   generateRefreshToken,
   hashRefreshToken,
+  parseDuration,
 };
