@@ -822,6 +822,8 @@ module.exports = {
   allocateRentMonths,
   allocateCalendarMonths,
   rentYmFromPayment,
+  reallocatePreLeaseMonths,
+  filterByLeaseStart,
   buildImportPlan,
   buildImportPlanFromRows,
   load743CashAppTenants,
