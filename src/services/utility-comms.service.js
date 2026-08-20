@@ -327,6 +327,32 @@ function autoNotifyEnabled() {
   return process.env.UTILITIES_AUTO_NOTIFY_ENABLED === 'true';
 }
 
+/** Shared empty summary when reminders must not run (auto-notify off / rolled back). */
+function remindersWhenNotifyDisabled() {
+  return { reminded3: 0, reminded7: 0, overdueStaff: 0, disabled: true };
+}
+
+/**
+ * Pure hold reasons for draft auto-notify (excludes chargeable_after / notify errors).
+ * Returns a short reason string when the draft must not be notified, else null.
+ */
+function draftAutoNotifyHoldReason(bill, { hasProviderOpenForService = false } = {}) {
+  const { isCalendarMonthPeriod } = require('../use-cases/utilities/period-utils');
+  if (
+    bill.service_type === 'electric' &&
+    (bill.amount_source === 'amount_due_fallback' || bill.amount_source === 'parsed_total')
+  ) {
+    return `amount_source=${bill.amount_source}`;
+  }
+  if (
+    isCalendarMonthPeriod(bill.period_start, bill.period_end) &&
+    hasProviderOpenForService
+  ) {
+    return 'calendar-month phantom while provider-period bill is open';
+  }
+  return null;
+}
+
 async function autoNotifyEligibleDrafts({ userId, role }) {
   if (!autoNotifyEnabled()) {
     return { notified: 0, skipped: 0, disabled: true };
@@ -334,6 +360,7 @@ async function autoNotifyEligibleDrafts({ userId, role }) {
 
   const { isElectricBillChargeable } = require('./dominion-billing.service');
   const { isCalendarMonthPeriod } = require('../use-cases/utilities/period-utils');
+  // Lazy: uc03-notify-tenants imports this module (circular).
   const { executeNotifyTenants } = require('../use-cases/utilities/uc03-notify-tenants');
   const { accessiblePropertyIds } = require('../use-cases/utilities/access');
 
@@ -372,23 +399,11 @@ async function autoNotifyEligibleDrafts({ userId, role }) {
       skipped += 1;
       continue;
     }
-    if (
-      bill.service_type === 'electric' &&
-      (bill.amount_source === 'amount_due_fallback' || bill.amount_source === 'parsed_total')
-    ) {
-      console.warn(
-        `[utility-comms] hold notify ${bill.id}: amount_source=${bill.amount_source} (need Current Charges)`
-      );
-      skipped += 1;
-      continue;
-    }
-    if (
-      isCalendarMonthPeriod(bill.period_start, bill.period_end) &&
-      hasProviderOpen(bill.property_id, bill.service_type)
-    ) {
-      console.warn(
-        `[utility-comms] hold notify ${bill.id}: calendar-month phantom while provider-period bill is open`
-      );
+    const hold = draftAutoNotifyHoldReason(bill, {
+      hasProviderOpenForService: hasProviderOpen(bill.property_id, bill.service_type),
+    });
+    if (hold) {
+      console.warn(`[utility-comms] hold notify ${bill.id}: ${hold}`);
       skipped += 1;
       continue;
     }
@@ -415,5 +430,7 @@ module.exports = {
   sendUtilityReminders,
   autoNotifyEligibleDrafts,
   autoNotifyEnabled,
+  draftAutoNotifyHoldReason,
+  remindersWhenNotifyDisabled,
   REVIEW_URL,
 };

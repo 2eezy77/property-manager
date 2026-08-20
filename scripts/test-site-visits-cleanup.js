@@ -15,6 +15,10 @@ const {
   parseCustomAmountCents,
   resolvePayrollCharge,
   buildAvailableOwnerPayMethods,
+  wrapStripePayrollError,
+  mapStripeStatus,
+  isCancellablePayrollIntent,
+  payrollProcessingDetails,
 } = require('../src/services/site-visits-payout.service');
 const { resolveInstantPayoutAmount } = require('../src/services/stripe.service');
 const { toNorfolkDatetimeLocal, MS_24H } = require('../src/utils/norfolk-time');
@@ -111,6 +115,16 @@ assert(
 );
 assert(
   canPayPayroll({
+    visitCount: 1,
+    outstandingCount: 1,
+    processing: true,
+    canCancelProcessing: true,
+    paymentMethodCount: 1,
+  }) === true,
+  'owner can retry after cancellable in-flight payroll'
+);
+assert(
+  canPayPayroll({
     visitCount: 0,
     outstandingCount: 0,
     paymentMethodCount: 2,
@@ -149,6 +163,41 @@ assert(
     propertyBankLinked: true,
   })) === JSON.stringify([]),
   'no owner pay methods until Connect payout is ready'
+);
+assert(
+  JSON.stringify(buildAvailableOwnerPayMethods({
+    connectPayoutReady: true,
+    cashAppPayAvailable: false,
+    propertyBankLinked: false,
+  })) === JSON.stringify([]),
+  'no owner pay methods when Cash App and property bank are both missing'
+);
+
+assert(mapStripeStatus('succeeded') === 'paid', 'succeeded PI maps to paid payroll');
+assert(mapStripeStatus('canceled') === 'failed', 'canceled PI maps to failed payroll');
+assert(mapStripeStatus('processing') === 'processing', 'processing PI stays processing');
+assert(isCancellablePayrollIntent({ status: 'requires_action' }) === true, 'requires_action payroll can cancel');
+assert(isCancellablePayrollIntent({ status: 'processing' }) === false, 'bank-submitted ACH cannot cancel');
+assert(isCancellablePayrollIntent(null) === false, 'missing PI is not cancellable');
+assert(
+  payrollProcessingDetails({
+    status: 'requires_action',
+    next_action: { verify_with_microdeposits: { hosted_verification_url: 'https://verify.example' } },
+    last_payment_error: null,
+  }).verificationUrl === 'https://verify.example',
+  'processing details expose microdeposit verification URL'
+);
+assert(
+  payrollProcessingDetails({ status: 'processing' }).canCancel === false,
+  'processing details mark bank-submitted ACH as not cancellable'
+);
+assert(
+  wrapStripePayrollError({ message: 'Your platform has not signed up for Connect' }).code === 'CONNECT_NOT_ENABLED',
+  'Connect-not-enabled Stripe errors get a portal code'
+);
+assert(
+  wrapStripePayrollError({ message: 'insufficient_capabilities_for_transfer' }).code === 'CONNECT_ONBOARDING_REQUIRED',
+  'incomplete manager Connect maps to onboarding required'
 );
 
 assert(parseCustomAmountCents('') === 0, 'blank custom amount is zero');
@@ -231,6 +280,16 @@ assert(
   }) === 'Jose Montero paid Konstantin site visits plus $100.00 other work (ach)',
   'activity log records visits plus other work in one pay'
 );
+assert(
+  buildSummary({
+    actor: { first_name: 'Jose', last_name: 'Montero', email: 'j@x.com' },
+    method: 'POST',
+    path: '/api/site-visits/payroll/pay',
+    statusCode: 200,
+    body: { customAmount: 100, payVisits: true, paymentMethod: 'cash_app', year: 2026, month: 8 },
+  }) === 'Jose Montero paid Konstantin site visits plus $100.00 other work (cash app)',
+  'activity log records Cash App as the associate pay rail'
+);
 
 async function runMonthGroupChecks() {
   const {
@@ -277,6 +336,39 @@ async function runMonthGroupChecks() {
     monthLabel: 'August 2026',
   });
   assert(otherOnlyPreview.primaryAction === 'other' && otherOnlyPreview.primaryLabel === 'Pay $100 for other work', 'other work alone stays a custom pay');
+
+  const outstandingOnly = buildSiteVisitPayPreview({
+    visitCount: 0,
+    visitCents: 0,
+    outstandingCount: 2,
+    outstandingCents: 4000,
+    otherWorkAmount: '',
+    monthLabel: 'August 2026',
+  });
+  assert(
+    outstandingOnly.primaryAction === 'visits' && outstandingOnly.hasOutstandingOnly === true,
+    'unpaid completed visits from earlier months stay payable'
+  );
+  assert(
+    outstandingOnly.headline === '2 unpaid visits from other months',
+    'outstanding-only headline names other months (not the current month)'
+  );
+  assert(
+    outstandingOnly.primaryLabel === 'Pay visits $40',
+    'outstanding-only pay button uses outstanding cents'
+  );
+  assert(
+    buildSiteVisitPayPreview({
+      visitCount: 0,
+      visitCents: 0,
+      outstandingCount: 0,
+      outstandingCents: 0,
+      otherWorkAmount: '0.49',
+      monthLabel: 'August 2026',
+    }).primaryAction === 'none',
+    'other work under $0.50 does not open a pay action'
+  );
+
   assert(payoutKindLabel({ payoutKind: 'mixed', visitCount: 1 }) === '1 visit + other work', 'history labels mixed payouts');
   assert(payActionLabel(both, 'cash_app') === 'Pay $120 in Cash App', 'Cash App button names the fast rail');
   assert(payActionLabel(both, 'ach') === 'Pay $120 by bank transfer', 'ACH button names the slow rail');
@@ -329,6 +421,10 @@ async function runMonthGroupChecks() {
 
   const unpaidPast = groupVisitsByMonth([juneLeftover], { currentMonth: '2026-08', paidMonths: {} });
   assert(unpaidPast[0]?.isPaid === false, 'June leftovers are not Paid without payroll or payoutId');
+  assert(
+    earlierMonthsCaption(unpaidPast) === 'Closed leftovers. Tap a month if you need to check.',
+    'earlier-months copy stays unpaid when no payroll covers the leftovers'
+  );
   assert(
     groupVisitsByMonth([junePaidDone], { currentMonth: '2026-08', paidMonths: {} })[0]?.isPaid === true,
     'completed visits with payoutId mark the month Paid'
