@@ -721,6 +721,8 @@ module.exports = {
   resolveInstantPayoutAmount,
   ensureConnectManualPayouts,
   createInstantPayout,
+  connectSiteBusinessProfile,
+  CONNECT_SITE_MCC,
   retrieveConnectAccount,
   isConnectTransfersActive,
   createConnectAccountLink,

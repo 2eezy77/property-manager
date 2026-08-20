@@ -17,6 +17,8 @@ const HTTP_STATUS = {
   INVALID_STATE: 409,
   DEADLINE_NOT_REACHED: 409,
   DEADLINE_PASSED: 409,
+  /** Electric period still open (UC06 / notify) — same class as deadline gates. */
+  BILLING_PERIOD_OPEN: 409,
   NOT_CONFIGURED: 503,
   IMPORT_FAILED: 500,
   SERVER_ERROR: 500,

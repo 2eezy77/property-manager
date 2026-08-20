@@ -7,6 +7,7 @@ import {
   resolveDocumentId, ENV_STATUS_STYLE, envelopeStatusLabel, rlErrorMessage,
 } from '@/utils/rlLeaseHelpers';
 import { deriveNativeLeaseStep } from '@/utils/nativeLeaseHelpers';
+import { filterUnitsForLeasePath } from '@/utils/leaseUnitOptions';
 
 function fmt(ts) { return ts ? new Date(ts).toLocaleDateString([],{month:'short',day:'numeric',year:'numeric'}) : '—'; }
 function fmtMoney(v) { return v != null ? '$'+Number(v).toLocaleString('en-US',{minimumFractionDigits:2}) : '—'; }
@@ -254,9 +255,8 @@ function CreateLeaseModal({ onClose, onCreated }) {
     if (!form.property_id) { setUnits([]); return; }
     // Native VA room leases share a house/unit — allow occupied units for that path.
     // Legacy whole-unit leases still only list vacant units.
-    const allowOccupied = form.lease_path === 'native';
     api.get(`/api/properties/${form.property_id}`)
-      .then(r => setUnits((r.data.units || []).filter(u => allowOccupied || !u.is_occupied)))
+      .then((r) => setUnits(filterUnitsForLeasePath(r.data.units || [], form.lease_path)))
       .catch(() => {});
   }, [form.property_id, form.lease_path]);
 

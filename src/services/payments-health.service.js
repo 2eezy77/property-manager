@@ -362,6 +362,14 @@ async function checkConnectPayroll(checks, db = pool) {
   }
 }
 
+/** Actionable fix text when /link/token/create probe fails (health + /health). */
+function plaidLinkTokenFailureFix(errorCode) {
+  if (errorCode === 'INVALID_LINK_CUSTOMIZATION') {
+    return 'Open https://dashboard.plaid.com/link/data-transparency-v5 and publish at least one Data Transparency use case on the default Link customization';
+  }
+  return 'Verify PLAID_CLIENT_ID/SECRET, production access, and PLAID_REDIRECT_URI in Plaid Dashboard allowed URIs';
+}
+
 async function checkPlaidApi(checks) {
   if (!process.env.PLAID_CLIENT_ID || !process.env.PLAID_SECRET) return;
 
@@ -371,15 +379,12 @@ async function checkPlaidApi(checks) {
   } catch (err) {
     const code = err.response?.data?.error_code;
     const msg = err.response?.data?.error_message || err.message;
-    const fix = code === 'INVALID_LINK_CUSTOMIZATION'
-      ? 'Open https://dashboard.plaid.com/link/data-transparency-v5 and publish at least one Data Transparency use case on the default Link customization'
-      : 'Verify PLAID_CLIENT_ID/SECRET, production access, and PLAID_REDIRECT_URI in Plaid Dashboard allowed URIs';
     checks.push(check(
       'plaid.link_token',
       'plaid',
       'fail',
       `Plaid link token failed: ${msg}`,
-      { fix }
+      { fix: plaidLinkTokenFailureFix(code) }
     ));
   }
 }
@@ -541,4 +546,5 @@ module.exports = {
   expectedWebhookUrl,
   expectedWebhookUrls,
   buildStripeSubsection,
+  plaidLinkTokenFailureFix,
 };
