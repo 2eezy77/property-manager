@@ -213,6 +213,8 @@ async function enforceLatestCollectible(client, opts = {}) {
 
 module.exports = {
   enforceLatestCollectible,
+  waiveOpenSplits,
+  reopenLatestForCollection,
   RESOLVED_NOTE,
   CALENDAR_PHANTOM_NOTE,
   pickLatestCollectibleBill,

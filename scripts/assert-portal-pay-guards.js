@@ -115,8 +115,35 @@ mustContain(
 );
 mustContain(
   'src/use-cases/utilities/uc03-notify-tenants.js',
-  ["status = 'pending'", 'payment_id IS NULL', 'backfillSplitNotifications'],
+  ['healPendingSplitsForBill', 'notify-splits'],
   'UC03 must heal pending splits on already-notified bills'
+);
+mustContain(
+  'src/use-cases/utilities/notify-splits.js',
+  ["status = 'pending'", 'payment_id IS NULL', "channel = 'in_app'"],
+  'notify heal must promote pending→notified without payment_id and stay in-app'
+);
+mustContain(
+  'src/services/cashapp-sync-policy.js',
+  [
+    'shouldMarkCashAppSyncFailed',
+    'shouldUnlockUtilitySplitsOnCashAppSyncFail',
+    'shouldMarkUtilityPaidOnCashAppSyncSuccess',
+    'requires_payment_method',
+  ],
+  'Cash App sync policy must gate terminal PI failures and utility unlock/pay'
+);
+mustContain(
+  'src/routes/payments.routes.js',
+  [
+    'shouldMarkCashAppSyncFailed',
+    'shouldUnlockUtilitySplitsOnCashAppSyncFail',
+    'shouldMarkUtilityPaidOnCashAppSyncSuccess',
+    "status IN ('pending', 'processing')",
+    'markUtilitySplitsPaidForPayment',
+    'releaseUtilitySplitsForFailedPayment',
+  ],
+  'Cash App sync must use terminal-failure policy + pending/processing UPDATE gate'
 );
 mustContain(
   'src/routes/payments.routes.js',

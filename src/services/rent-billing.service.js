@@ -4,6 +4,10 @@
 const pool = require('../db/client');
 const { sendRentDueReminders, sendLateFeeAppliedNotifications } = require('./payment-email.service');
 const { markLateFeesPaidForLease } = require('../utils/payment-settlement');
+const {
+  computeRentChargeBreakdown,
+  effectiveRentPaidAmount,
+} = require('../utils/rent-settlement-policy');
 const { isElectricBillChargeable } = require('./dominion-billing.service');
 const plaid = require('./plaid.service');
 const stripe = require('./stripe.service');
@@ -480,12 +484,7 @@ async function computeChargeBreakdown(db, leaseId, { monthStart } = {}) {
   // Prefer metadata.rent_amount so late-fee portions on the same charge aren't
   // counted twice toward monthly rent remaining.
   const { rows: paidRows } = await db.query(
-    `SELECT COALESCE(SUM(
-              COALESCE(
-                NULLIF(metadata->>'rent_amount', '')::numeric,
-                amount
-              )
-            ), 0) AS paid
+    `SELECT amount, metadata->>'rent_amount' AS rent_amount
        FROM payments
       WHERE lease_id = $1
         AND payment_type = 'rent'
@@ -494,16 +493,16 @@ async function computeChargeBreakdown(db, leaseId, { monthStart } = {}) {
         AND COALESCE(metadata->>'closed_by_installments', 'false') <> 'true'`,
     [leaseId, period]
   );
-  const paidThisMonth = Math.round(parseFloat(paidRows[0]?.paid ?? 0) * 100) / 100;
-  const rentRemaining = Math.max(0, Math.round((monthlyRent - paidThisMonth) * 100) / 100);
+  const paidThisMonth = paidRows.reduce(
+    (sum, row) => sum + effectiveRentPaidAmount(row.amount, row.rent_amount),
+    0
+  );
   const lateFeeAmount = await getLateFeeTotal(db, leaseId);
-  return {
-    rentAmount: rentRemaining,
-    lateFeeAmount,
-    totalAmount: Math.round((rentRemaining + lateFeeAmount) * 100) / 100,
+  return computeRentChargeBreakdown({
     monthlyRent,
     paidThisMonth,
-  };
+    lateFeeAmount,
+  });
 }
 
 function scheduleDailyRentBilling() {
