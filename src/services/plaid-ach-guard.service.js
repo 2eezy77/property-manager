@@ -4,29 +4,12 @@
  */
 
 const plaid = require('./plaid.service');
-
-function envFlag(name, defaultFalse = false) {
-  const v = process.env[name];
-  if (v == null || v === '') return defaultFalse;
-  return v === '1' || v.toLowerCase() === 'true';
-}
-
-function isSignalEnabled() {
-  return envFlag('PLAID_SIGNAL_ENABLED');
-}
-
-function isBalanceCheckEnabled() {
-  return envFlag('PLAID_BALANCE_CHECK_ENABLED');
-}
-
-function balanceBlocksCharge() {
-  return process.env.PLAID_BALANCE_BLOCK !== 'false';
-}
-
-function blockedSignalResults() {
-  const raw = process.env.PLAID_SIGNAL_BLOCK_RESULTS || 'REVIEW,REROUTE';
-  return new Set(raw.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean));
-}
+const {
+  isSignalEnabled,
+  isBalanceCheckEnabled,
+  balanceBlocksCharge,
+  evaluateAchGuardDecision,
+} = require('./ach-guard-policy');
 
 /**
  * Run Signal + Balance gates before Stripe ACH debit.
@@ -41,81 +24,81 @@ async function assertAchDebitAllowed({
   clientTransactionId,
   context = 'ach_debit',
 }) {
+  let signalResult = null;
+  let signal = null;
+  let availableCents = null;
+
+  // Keep Signal-then-Balance short-circuit: do not call Balance when Signal already blocks.
   if (isSignalEnabled()) {
-    const signal = await plaid.evaluateAchRisk(accessToken, accountId, amountCents, {
+    signal = await plaid.evaluateAchRisk(accessToken, accountId, amountCents, {
       userId,
       userPresent,
       clientTransactionId: clientTransactionId || `${context}-${Date.now()}`,
     });
+    signalResult = signal.rulesetResult?.toUpperCase?.() || null;
 
-    const result = signal.rulesetResult?.toUpperCase?.() || null;
-    const blockSet = blockedSignalResults();
-
-    if (result && blockSet.has(result)) {
+    const signalDecision = evaluateAchGuardDecision({
+      signalResult,
+      availableCents: null,
+      amountCents,
+    });
+    if (!signalDecision.ok) {
       console.warn('[plaid-ach-guard] Signal blocked charge', {
         context,
         userId,
         accountId,
         amountCents,
-        rulesetResult: result,
+        rulesetResult: signalResult,
         score: signal.customerReturnRiskScore,
       });
-      return {
-        ok: false,
-        status: 402,
-        body: {
-          error: 'ACH_RISK_BLOCKED',
-          message: result === 'REROUTE'
-            ? 'This bank account cannot be debited right now due to elevated return risk. Try another account or payment method.'
-            : 'This payment needs additional review before we can debit your account. Contact your property manager or try again later.',
-          signalResult: result,
-        },
-      };
+      return { ok: false, status: signalDecision.status, body: signalDecision.body };
     }
   }
 
   if (isBalanceCheckEnabled()) {
     const balance = await plaid.getAvailableBalance(accessToken, accountId);
-    const requiredCents = amountCents;
+    availableCents = balance.availableCents;
+  }
 
-    if (balance.availableCents != null && balance.availableCents < requiredCents) {
-      const msg = `Insufficient available balance (${(balance.availableCents / 100).toFixed(2)} available, ${(requiredCents / 100).toFixed(2)} required).`;
+  const decision = evaluateAchGuardDecision({
+    signalResult,
+    availableCents,
+    amountCents,
+  });
 
-      if (balanceBlocksCharge()) {
-        console.warn('[plaid-ach-guard] Balance blocked charge', {
-          context,
-          userId,
-          accountId,
-          amountCents,
-          availableCents: balance.availableCents,
-        });
-        return {
-          ok: false,
-          status: 402,
-          body: {
-            error: 'INSUFFICIENT_BALANCE',
-            message: msg,
-            availableCents: balance.availableCents,
-            requiredCents,
-          },
-        };
-      }
-
-      console.warn('[plaid-ach-guard] Balance warning (charge allowed)', {
+  if (!decision.ok) {
+    if (decision.kind === 'balance') {
+      console.warn('[plaid-ach-guard] Balance blocked charge', {
         context,
         userId,
         accountId,
         amountCents,
-        availableCents: balance.availableCents,
+        availableCents,
       });
     }
+    return { ok: false, status: decision.status, body: decision.body };
   }
 
-  return { ok: true };
+  if (decision.balanceWarning) {
+    console.warn('[plaid-ach-guard] Balance warning (charge allowed)', {
+      context,
+      userId,
+      accountId,
+      amountCents,
+      availableCents: decision.availableCents,
+    });
+  }
+
+  const ok = { ok: true };
+  if (signal) ok.signal = signal;
+  if (availableCents != null) ok.balanceCents = availableCents;
+  return ok;
 }
 
 module.exports = {
   assertAchDebitAllowed,
   isSignalEnabled,
   isBalanceCheckEnabled,
+  balanceBlocksCharge,
+  evaluateAchGuardDecision,
 };
