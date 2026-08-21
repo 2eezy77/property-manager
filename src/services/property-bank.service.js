@@ -214,6 +214,7 @@ module.exports = {
   BANK_PURPOSE,
   getPropertyBank,
   getPropertyBankForOwner,
+  bankAccountToJson,
   bankSummary,
   linkPropertyBank,
   removePropertyBank,

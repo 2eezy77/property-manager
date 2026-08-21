@@ -122,3 +122,26 @@ export function buildSiteVisitPayPreview({
       : '',
   };
 }
+
+/**
+ * Owner dashboard Boots-on-site pay nag.
+ * Prefer this month's unpaid visits; otherwise fall back to leftover months.
+ * Hide while a charge is processing so paid months do not keep nags up.
+ */
+export function buildOwnerVisitPayNag(visitPayroll, { loading = false } = {}) {
+  const unpaidVisitCount = visitPayroll?.visitCount > 0
+    ? visitPayroll.visitCount
+    : (visitPayroll?.outstandingCount || 0);
+  const unpaidVisitCents = visitPayroll?.visitCount > 0
+    ? (visitPayroll.totalCents || 0)
+    : (visitPayroll?.outstandingCents || 0);
+  const show = !loading
+    && unpaidVisitCount > 0
+    && !visitPayroll?.processing;
+  return {
+    unpaidVisitCount,
+    unpaidVisitCents,
+    show,
+    fromEarlierMonths: !(visitPayroll?.visitCount > 0) && unpaidVisitCount > 0,
+  };
+}
