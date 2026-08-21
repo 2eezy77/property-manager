@@ -53,6 +53,12 @@ const {
   releaseUtilitySplitsForFailedPayment,
   markUtilitySplitsPaidForPayment,
 } = require('../services/utility-portal-charge.service');
+const {
+  shouldMarkCashAppSyncFailed,
+  cashAppSyncFailureReason,
+  shouldUnlockUtilitySplitsOnCashAppSyncFail,
+  shouldMarkUtilityPaidOnCashAppSyncSuccess,
+} = require('../services/cashapp-sync-policy');
 const { activateNativeLeaseAfterDeposit } = require('../services/native-lease-activate.service');
 const {
   computeCardCashAppFee,
@@ -1262,7 +1268,10 @@ router.get('/cashapp/sync', Guards.tenantOnly, async (req, res) => {
           });
         }
         let utilityBillIds = [];
-        if (rowCount && payment.payment_type === 'utility') {
+        if (shouldMarkUtilityPaidOnCashAppSyncSuccess({
+          rowCount,
+          paymentType: payment.payment_type,
+        })) {
           utilityBillIds = await markUtilitySplitsPaidForPayment(client, payment.id);
         }
         await client.query('COMMIT');
@@ -1297,13 +1306,10 @@ router.get('/cashapp/sync', Guards.tenantOnly, async (req, res) => {
         [payment.id]
       );
       status = 'processing';
-    } else if (
-      (pi.status === 'canceled' || pi.status === 'requires_payment_method')
-      && status !== 'succeeded'
-    ) {
+    } else if (shouldMarkCashAppSyncFailed(pi.status, status)) {
       // Only terminal PI failures — do not treat a stale last_payment_error on a
       // still-processing intent as failure (would unlock splits then double-charge).
-      failureReason = pi.last_payment_error?.message || 'Cash App payment was not completed.';
+      failureReason = cashAppSyncFailureReason(pi);
       const { rows: failedRows } = await pool.query(
         `UPDATE payments
             SET status = 'failed', failure_reason = $1, updated_at = NOW()
@@ -1312,7 +1318,7 @@ router.get('/cashapp/sync', Guards.tenantOnly, async (req, res) => {
          RETURNING id, payment_type`,
         [failureReason, payment.id]
       );
-      if (failedRows[0]?.payment_type === 'utility') {
+      if (shouldUnlockUtilitySplitsOnCashAppSyncFail(failedRows[0])) {
         await releaseUtilitySplitsForFailedPayment(pool, failedRows[0].id);
       }
       if (failedRows[0]) status = 'failed';
