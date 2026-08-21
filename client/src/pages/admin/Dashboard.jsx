@@ -7,6 +7,7 @@ import {
 import api from '@/api/axios';
 import { useAuth } from '@/context/AuthContext';
 import { canPreviewTenantPortal } from '@/utils/roles';
+import { buildOwnerVisitPayNag } from '@/utils/siteVisitPayroll';
 import StatCard from '@/components/ui/StatCard';
 import Panel from '@/components/ui/Panel';
 import ActionDock from '@/components/ui/ActionDock';
@@ -101,15 +102,12 @@ export default function AdminDashboardPage() {
   const tenantPreview = data.tenants.slice(0, 5);
   const maintCount = oversight?.recent?.maintenance?.length ?? 0;
   const inboxCount = oversight?.recent?.inbox_threads?.length ?? 0;
-  const unpaidVisitCount = visitPayroll?.visitCount > 0
-    ? visitPayroll.visitCount
-    : (visitPayroll?.outstandingCount || 0);
-  const unpaidVisitCents = visitPayroll?.visitCount > 0
-    ? (visitPayroll.totalCents || 0)
-    : (visitPayroll?.outstandingCents || 0);
-  const showVisitPayNag = !loading
-    && unpaidVisitCount > 0
-    && !visitPayroll?.processing;
+  const {
+    unpaidVisitCount,
+    unpaidVisitCents,
+    show: showVisitPayNag,
+    fromEarlierMonths: visitNagFromEarlierMonths,
+  } = buildOwnerVisitPayNag(visitPayroll, { loading });
 
   return (
     <div className="stagger-section space-y-6">
@@ -149,7 +147,7 @@ export default function AdminDashboardPage() {
               Pay {visitPayroll.manager?.name || 'Konstantin'} — {unpaidVisitCount} site visit{unpaidVisitCount === 1 ? '' : 's'}
             </p>
             <p className="mt-1 text-xs text-violet-800">
-              {fmt(unpaidVisitCents / 100)} due{visitPayroll.visitCount > 0 ? ` for ${visitPayroll.monthLabel}` : ' from earlier months'}
+              {fmt(unpaidVisitCents / 100)} due{visitNagFromEarlierMonths ? ' from earlier months' : ` for ${visitPayroll.monthLabel}`}
               {' · Associate pay via Cash App, usually in his bank in about 30 minutes'}
               {visitPayroll.payoutBank?.linked
                 ? ` · ${visitPayroll.payoutBank.institutionName} ····${visitPayroll.payoutBank.accountMask}`
