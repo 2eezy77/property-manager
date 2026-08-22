@@ -579,7 +579,8 @@ function normalizeRlEvent(raw) {
 function isBinderCompletedEvent(eventType, payload = {}) {
   const name = String(eventType ?? '').toUpperCase();
   if (['BINDER_SIGN_COMPLETED', 'SIGN_COMPLETED', 'BINDER.SIGN.COMPLETED'].includes(name)) return true;
-  if (name.includes('sign') && name.includes('complet')) return true;
+  // name is uppercased above — match SIGN/COMPLET in that form
+  if (name.includes('SIGN') && name.includes('COMPLET')) return true;
   const status = String(payload.status ?? payload.binderStatus ?? '').toUpperCase();
   return status === 'SIGN_COMPLETED';
 }
@@ -1004,5 +1005,6 @@ module.exports = {
   startEventsPoller,
   mapBinderStatus,
   mapInterviewStatus,
+  isBinderCompletedEvent,
   checkConnection,
 };
