@@ -78,6 +78,10 @@
     "test:processing-fee": "node scripts/test-processing-fee.js",
     "test:balance-paid": "node scripts/test-balance-paid-month.js",
     "test:plaid-link-token": "node scripts/test-plaid-link-token.js",
+    "test:impersonation-payment-guards": "node scripts/test-impersonation-payment-guards.js",
+    "test:plaid-item-relink-policy": "node scripts/test-plaid-item-relink-policy.js",
+    "test:rocketlawyer-status-policy": "node scripts/test-rocketlawyer-status-policy.js",
+    "test:client-role-gates": "node scripts/test-client-role-gates.js",
     "test:identity-crypto": "node scripts/test-identity-crypto.js",
     "test:lease-invite-identity": "node scripts/test-lease-invite-identity.js",
     "test:identity:all": "npm run test:identity-crypto && npm run test:lease-invite-identity"

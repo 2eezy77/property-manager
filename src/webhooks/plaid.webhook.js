@@ -12,31 +12,25 @@ const {
   markAccountsNeedsRelinkByItemId,
   clearLinkStatusByItemId,
 } = require('../services/plaid-bank-link.service');
+const { classifyItemWebhook } = require('../utils/plaid-item-relink-policy');
 
 const router = express.Router();
 
-const NEEDS_RELINK_CODES = new Set([
-  'PENDING_EXPIRATION',
-  'USER_PERMISSION_REVOKED',
-]);
-
-function itemErrorNeedsRelink(error) {
-  if (!error) return false;
-  const code = error.error_code || error.errorCode;
-  return code === 'ITEM_LOGIN_REQUIRED';
-}
-
 async function handleItemWebhook(payload) {
   const { webhook_code: code, item_id: itemId, error } = payload;
-  if (!itemId) return { action: 'ignored', reason: 'no_item_id' };
+  const decision = classifyItemWebhook(payload);
 
-  if (NEEDS_RELINK_CODES.has(code) || itemErrorNeedsRelink(error)) {
+  if (decision.action === 'ignored') {
+    return { action: 'ignored', reason: decision.reason };
+  }
+
+  if (decision.action === 'needs_relink') {
     const count = await markAccountsNeedsRelinkByItemId(itemId);
     console.warn('[plaid/webhook] marked needs_relink', { code, itemId, accounts: count });
     return { action: 'needs_relink', itemId, accounts: count };
   }
 
-  if (code === 'LOGIN_REPAIRED' || code === 'NEW_ACCOUNTS_AVAILABLE') {
+  if (decision.action === 'cleared_relink') {
     const count = await clearLinkStatusByItemId(itemId);
     if (count) {
       console.info('[plaid/webhook] cleared needs_relink', { code, itemId, accounts: count });
@@ -44,12 +38,7 @@ async function handleItemWebhook(payload) {
     return { action: 'cleared_relink', itemId, accounts: count };
   }
 
-  if (code === 'ERROR') {
-    if (itemErrorNeedsRelink(error)) {
-      const count = await markAccountsNeedsRelinkByItemId(itemId);
-      console.warn('[plaid/webhook] item error needs relink', { itemId, accounts: count });
-      return { action: 'needs_relink', itemId, accounts: count };
-    }
+  if (decision.action === 'logged_error') {
     console.warn('[plaid/webhook] item error', {
       itemId,
       errorCode: error?.error_code,

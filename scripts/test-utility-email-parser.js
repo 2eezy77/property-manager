@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 /** Regression checks for utility Gmail parsing. */
-const { parseUtilityEmail } = require('../src/services/utility-email-parser.service');
+const {
+  parseUtilityEmail,
+  shouldSkipBillImport,
+} = require('../src/services/utility-email-parser.service');
 
 const cases = [
   {
@@ -136,6 +139,63 @@ for (const c of cases) {
   } else {
     failed++;
     console.log('  ✗ defaultPeriodFromMessage', fb);
+  }
+}
+
+{
+  const skipCases = [
+    {
+      name: 'skip payment confirmation phrase',
+      from: 'billing@example.com',
+      subject: 'Payment confirmation',
+      text: 'Your payment of $50 was received',
+      expect: true,
+    },
+    {
+      name: 'skip outage alert',
+      from: 'alerts@dominionenergy.com',
+      subject: 'Outage alert near you',
+      text: 'Power outage restored',
+      expect: true,
+    },
+    {
+      name: 'skip marketing / NextDoor promo',
+      from: 'noreply@dominionenergy.com',
+      subject: 'Trending on Nextdoor',
+      text: 'Temperatures are rising this week',
+      expect: true,
+    },
+    {
+      name: 'skip Dominion non-bill (no bill cues)',
+      from: 'Dominion Energy <noreply@domenergy.com>',
+      subject: 'Account tip',
+      text: 'Here is a tip about saving energy with Dominion',
+      expect: true,
+    },
+    {
+      name: 'keep Dominion bill available cue',
+      from: 'Dominion Energy <noreply@domenergy.com>',
+      subject: 'Your bill is available',
+      text: 'Amount due $120.00 for this period',
+      expect: false,
+    },
+    {
+      name: 'keep HRSD amount-due bill',
+      from: 'HRSD <noreply@hrsd.com>',
+      subject: 'Your HRSD Bill Is Due',
+      text: 'Total Amount Due $165.74',
+      expect: false,
+    },
+  ];
+  for (const c of skipCases) {
+    const reason = shouldSkipBillImport(c.from, c.subject, c.text);
+    const skipped = reason != null;
+    if (skipped === c.expect) {
+      console.log(`  ✓ ${c.name}`);
+    } else {
+      failed++;
+      console.log(`  ✗ ${c.name}`, { reason, expectedSkip: c.expect });
+    }
   }
 }
 
