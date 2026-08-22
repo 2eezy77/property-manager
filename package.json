@@ -76,11 +76,19 @@
     "build": "cd client && npm install && npm run build",
     "assert:portal-pay": "node scripts/assert-portal-pay-guards.js",
     "test:processing-fee": "node scripts/test-processing-fee.js",
+    "test:partial-deposit": "node scripts/test-partial-deposit.js",
+    "test:partial-rent": "node scripts/test-partial-rent.js",
+    "test:deposit-pi-race": "node scripts/test-deposit-pi-race.js",
     "test:balance-paid": "node scripts/test-balance-paid-month.js",
     "test:plaid-link-token": "node scripts/test-plaid-link-token.js",
+    "test:db-password-guard": "node scripts/test-db-password-guard.js",
     "test:identity-crypto": "node scripts/test-identity-crypto.js",
+    "test:identity-outputs": "node scripts/test-identity-outputs.js",
+    "test:identity-fee-grace": "node scripts/test-identity-fee-grace.js",
+    "test:native-lease-activate": "node scripts/test-native-lease-activate.js",
     "test:lease-invite-identity": "node scripts/test-lease-invite-identity.js",
-    "test:identity:all": "npm run test:identity-crypto && npm run test:lease-invite-identity"
+    "test:identity:unit": "npm run test:identity-crypto && npm run test:identity-outputs && npm run test:identity-fee-grace && npm run test:native-lease-activate",
+    "test:identity:all": "npm run test:identity:unit && npm run test:lease-invite-identity"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.27.0",
