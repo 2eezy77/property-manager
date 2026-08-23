@@ -17,6 +17,7 @@ import { apiErrorMessage } from '@/utils/apiErrorMessage';
 import { usePlaidLink } from '@/hooks/usePlaidLink';
 import { notifyCheckinRefresh } from '@/hooks/useCheckin';
 import { isManagerImpersonation } from '@/utils/impersonation';
+import { estimateCardCashAppTotal } from '@/utils/processingFeeEstimate';
 import RentHero from '@/components/ui/RentHero';
 import TableScroll from '@/components/ui/TableScroll';
 import CardPaymentForm from '@/components/payments/CardPaymentForm';
@@ -24,20 +25,6 @@ import CardPaymentForm from '@/components/payments/CardPaymentForm';
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmt(amount) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
-}
-
-/** Client estimate matching server 2.9% + $0.30 (server is source of truth at charge time). */
-function estimateCardCashAppTotal(baseAmount) {
-  const baseCents = Math.round(Number(baseAmount) * 100);
-  if (!Number.isFinite(baseCents) || baseCents < 0) {
-    return { baseAmount: 0, processingFee: 0, totalAmount: 0 };
-  }
-  const feeCents = Math.round(baseCents * 0.029) + 30;
-  return {
-    baseAmount: baseCents / 100,
-    processingFee: feeCents / 100,
-    totalAmount: (baseCents + feeCents) / 100,
-  };
 }
 
 function fmtDate(iso) {

@@ -11,6 +11,7 @@ import {
   rlErrorMessage,
 } from '@/utils/rlLeaseHelpers';
 import { deriveNativeLeaseStep } from '@/utils/nativeLeaseHelpers';
+import { estimateCardCashAppTotal } from '@/utils/processingFeeEstimate';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -25,16 +26,6 @@ function fmtMoney(v) {
 }
 
 const IDENTITY_BASE_FEE = 1.50;
-
-function estimateProcessingTotal(baseAmount) {
-  const baseCents = Math.round(Number(baseAmount || 0) * 100);
-  const processingCents = Math.round(baseCents * 0.029) + 30;
-  return {
-    baseAmount: baseCents / 100,
-    processingFee: processingCents / 100,
-    totalAmount: (baseCents + processingCents) / 100,
-  };
-}
 
 function daysUntil(ts) {
   if (!ts) return null;
@@ -318,7 +309,7 @@ function IdentityVerificationCard({ lease, onRefresh }) {
   const [feeLoading, setFeeLoading] = useState(false);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [message, setMessage] = useState(null);
-  const feeEstimate = estimateProcessingTotal(IDENTITY_BASE_FEE);
+  const feeEstimate = estimateCardCashAppTotal(IDENTITY_BASE_FEE);
 
   async function startIdentitySession(retriesRemaining = 2) {
     setSessionLoading(true);

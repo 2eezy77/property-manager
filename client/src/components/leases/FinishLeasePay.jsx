@@ -3,25 +3,12 @@ import { AlertTriangle, CheckCircle2, CreditCard, Landmark, Smartphone } from 'l
 import { loadStripe } from '@stripe/stripe-js';
 import api from '@/api/axios';
 import { apiErrorMessage } from '@/utils/apiErrorMessage';
+import { estimateCardCashAppTotal } from '@/utils/processingFeeEstimate';
 import { usePlaidLink } from '@/hooks/usePlaidLink';
 import CardPaymentForm from '@/components/payments/CardPaymentForm';
 
 function fmtMoney(value) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(value || 0));
-}
-
-/** Client estimate matching server 2.9% + $0.30 (server is source of truth at charge time). */
-function estimateCardCashAppTotal(baseAmount) {
-  const baseCents = Math.round(Number(baseAmount) * 100);
-  if (!Number.isFinite(baseCents) || baseCents < 0) {
-    return { baseAmount: 0, processingFee: 0, totalAmount: 0 };
-  }
-  const feeCents = Math.round(baseCents * 0.029) + 30;
-  return {
-    baseAmount: baseCents / 100,
-    processingFee: feeCents / 100,
-    totalAmount: (baseCents + feeCents) / 100,
-  };
 }
 
 function showToast(message, variant = 'error') {

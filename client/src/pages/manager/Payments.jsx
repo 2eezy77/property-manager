@@ -8,6 +8,11 @@ import PageIntro from '@/components/ui/PageIntro';
 import TableScroll from '@/components/ui/TableScroll';
 import RentCollectionPanel from '@/components/manager/RentCollectionPanel';
 import { apiErrorMessage } from '@/utils/apiErrorMessage';
+import {
+  currentMonthKey,
+  groupPaymentsByMonth,
+  paymentMethodLabel,
+} from '@/utils/managerPaymentMonths';
 
 function showToast(message, variant = 'error') {
   window.dispatchEvent(new CustomEvent('api:toast', { detail: { message, variant } }));
@@ -20,24 +25,6 @@ function fmtPeriod(ts) {
 }
 function fmtMoney(v) { return v != null ? '$'+Number(v).toLocaleString('en-US',{minimumFractionDigits:2}) : '—'; }
 
-function paymentMethodLabel(p) {
-  // Prefer source so Stripe card is never mislabeled as ACH.
-  if (p.source === 'stripe_card' || p.payment_method === 'card') {
-    return p.partial_rent === 'true' ? 'Card (partial)' : 'Card';
-  }
-  if (p.source === 'stripe_cashapp') return 'Cash App Pay';
-  if (p.source === 'cash_app_import') {
-    return p.partial_rent === 'true' ? 'Cash App (off-site, partial)' : 'Cash App (archived off-app)';
-  }
-  if (p.payment_method) {
-    const base = METHOD_LABEL[p.payment_method] || p.payment_method;
-    return p.partial_rent === 'true' ? `${base} (partial)` : base;
-  }
-  if (p.stripe_payment_intent_id) return 'Bank (ACH)';
-  if (p.status === 'succeeded') return 'ACH';
-  return '—';
-}
-
 const STATUS_META = {
   succeeded:  { label:'Succeeded', color:'bg-green-100 text-green-700' },
   failed:     { label:'Failed',    color:'bg-red-100 text-red-600' },
@@ -47,56 +34,6 @@ const STATUS_META = {
 };
 
 const TYPE_LABEL = { rent:'Rent', late_fee:'Late Fee', security_deposit:'Security Deposit', utility:'Utility', other:'Other' };
-
-const METHOD_LABEL = {
-  cash_app: 'Cash App', check: 'Check', zelle: 'Zelle', venmo: 'Venmo',
-  wire: 'Wire', cash: 'Cash', other: 'Other',
-};
-
-function monthKeyFromDate(ts) {
-  if (!ts) return null;
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return null;
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
-
-function currentMonthKey() {
-  return monthKeyFromDate(new Date());
-}
-
-function monthLabelFromKey(key) {
-  if (!key || key === 'unknown') return 'Unknown period';
-  const [y, m] = key.split('-').map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-}
-
-/** Prefer billing period_start so rent lands in the right month section. */
-function paymentMonthKey(p) {
-  return monthKeyFromDate(p.period_start) || monthKeyFromDate(p.paid_at) || monthKeyFromDate(p.created_at) || 'unknown';
-}
-
-function groupPaymentsByMonth(rows) {
-  const map = new Map();
-  for (const p of rows || []) {
-    const key = paymentMonthKey(p);
-    if (!map.has(key)) map.set(key, []);
-    map.get(key).push(p);
-  }
-  return [...map.entries()]
-    .sort(([a], [b]) => (a < b ? 1 : a > b ? -1 : 0))
-    .map(([key, payments]) => {
-      const succeeded = payments.filter((p) => p.status === 'succeeded');
-      const collected = succeeded.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-      return {
-        key,
-        label: monthLabelFromKey(key),
-        payments,
-        count: payments.length,
-        collected,
-        isCurrent: key === currentMonthKey(),
-      };
-    });
-}
 
 const HEALTH_ICON = { pass: CheckCircle2, warn: AlertTriangle, fail: XCircle };
 function healthGlyph(status) {
