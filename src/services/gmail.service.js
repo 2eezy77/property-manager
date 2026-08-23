@@ -304,5 +304,6 @@ module.exports = {
   resolveOrgId,
   createOAuthClient,
   getStoredRefreshToken,
+  normalizeProductionRedirectUri,
   SCOPES,
 };

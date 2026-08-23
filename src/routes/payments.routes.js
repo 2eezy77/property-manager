@@ -60,6 +60,7 @@ const {
   feeSchedulePublic,
 } = require('../services/payment-processing-fee.service');
 const { partnerErrorMessage, linkTokenCreateErrorMessage } = require('../utils/plaid-errors');
+const { isStripeAccountRestrictionError } = require('../utils/stripe-account-restriction');
 const { assertAchDebitAllowed } = require('../services/plaid-ach-guard.service');
 const {
   createUpdateLinkTokenForAccount,
@@ -91,12 +92,6 @@ function monthBounds(date = new Date()) {
     start: start.toISOString().slice(0, 10),
     end: end.toISOString().slice(0, 10),
   };
-}
-
-function isStripeAccountRestrictionError(err) {
-  return /charges_enabled|charges enabled|account.*restricted|capabilit/i.test(
-    `${err.code || ''} ${err.message || ''} ${err.raw?.message || ''}`
-  );
 }
 
 const router = express.Router();

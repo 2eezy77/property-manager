@@ -5,19 +5,10 @@
 const {
   refreshBillSplitsForBill,
 } = require('./domain');
-const { billingMonthKey } = require('./house-cover');
+const { billingMonthKey, monthBounds: calendarMonthBounds } = require('./house-cover');
 
 function billingMonth(dateStr) {
   return billingMonthKey(dateStr);
-}
-
-function calendarMonthBounds(ym) {
-  const [y, m] = ym.split('-').map(Number);
-  if (!y || !m) return null;
-  const start = `${y}-${String(m).padStart(2, '0')}-01`;
-  const lastDay = new Date(y, m, 0).getDate();
-  const end = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
-  return { start, end };
 }
 
 function minDate(a, b) {
