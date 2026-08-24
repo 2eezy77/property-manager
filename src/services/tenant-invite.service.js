@@ -168,4 +168,10 @@ async function sendLeaseInviteEmail({ user, orgId, leaseId, ip }) {
 module.exports = {
   inviteTenantForLease,
   sendLeaseInviteEmail,
+  httpError,
+  normalizeEmail,
+  requiredString,
+  hashResetToken,
+  resetUrlForToken,
+  RESET_TTL_MS,
 };
