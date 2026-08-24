@@ -78,6 +78,10 @@
     "test:processing-fee": "node scripts/test-processing-fee.js",
     "test:balance-paid": "node scripts/test-balance-paid-month.js",
     "test:plaid-link-token": "node scripts/test-plaid-link-token.js",
+    "test:password-reset-token": "node scripts/test-password-reset-token.js",
+    "test:tenant-invite-helpers": "node scripts/test-tenant-invite-helpers.js",
+    "test:property-access": "node scripts/test-property-access.js",
+    "test:payment-ledger-month": "node scripts/test-payment-ledger-month.js",
     "test:identity-crypto": "node scripts/test-identity-crypto.js",
     "test:lease-invite-identity": "node scripts/test-lease-invite-identity.js",
     "test:identity:all": "npm run test:identity-crypto && npm run test:lease-invite-identity"
