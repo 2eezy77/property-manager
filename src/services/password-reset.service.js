@@ -13,6 +13,7 @@ const { PORTAL_ORIGIN } = require('./email-templates/brand');
 
 const RESET_TTL_MS = 60 * 60 * 1000;
 const BCRYPT_ROUNDS = 12;
+const MIN_RESET_TOKEN_LENGTH = 32;
 
 function hashResetToken(raw) {
   return crypto.createHash('sha256').update(raw).digest('hex');
@@ -21,6 +22,20 @@ function hashResetToken(raw) {
 function resetUrlForToken(raw) {
   const origin = (PORTAL_ORIGIN || 'https://www.monterorentals.com').replace(/\/$/, '');
   return `${origin}/reset-password?token=${encodeURIComponent(raw)}`;
+}
+
+/** Raw link tokens must be long enough that guessing is impractical. */
+function isValidResetTokenRaw(raw) {
+  const s = String(raw || '').trim();
+  return s.length >= MIN_RESET_TOKEN_LENGTH;
+}
+
+/** DB row is usable only while active, unused, and unexpired. */
+function isResetTokenRecordValid(row, now = new Date()) {
+  if (!row || !row.is_active) return false;
+  if (row.used_at) return false;
+  if (!row.expires_at) return false;
+  return new Date(row.expires_at) >= now;
 }
 
 async function resolveOrgIdForPasswordReset(user) {
@@ -137,7 +152,7 @@ async function requestPasswordReset({ email, ip }) {
 
 async function completePasswordReset({ token, newPassword, ip }) {
   const raw = String(token || '').trim();
-  if (!raw || raw.length < 32) {
+  if (!isValidResetTokenRaw(raw)) {
     const err = new Error('Invalid or expired reset link.');
     err.code = 'INVALID_TOKEN';
     err.statusCode = 400;
@@ -162,7 +177,7 @@ async function completePasswordReset({ token, newPassword, ip }) {
     );
 
     const row = rows[0];
-    if (!row || row.used_at || new Date(row.expires_at) < new Date() || !row.is_active) {
+    if (!isResetTokenRecordValid(row)) {
       const err = new Error('Invalid or expired reset link. Request a new one from the login page.');
       err.code = 'INVALID_TOKEN';
       err.statusCode = 400;
@@ -203,4 +218,10 @@ async function completePasswordReset({ token, newPassword, ip }) {
 module.exports = {
   requestPasswordReset,
   completePasswordReset,
+  hashResetToken,
+  resetUrlForToken,
+  isValidResetTokenRaw,
+  isResetTokenRecordValid,
+  MIN_RESET_TOKEN_LENGTH,
+  RESET_TTL_MS,
 };
