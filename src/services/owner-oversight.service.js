@@ -393,4 +393,9 @@ async function getManagerOversight(ownerId) {
   };
 }
 
-module.exports = { getManagerOversight, resolveOrgId, MANAGER_EMAIL };
+module.exports = {
+  getManagerOversight,
+  resolveOrgId,
+  MANAGER_EMAIL,
+  managerDisplayName,
+};

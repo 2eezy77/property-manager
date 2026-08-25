@@ -265,4 +265,6 @@ module.exports = {
   alertTenantBankLinked,
   alertTenantCheckinComplete,
   maybeAlertCheckinComplete,
+  alreadyNotified,
+  escapeHtml,
 };
