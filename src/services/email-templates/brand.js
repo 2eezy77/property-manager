@@ -53,4 +53,4 @@ const PALETTE = {
   staffBg: '#f5f3ff',
 };
 
-module.exports = { BRAND, PALETTE, PORTAL_ORIGIN };
+module.exports = { BRAND, PALETTE, PORTAL_ORIGIN, resolvePortalOrigin };
