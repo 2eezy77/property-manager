@@ -80,7 +80,15 @@
     "test:plaid-link-token": "node scripts/test-plaid-link-token.js",
     "test:identity-crypto": "node scripts/test-identity-crypto.js",
     "test:lease-invite-identity": "node scripts/test-lease-invite-identity.js",
-    "test:identity:all": "npm run test:identity-crypto && npm run test:lease-invite-identity"
+    "test:identity:all": "npm run test:identity-crypto && npm run test:lease-invite-identity",
+    "test:ops-alert": "node scripts/test-ops-alert.js",
+    "test:site-visits-catalog": "node scripts/test-site-visits-catalog.js",
+    "test:owner-oversight-display": "node scripts/test-owner-oversight-display.js",
+    "test:email-template-utils": "node scripts/test-email-template-utils.js",
+    "test:lease-invite-ui": "node scripts/test-lease-invite-ui.js",
+    "test:superseded-failed": "node scripts/test-superseded-failed-payments.js",
+    "test:stripe-payer-labels": "node scripts/test-stripe-payer-labels.js",
+    "test:cashapp-rent-month": "node scripts/test-cashapp-rent-month.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.27.0",
