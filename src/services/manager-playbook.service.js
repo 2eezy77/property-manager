@@ -3,6 +3,11 @@
  */
 
 const pool = require('../db/client');
+const {
+  HIDDEN_CATEGORIES,
+  isHiddenPlaybookCategory,
+  summarizePlaybookProgress,
+} = require('./manager-playbook-progress');
 
 const DEFAULT_ITEMS = [
   {
@@ -69,9 +74,6 @@ const DEFAULT_ITEMS = [
   },
 ];
 
-/** Retired playbook categories — hide from checklist (off-app Cash App import removed). */
-const HIDDEN_CATEGORIES = new Set(['cashapp_imports']);
-
 async function seedDefaults(managerId) {
   for (const item of DEFAULT_ITEMS) {
     await pool.query(
@@ -119,10 +121,7 @@ async function listPlaybook(managerId) {
 
 async function playbookSummary(managerId) {
   const items = await listPlaybook(managerId);
-  const total = items.length;
-  const completed = items.filter((i) => i.last_completed_at).length;
-  const verified = items.filter((i) => i.last_verified_at).length;
-  return { items, total, completed, verified };
+  return summarizePlaybookProgress(items);
 }
 
 async function updatePlaybookItem(managerId, itemId, patch) {
@@ -179,4 +178,7 @@ module.exports = {
   seedDefaults,
   resetPlaybookProgress,
   DEFAULT_ITEMS,
+  HIDDEN_CATEGORIES,
+  isHiddenPlaybookCategory,
+  summarizePlaybookProgress,
 };

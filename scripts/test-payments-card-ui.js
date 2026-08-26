@@ -1,4 +1,13 @@
 #!/usr/bin/env node
+/**
+ * Static guards for tenant Payments card / Cash App / utility portal-pay UI.
+ * Run: npm run test:payments-card-ui
+ *
+ * Catches regressions like missing utility paymentType on card intents
+ * (which previously 500'd when Stripe metadata was non-string) and
+ * manager-preview pay CTAs leaking through.
+ */
+'use strict';
 
 const assert = require('assert');
 const fs = require('fs');
@@ -26,12 +35,31 @@ function includesAll(source, label, snippets) {
 includesAll(paymentsPage, 'tenant Payments card integration', [
   "CardPaymentForm from '@/components/payments/CardPaymentForm'",
   "'/api/payments/card/create-intent'",
-  "paymentType: 'rent'",
+  "'/api/payments/cashapp/create-intent'",
   "paymentType: 'security_deposit'",
+  "paymentType: 'utility'",
   '<CardPaymentForm',
   "card: 'Card'",
   "p.metadata?.source === 'stripe_card'",
 ]);
+
+assert.match(
+  paymentsPage,
+  /paymentType:\s*'rent'/,
+  'rent ACH/card paths must send paymentType rent'
+);
+
+assert.match(
+  paymentsPage,
+  /startCardPayment\('utility'\)/,
+  'utility card CTA must call startCardPayment(utility)'
+);
+
+assert.match(
+  paymentsPage,
+  /handleCashAppPay\('utility'\)/,
+  'utility Cash App CTA must call handleCashAppPay(utility)'
+);
 
 assert.match(
   paymentsPage,
@@ -40,9 +68,33 @@ assert.match(
 );
 
 assert.match(
+  paymentsPage,
+  /const utilityDue = !managerPreview && utilityDueAmount > 0\.009/,
+  'utility due CTA must hide under manager preview'
+);
+
+assert.match(
+  paymentsPage,
+  /const depositDue = !managerPreview && balance\?\.securityDepositPayment/,
+  'deposit CTA must hide under manager preview'
+);
+
+assert.match(
+  paymentsPage,
+  /0\.029\) \+ 30/,
+  'client fee estimate must stay 2.9% + $0.30'
+);
+
+assert.match(
   paymentsRoutes,
-  /l\.status IN \('active', 'awaiting_deposit'\)/,
-  'balance endpoint should surface awaiting-deposit leases so pending deposits can be paid'
+  /l\.status IN \('active', 'awaiting_deposit', 'awaiting_identity'\)/,
+  'balance endpoint should surface awaiting-deposit/identity leases so deposits can be paid'
+);
+
+assert.match(
+  paymentsRoutes,
+  /payment_type\s*=\s*'utility'|paymentType === 'utility'|payment_type: 'utility'/,
+  'payments routes must accept utility portal charges'
 );
 
 const autopaySection = paymentsPage.slice(
