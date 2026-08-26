@@ -491,4 +491,8 @@ module.exports = {
   generateRoomLeasePdf,
   generateLeasePdf: generateRoomLeasePdf,
   flattenSignaturesOntoPdf,
+  // Pure helpers exported for unit tests (PDF generation behavior unchanged).
+  normalizeLeaseData,
+  safeFilePart,
+  formatDate,
 };

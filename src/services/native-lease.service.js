@@ -13,15 +13,14 @@ const {
   inviteTenantForLease,
   sendLeaseInviteEmail,
 } = require('./tenant-invite.service');
+const {
+  coalesceMoney,
+  normalizeHouseRules,
+  relativeDocumentPath,
+  filesystemPathForDocument: filesystemPathForDocumentHelper,
+} = require('./native-lease-doc-helpers');
 
 const DOCS_DIR = path.resolve(__dirname, '../../documents');
-
-const DEFAULT_HOUSE_RULES = {
-  smoking: false,
-  pets: false,
-  quietHours: '10:00pm–8:00am',
-  guestNights: 7,
-};
 
 const STAFF_ROLES = new Set(['super_admin', 'owner', 'property_manager']);
 
@@ -53,31 +52,12 @@ function required(value, message) {
   }
 }
 
-function coalesceMoney(value, fallback) {
-  return value === undefined || value === null || value === '' ? fallback : value;
-}
-
 function overrideValue(overrides, camelKey, snakeKey) {
   return overrides[camelKey] ?? overrides[snakeKey];
 }
 
-function normalizeHouseRules(houseRules) {
-  return {
-    ...DEFAULT_HOUSE_RULES,
-    ...(houseRules || {}),
-  };
-}
-
-function relativeDocumentPath(value) {
-  if (!value) return null;
-  if (String(value).startsWith('/documents/')) return value;
-  return `/documents/${path.basename(String(value))}`;
-}
-
 function filesystemPathForDocument(value) {
-  if (!value) return null;
-  if (path.isAbsolute(value) && fs.existsSync(value)) return value;
-  return path.join(DOCS_DIR, path.basename(String(value)));
+  return filesystemPathForDocumentHelper(value, DOCS_DIR);
 }
 
 function userDisplayName(user) {
