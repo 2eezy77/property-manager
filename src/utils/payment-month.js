@@ -26,6 +26,14 @@ function formatUsd(n) {
   })}`;
 }
 
+/** Short month label from a DATE / ISO value without local-timezone rollback. */
+function formatPeriodMonth(raw) {
+  const key = calendarMonthKey(raw);
+  if (!key || key === 'unknown') return '—';
+  const [y, m] = key.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+}
+
 function groupPaymentsByMonth(rows, now = new Date()) {
   const map = new Map();
   for (const p of rows || []) {
@@ -84,6 +92,7 @@ function monthGroupSummary(month) {
 module.exports = {
   calendarMonthKey,
   currentMonthKey,
+  formatPeriodMonth,
   groupPaymentsByMonth,
   monthGroupSummary,
   formatUsd,

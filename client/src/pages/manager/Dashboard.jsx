@@ -9,6 +9,7 @@ import StatCard from '@/components/ui/StatCard';
 import Panel from '@/components/ui/Panel';
 import ActionDock from '@/components/ui/ActionDock';
 import ProgressRing from '@/components/ui/ProgressRing';
+import { tenantsPaidSub } from '@/utils/rent-collection-copy';
 
 function fmt(n) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(n) || 0);
@@ -96,11 +97,7 @@ export default function ManagerDashboard() {
         <StatCard
           label="Collected"
           value={loading ? null : fmt(data.stats?.this_month)}
-          sub={
-            Number(data.stats?.partial_count || 0) > 0
-              ? `${data.stats.paid_count ?? 0} fully paid · ${data.stats.partial_count} partial`
-              : `${data.stats?.paid_count ?? 0} tenants fully paid`
-          }
+          sub={data.stats ? tenantsPaidSub(data.stats) : 'this month'}
           to="/manager/payments"
           icon={<Banknote size={20} strokeWidth={2} />}
           tone="manager"

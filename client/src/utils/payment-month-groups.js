@@ -86,3 +86,11 @@ export function monthLabelFromKey(key) {
   const [y, m] = key.split('-').map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
+
+/** Short month label from a DATE / ISO value without local-timezone rollback. */
+export function formatPeriodMonth(raw) {
+  const key = calendarMonthKey(raw);
+  if (!key || key === 'unknown') return '—';
+  const [y, m] = key.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+}

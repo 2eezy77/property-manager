@@ -19,6 +19,7 @@ const {
 } = require('../src/services/rent-status.service');
 const {
   calendarMonthKey,
+  formatPeriodMonth,
   groupPaymentsByMonth,
   monthGroupSummary,
 } = require('../src/utils/payment-month');
@@ -87,6 +88,10 @@ check(calendarMonthKey(new Date('2026-08-01T00:00:00.000Z')) === '2026-08',
   'Date object at UTC midnight Aug 1 is calendar August');
 check(calendarMonthKey('2026-08-15T00:00:00.000Z') === '2026-08',
   'mid-month utility period stays August');
+check(formatPeriodMonth('2026-08-01T00:00:00.000Z') === 'Aug 2026',
+  `Period cell for Aug 1 UTC is Aug 2026, got ${formatPeriodMonth('2026-08-01T00:00:00.000Z')}`);
+check(formatPeriodMonth('2026-08-01') === 'Aug 2026',
+  'date-only Aug 1 Period cell is Aug 2026');
 
 const augustHistory = [
   { period_start: '2026-08-01T00:00:00.000Z', amount: 1200, status: 'succeeded', payment_type: 'rent' },
@@ -116,6 +121,19 @@ const utilLabel = monthGroupSummary(utilOnly);
 check(/utilit/i.test(utilLabel), `utilities-only month says utilities, got: ${utilLabel}`);
 check(!/rent/i.test(utilLabel) || /0/.test(utilLabel),
   'utilities-only month does not imply rent posted');
+
+const { spawnSync } = require('child_process');
+const esm = spawnSync(process.execPath, ['--input-type=module', '-e', `
+  import { calendarMonthKey, formatPeriodMonth, groupPaymentsByMonth } from './client/src/utils/payment-month-groups.js';
+  if (calendarMonthKey('2026-08-01T00:00:00.000Z') !== '2026-08') process.exit(2);
+  if (formatPeriodMonth('2026-08-01T00:00:00.000Z') !== 'Aug 2026') process.exit(3);
+  const g = groupPaymentsByMonth([
+    { period_start: '2026-08-01T00:00:00.000Z', amount: 3450, status: 'succeeded', payment_type: 'rent' },
+    { period_start: '2026-08-15T00:00:00.000Z', amount: 229.69, status: 'succeeded', payment_type: 'utility' },
+  ]);
+  if (!g.find((x) => x.key === '2026-08') || g.find((x) => x.key === '2026-07')) process.exit(4);
+`], { cwd: require('path').join(__dirname, '..') });
+check(esm.status === 0, 'client ESM month helpers match calendar August');
 
 if (failed) {
   console.error(`\n${failed} failure(s)`);

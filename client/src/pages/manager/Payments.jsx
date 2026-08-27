@@ -10,6 +10,7 @@ import RentCollectionPanel from '@/components/manager/RentCollectionPanel';
 import { apiErrorMessage } from '@/utils/apiErrorMessage';
 import {
   currentMonthKey,
+  formatPeriodMonth,
   groupPaymentsByMonth,
   monthGroupSummary,
   monthLabelFromKey,
@@ -22,8 +23,7 @@ function showToast(message, variant = 'error') {
 
 function fmt(ts) { return ts ? new Date(ts).toLocaleDateString([],{month:'short',day:'numeric',year:'numeric'}) : '—'; }
 function fmtPeriod(ts) {
-  if (!ts) return '—';
-  return new Date(ts).toLocaleDateString([], { month: 'short', year: 'numeric' });
+  return formatPeriodMonth(ts);
 }
 function fmtMoney(v) { return v != null ? '$'+Number(v).toLocaleString('en-US',{minimumFractionDigits:2}) : '—'; }
 
