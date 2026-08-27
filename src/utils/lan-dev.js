@@ -106,6 +106,7 @@ module.exports = {
   isTailscaleIPv4,
   isPrivateLanHost,
   isPrivateLanOrigin,
+  classifyAddress,
   getLanIPv4Addresses,
   getDevAccessUrls,
   primaryLanIPv4,

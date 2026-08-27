@@ -19,6 +19,29 @@ const {
 const PROPERTY_MATCH = '%743%';
 /** Co-owner — launch email like primary owner (no password reset on send). */
 const CO_OWNER_EMAIL = 'trevormcmanus.student@gmail.com';
+/** Tenants starting on/after this date get prorated electric copy in launch mail. */
+const PRORATED_ELECTRIC_START = '2026-06-01';
+
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+function isCoOwnerEmail(email) {
+  return normalizeEmail(email) === CO_OWNER_EMAIL;
+}
+
+function ownersIncludeCoOwner(owners) {
+  return (owners || []).some((o) => isCoOwnerEmail(o?.email));
+}
+
+function tenantNeedsProratedElectric(startDate) {
+  return Boolean(startDate && String(startDate) >= PRORATED_ELECTRIC_START);
+}
+
+/** Owners never get a generated password in launch mail; manager/tenant do. */
+function campaignRoleSkipsPassword(role) {
+  return role === 'owner';
+}
 
 async function loadElectricFromDb(client) {
   const { rows } = await client.query(
@@ -84,7 +107,7 @@ async function buildCampaignMessages() {
       )).rows
       : [];
 
-    if (!owners.some((o) => o.email.toLowerCase() === CO_OWNER_EMAIL)) {
+    if (!ownersIncludeCoOwner(owners)) {
       const { rows: coOwner } = await client.query(
         `SELECT id, email, first_name, last_name
            FROM users
@@ -170,7 +193,7 @@ async function buildCampaignMessages() {
     for (const t of tenants) {
       const first = t.first_name || 'there';
       const unitLabel = t.unit_number ? `Unit ${t.unit_number}` : '';
-      const prorated = t.start_date && t.start_date >= '2026-06-01';
+      const prorated = tenantNeedsProratedElectric(t.start_date);
       const slug = String(t.email).split('@')[0].replace(/\W/g, '-').slice(0, 24);
       const { html, text, subject } = renderTenant({
         recipientName: first,
@@ -235,7 +258,7 @@ function rerenderWithCredentials(message, electric, temporaryPassword) {
     });
   }
   if (message.role === 'tenant') {
-    const prorated = message.startDate && message.startDate >= '2026-06-01';
+    const prorated = tenantNeedsProratedElectric(message.startDate);
     return renderTenant({
       recipientName: message.recipientName,
       unitLabel: message.unitLabel,
@@ -251,7 +274,7 @@ function rerenderWithCredentials(message, electric, temporaryPassword) {
 async function prepareMessagesForSend(messages, { primaryOwnerId, electric }) {
   const prepared = [];
   for (const m of messages) {
-    const skipPassword = m.role === 'owner';
+    const skipPassword = campaignRoleSkipsPassword(m.role);
     if (skipPassword || !m.userId) {
       prepared.push({ ...m, includesPassword: false });
       continue;
@@ -294,7 +317,7 @@ async function sendCampaign({ messageIds, dryRun = false, delayMs = 2000 }) {
     selected = selected.map((m) => ({
       ...m,
       passwordNote:
-        m.role === 'owner'
+        campaignRoleSkipsPassword(m.role)
           ? 'Owner email never includes a password.'
           : 'On send: new unique password generated and embedded in this email only.',
     }));
@@ -312,7 +335,7 @@ async function sendCampaign({ messageIds, dryRun = false, delayMs = 2000 }) {
         to: m.to,
         subject: m.subject,
         status: 'dry_run',
-        includesPassword: m.role !== 'owner',
+        includesPassword: !campaignRoleSkipsPassword(m.role),
         note: m.passwordNote,
       });
       continue;
@@ -465,4 +488,11 @@ module.exports = {
   previewHtmlForMessage,
   resolveOrgId,
   resolveSenderBcc,
+  CO_OWNER_EMAIL,
+  PRORATED_ELECTRIC_START,
+  normalizeEmail,
+  isCoOwnerEmail,
+  ownersIncludeCoOwner,
+  tenantNeedsProratedElectric,
+  campaignRoleSkipsPassword,
 };

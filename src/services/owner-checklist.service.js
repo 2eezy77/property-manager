@@ -83,14 +83,24 @@ async function listChecklist(ownerId) {
   return rows;
 }
 
-async function updateChecklistItem(ownerId, itemId, patch) {
-  const allowed = ['label', 'amount_estimate', 'due_day', 'payment_method', 'notes', 'last_paid_at', 'last_verified_at'];
+const CHECKLIST_PATCH_KEYS = [
+  'label',
+  'amount_estimate',
+  'due_day',
+  'payment_method',
+  'notes',
+  'last_paid_at',
+  'last_verified_at',
+];
+
+/** Pure: map a patch into parameterized SET clauses ($1=owner, $2=item). */
+function buildChecklistUpdate(patch, { ownerId, itemId }) {
   const sets = [];
   const vals = [ownerId, itemId];
   let i = 3;
 
-  for (const key of allowed) {
-    if (patch[key] !== undefined) {
+  for (const key of CHECKLIST_PATCH_KEYS) {
+    if (patch?.[key] !== undefined) {
       sets.push(`${key} = $${i++}`);
       vals.push(patch[key]);
     }
@@ -102,6 +112,11 @@ async function updateChecklistItem(ownerId, itemId, patch) {
     throw err;
   }
 
+  return { sets, vals };
+}
+
+async function updateChecklistItem(ownerId, itemId, patch) {
+  const { sets, vals } = buildChecklistUpdate(patch, { ownerId, itemId });
   sets.push('updated_at = NOW()');
 
   const { rows } = await pool.query(
@@ -120,4 +135,11 @@ async function updateChecklistItem(ownerId, itemId, patch) {
   return rows[0];
 }
 
-module.exports = { listChecklist, updateChecklistItem, seedDefaults, DEFAULT_ITEMS };
+module.exports = {
+  listChecklist,
+  updateChecklistItem,
+  seedDefaults,
+  DEFAULT_ITEMS,
+  CHECKLIST_PATCH_KEYS,
+  buildChecklistUpdate,
+};

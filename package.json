@@ -78,6 +78,9 @@
     "test:processing-fee": "node scripts/test-processing-fee.js",
     "test:balance-paid": "node scripts/test-balance-paid-month.js",
     "test:plaid-link-token": "node scripts/test-plaid-link-token.js",
+    "test:owner-checklist": "node scripts/test-owner-checklist.js",
+    "test:portal-launch-recipients": "node scripts/test-portal-launch-recipients.js",
+    "test:lan-dev-classify": "node scripts/test-lan-dev-classify.js",
     "test:identity-crypto": "node scripts/test-identity-crypto.js",
     "test:lease-invite-identity": "node scripts/test-lease-invite-identity.js",
     "test:identity:all": "npm run test:identity-crypto && npm run test:lease-invite-identity"
