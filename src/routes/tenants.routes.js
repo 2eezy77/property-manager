@@ -30,10 +30,23 @@ router.use(staffOnly);
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const OUTSTANDING_RENT_SUBQUERY = `(SELECT SUM(op.amount) FROM payments op
-                     WHERE op.tenant_id = u.id AND op.status IN ('failed','pending')
-                       AND op.payment_type = 'rent'
-                       AND ${ledgerPaymentWhere('op')}) AS outstanding_balance`;
+const OUTSTANDING_RENT_SUBQUERY = `COALESCE((
+  SELECT GREATEST(0,
+    COALESCE(al.monthly_rent, 0) - COALESCE((
+      SELECT SUM(p.amount) FROM payments p
+       WHERE p.lease_id = al.id
+         AND p.payment_type = 'rent'
+         AND p.status = 'succeeded'
+         AND p.period_start >= date_trunc('month', CURRENT_DATE)::date
+         AND p.period_start < (date_trunc('month', CURRENT_DATE) + INTERVAL '1 month')::date
+         AND ${ledgerPaymentWhere('p')}
+    ), 0)
+  )
+    FROM leases al
+   WHERE al.tenant_id = u.id AND al.status = 'active'
+   ORDER BY al.start_date DESC
+   LIMIT 1
+), 0) AS outstanding_balance`;
 function isValidUuid(id) {
   return typeof id === 'string' && UUID_RE.test(id);
 }

@@ -9,6 +9,7 @@ import StatCard from '@/components/ui/StatCard';
 import Panel from '@/components/ui/Panel';
 import ActionDock from '@/components/ui/ActionDock';
 import ProgressRing from '@/components/ui/ProgressRing';
+import { tenantsPaidSub } from '@/utils/rent-collection-copy';
 
 function fmt(n) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(n) || 0);
@@ -93,7 +94,15 @@ export default function ManagerDashboard() {
       <div className="stagger-grid grid grid-cols-2 gap-4 lg:grid-cols-3">
         <StatCard label="Maintenance" value={loading ? null : openMaint} sub={emergencyMaint > 0 ? `${emergencyMaint} emergency` : 'open requests'} to="/manager/maintenance" icon={<Wrench size={20} strokeWidth={2} />} tone={emergencyMaint > 0 ? 'danger' : 'manager'} loading={loading} />
         <StatCard label="Inbox" value={loading ? null : pendingThreads} sub="awaiting reply" to="/manager/messages" icon={<MessageSquare size={20} strokeWidth={2} />} tone={pendingThreads > 0 ? 'warning' : 'manager'} loading={loading} />
-        <StatCard label="Collected" value={loading ? null : fmt(data.stats?.this_month)} sub={`${data.stats?.paid_count ?? 0} payments`} to="/manager/payments" icon={<Banknote size={20} strokeWidth={2} />} tone="manager" loading={loading} />
+        <StatCard
+          label="Collected"
+          value={loading ? null : fmt(data.stats?.this_month)}
+          sub={data.stats ? tenantsPaidSub(data.stats) : 'this month'}
+          to="/manager/payments"
+          icon={<Banknote size={20} strokeWidth={2} />}
+          tone="manager"
+          loading={loading}
+        />
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

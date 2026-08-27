@@ -407,11 +407,57 @@ async function getRentStatusRoster(userId, role) {
   };
 }
 
+function roundMoney(n) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+/**
+ * Owner / manager KPI snapshot from the same per-lease balances as the roster.
+ * Partial flexible-pay tenants are not fully paid; remaining rent is outstanding.
+ */
+function summarizeRentCollection(rows) {
+  let this_month = 0;
+  let outstanding = 0;
+  let paid_count = 0;
+  let partial_count = 0;
+  for (const row of rows || []) {
+    const b = rentBalances(row);
+    this_month += b.paid;
+    outstanding += b.remaining;
+    if (b.fullyPaid) paid_count += 1;
+    else if (b.hasPartial) partial_count += 1;
+  }
+  return {
+    this_month: roundMoney(this_month),
+    outstanding: roundMoney(outstanding),
+    paid_count,
+    partial_count,
+    tenant_count: (rows || []).length,
+  };
+}
+
+function paidCountSublabel({ paid_count = 0, partial_count = 0, tenant_count = 0 } = {}) {
+  const paid = Number(paid_count) || 0;
+  const partial = Number(partial_count) || 0;
+  const total = Number(tenant_count) || 0;
+  if (partial > 0) return `${paid}/${total} paid · ${partial} partial`;
+  return `${paid}/${total} paid`;
+}
+
+async function getRentCollectionStats(propIds, date = new Date()) {
+  const { monthStart, monthEnd } = monthBounds(date);
+  const rows = await queryRentRows(propIds, monthStart, monthEnd);
+  return summarizeRentCollection(rows);
+}
+
 module.exports = {
   getRentStatusRoster,
+  getRentCollectionStats,
   monthBounds,
   classifyRow,
   classifyCollectionsRow,
   rentBalances,
   money,
+  summarizeRentCollection,
+  paidCountSublabel,
 };

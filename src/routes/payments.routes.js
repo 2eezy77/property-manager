@@ -42,7 +42,7 @@ const { encrypt, decrypt } = require('../utils/encryption');
 const { ledgerPaymentWhere } = require('../utils/payment-ledger');
 const { notSiteArchivedWhere } = require('../utils/site-visibility');
 const { markLateFeesPaidForLease, settleSuccessfulRentPayment } = require('../utils/payment-settlement');
-const { getRentStatusRoster } = require('../services/rent-status.service');
+const { getRentStatusRoster, getRentCollectionStats } = require('../services/rent-status.service');
 const { syncCashAppFromGmail } = require('../services/cashapp-gmail.service');
 const { runPaymentsHealth } = require('../services/payments-health.service');
 const { prepareTenantCharge, assertNoInFlightDeposit, cancelReplacedDepositPaymentIntent } = require('../services/rent-charge.service');
@@ -1415,12 +1415,9 @@ router.get('/manager', Guards.staffOnly, async (req, res) => {
     if (payment_type) { params.push(payment_type); conditions.push(`p.payment_type = $${params.length}`); }
     if (tenant_id)    { params.push(tenant_id);    conditions.push(`p.tenant_id = $${params.length}`); }
 
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-
     const whereSql = conditions.join(' AND ');
 
-    const [paymentsR, countR, statsR] = await Promise.all([
+    const [paymentsR, countR, failedR, collection] = await Promise.all([
       pool.query(
         `SELECT p.id, p.amount, p.status, p.payment_type, p.period_start, p.paid_at, p.created_at,
                 p.failure_reason,
@@ -1451,34 +1448,28 @@ router.get('/manager', Guards.staffOnly, async (req, res) => {
         params
       ),
       pool.query(
-        `SELECT
-           COALESCE(SUM(p.amount) FILTER (
-             WHERE p.status = 'succeeded'
-               AND p.payment_type = 'rent'
-               AND p.period_start >= $2::date
-               AND p.period_start < ($2::date + INTERVAL '1 month')
-           ), 0) AS this_month,
-           COALESCE(SUM(p.amount) FILTER (WHERE p.status IN ('failed','pending')), 0) AS outstanding,
-           COUNT(*) FILTER (WHERE p.status = 'failed') AS failed_count,
-           COUNT(DISTINCT p.tenant_id) FILTER (
-             WHERE p.status = 'succeeded'
-               AND p.payment_type = 'rent'
-               AND p.period_start >= $2::date
-               AND p.period_start < ($2::date + INTERVAL '1 month')
-           ) AS paid_count
-         FROM payments p
-         JOIN leases l ON l.id = p.lease_id
-         JOIN units un ON un.id = l.unit_id
-         WHERE un.property_id = ANY($1)
-           AND ${ledgerPaymentWhere('p')}`,
-        [propIds, monthStart]
+        `SELECT COUNT(*) FILTER (WHERE p.status = 'failed') AS failed_count
+           FROM payments p
+           JOIN leases l ON l.id = p.lease_id
+           JOIN units un ON un.id = l.unit_id
+          WHERE un.property_id = ANY($1)
+            AND ${ledgerPaymentWhere('p')}`,
+        [propIds]
       ),
+      getRentCollectionStats(propIds),
     ]);
 
     const total = parseInt(countR.rows[0].total, 10);
     res.json({
       payments: paymentsR.rows,
-      stats: statsR.rows[0],
+      stats: {
+        this_month: collection.this_month,
+        outstanding: collection.outstanding,
+        failed_count: Number(failedR.rows[0]?.failed_count || 0),
+        paid_count: collection.paid_count,
+        partial_count: collection.partial_count,
+        tenant_count: collection.tenant_count,
+      },
       pagination: { page, limit, total, pages: Math.ceil(total / limit) || 1 },
     });
   } catch (err) {
