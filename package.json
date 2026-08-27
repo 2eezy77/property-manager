@@ -77,6 +77,7 @@
     "assert:portal-pay": "node scripts/assert-portal-pay-guards.js",
     "test:processing-fee": "node scripts/test-processing-fee.js",
     "test:balance-paid": "node scripts/test-balance-paid-month.js",
+    "test:rent-collection-stats": "TZ=America/New_York node scripts/test-rent-collection-stats.js",
     "test:plaid-link-token": "node scripts/test-plaid-link-token.js",
     "test:identity-crypto": "node scripts/test-identity-crypto.js",
     "test:lease-invite-identity": "node scripts/test-lease-invite-identity.js",

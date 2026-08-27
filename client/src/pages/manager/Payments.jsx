@@ -8,6 +8,13 @@ import PageIntro from '@/components/ui/PageIntro';
 import TableScroll from '@/components/ui/TableScroll';
 import RentCollectionPanel from '@/components/manager/RentCollectionPanel';
 import { apiErrorMessage } from '@/utils/apiErrorMessage';
+import {
+  currentMonthKey,
+  groupPaymentsByMonth,
+  monthGroupSummary,
+  monthLabelFromKey,
+} from '@/utils/payment-month-groups';
+import { tenantsPaidSub } from '@/utils/rent-collection-copy';
 
 function showToast(message, variant = 'error') {
   window.dispatchEvent(new CustomEvent('api:toast', { detail: { message, variant } }));
@@ -53,49 +60,11 @@ const METHOD_LABEL = {
   wire: 'Wire', cash: 'Cash', other: 'Other',
 };
 
-function monthKeyFromDate(ts) {
-  if (!ts) return null;
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return null;
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
-
-function currentMonthKey() {
-  return monthKeyFromDate(new Date());
-}
-
-function monthLabelFromKey(key) {
-  if (!key || key === 'unknown') return 'Unknown period';
-  const [y, m] = key.split('-').map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-}
-
-/** Prefer billing period_start so rent lands in the right month section. */
-function paymentMonthKey(p) {
-  return monthKeyFromDate(p.period_start) || monthKeyFromDate(p.paid_at) || monthKeyFromDate(p.created_at) || 'unknown';
-}
-
-function groupPaymentsByMonth(rows) {
-  const map = new Map();
-  for (const p of rows || []) {
-    const key = paymentMonthKey(p);
-    if (!map.has(key)) map.set(key, []);
-    map.get(key).push(p);
-  }
-  return [...map.entries()]
-    .sort(([a], [b]) => (a < b ? 1 : a > b ? -1 : 0))
-    .map(([key, payments]) => {
-      const succeeded = payments.filter((p) => p.status === 'succeeded');
-      const collected = succeeded.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-      return {
-        key,
-        label: monthLabelFromKey(key),
-        payments,
-        count: payments.length,
-        collected,
-        isCurrent: key === currentMonthKey(),
-      };
-    });
+function withMonthLabels(groups) {
+  return (groups || []).map((month) => ({
+    ...month,
+    label: monthLabelFromKey(month.key),
+  }));
 }
 
 const HEALTH_ICON = { pass: CheckCircle2, warn: AlertTriangle, fail: XCircle };
@@ -245,9 +214,7 @@ function MonthSection({ month, expanded, onToggle }) {
             )}
           </div>
           <p className="mt-0.5 text-xs text-slate-500">
-            {month.count} payment{month.count === 1 ? '' : 's'}
-            {' · '}
-            {fmtMoney(month.collected)} succeeded
+            {monthGroupSummary(month)}
           </p>
         </div>
         <ChevronDown
@@ -326,7 +293,7 @@ export default function ManagerPayments() {
     if (page > 1) load(page, true);
   }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const months = useMemo(() => groupPaymentsByMonth(payments), [payments]);
+  const months = useMemo(() => withMonthLabels(groupPaymentsByMonth(payments)), [payments]);
 
   function toggleMonth(key) {
     setExpandedMonths((prev) => {
@@ -416,9 +383,9 @@ export default function ManagerPayments() {
       {stats && (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <StatCard label="This Month" value={fmtMoney(stats.this_month)} sub="rent collected" icon={<Banknote size={20} strokeWidth={2} />} tone="manager" />
-          <StatCard label="Outstanding" value={fmtMoney(stats.outstanding)} sub="unpaid balance" icon={<Clock size={20} strokeWidth={2} />} tone="warning" />
+          <StatCard label="Outstanding" value={fmtMoney(stats.outstanding)} sub="remaining rent this month" icon={<Clock size={20} strokeWidth={2} />} tone="warning" />
           <StatCard label="Failed" value={stats.failed_count ?? 0} sub="need follow-up" icon={<AlertTriangle size={20} strokeWidth={2} />} tone="danger" />
-          <StatCard label="Tenants Paid" value={stats.paid_count ?? 0} sub="this month" icon={<CheckCircle2 size={20} strokeWidth={2} />} tone="success" />
+          <StatCard label="Tenants Paid" value={stats.paid_count ?? 0} sub={tenantsPaidSub(stats)} icon={<CheckCircle2 size={20} strokeWidth={2} />} tone="success" />
         </div>
       )}
 

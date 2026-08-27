@@ -13,6 +13,7 @@ import ActionDock from '@/components/ui/ActionDock';
 import ProgressRing from '@/components/ui/ProgressRing';
 import MiniBarChart from '@/components/ui/MiniBarChart';
 import { RecentActivitySnippet } from '@/pages/admin/AuditLogs';
+import { paidCountSublabel } from '@/utils/rent-collection-copy';
 
 function fmt(n) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(n) || 0);
@@ -166,9 +167,29 @@ export default function AdminDashboardPage() {
       )}
 
       <div className="stagger-grid grid grid-cols-2 gap-4 lg:grid-cols-3">
-        <StatCard label="Collected" value={loading ? null : fmt(collected)} sub={`${data.stats?.paid_count ?? 0}/${data.tenants.length} paid`} to="/manager/payments" icon={<DollarSign size={20} strokeWidth={2} />} tone="admin" loading={loading} />
+        <StatCard
+          label="Collected"
+          value={loading ? null : fmt(collected)}
+          sub={paidCountSublabel({
+            paid_count: data.stats?.paid_count,
+            partial_count: data.stats?.partial_count,
+            tenant_count: data.stats?.tenant_count ?? data.tenants.length,
+          })}
+          to="/manager/payments"
+          icon={<DollarSign size={20} strokeWidth={2} />}
+          tone="admin"
+          loading={loading}
+        />
         <StatCard label="Expected Rent" value={loading ? null : fmt(monthlyRent)} sub="Active leases" to="/manager/leases" icon={<FileText size={20} strokeWidth={2} />} tone="default" loading={loading} />
-        <StatCard label="Open Items" value={loading ? null : data.maintenance.length + Number(data.stats?.failed_count || 0)} sub="Maintenance + failed pay" to="/manager/maintenance" icon={<AlertTriangle size={20} strokeWidth={2} />} tone="warning" loading={loading} />
+        <StatCard
+          label="Open Items"
+          value={loading ? null : data.maintenance.length + Number(data.stats?.failed_count || 0)}
+          sub="Maint. + failed pay — not remaining rent"
+          to="/manager/maintenance"
+          icon={<AlertTriangle size={20} strokeWidth={2} />}
+          tone="warning"
+          loading={loading}
+        />
       </div>
 
       <Panel title={oversightTitle}>
