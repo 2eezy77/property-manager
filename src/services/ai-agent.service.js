@@ -25,6 +25,13 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 const pool      = require('../db/client');
+const {
+  parseClassificationJson,
+  shouldPostAutoReply,
+  shouldEscalateClassification,
+  shouldCreateMaintenanceFromClassification,
+  shouldMarkAutoResponded,
+} = require('./ai-agent-triage');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MODEL     = process.env.AI_AGENT_MODEL ?? 'claude-haiku-4-5-20251001';
@@ -130,12 +137,8 @@ async function classify(thread, messages, tenantName, propertyName, unitNumber) 
   const inputTokens = response.usage?.input_tokens;
   const outputTokens = response.usage?.output_tokens;
 
-  let parsed;
-  try {
-    // Strip potential markdown fences if the model slips
-    const jsonText = rawText.replace(/^```json?\s*/i, '').replace(/\s*```$/i, '').trim();
-    parsed = JSON.parse(jsonText);
-  } catch {
+  const parsed = parseClassificationJson(rawText);
+  if (!parsed) {
     console.error('[ai-agent] Failed to parse classification JSON:', rawText.slice(0, 200));
     return null;
   }
@@ -289,7 +292,7 @@ async function processInboundMessage(messageId, threadId) {
   );
 
   // 4. Auto-respond if confidence is high and not an emergency
-  if (cls.should_auto_respond && cls.auto_reply && cls.urgency !== 'emergency') {
+  if (shouldPostAutoReply(cls)) {
     const { rows: replyRows } = await pool.query(
       `INSERT INTO messages
          (thread_id, sender_type, direction, channel, body,
@@ -306,7 +309,7 @@ async function processInboundMessage(messageId, threadId) {
     });
 
     // Mark triage as auto_responded if not already escalated
-    if (cls.triage_status !== 'escalated') {
+    if (shouldMarkAutoResponded(cls)) {
       await pool.query(
         `UPDATE message_threads
          SET triage_status = 'auto_responded', updated_at = NOW()
@@ -317,7 +320,7 @@ async function processInboundMessage(messageId, threadId) {
   }
 
   // 5. Escalate emergencies and low-confidence messages
-  if (cls.triage_status === 'escalated' || cls.urgency === 'emergency') {
+  if (shouldEscalateClassification(cls)) {
     if (thread.property_id) {
       await notifyEscalation(
         thread,
@@ -335,7 +338,7 @@ async function processInboundMessage(messageId, threadId) {
   }
 
   // 6. Auto-create maintenance request
-  if (cls.create_maintenance_request && thread.unit_id) {
+  if (shouldCreateMaintenanceFromClassification(cls, thread.unit_id)) {
     const maintenanceId = await createMaintenanceRequest(
       thread, cls, thread.tenant_user_id, thread.unit_id
     );
@@ -408,4 +411,12 @@ async function summariseThread(threadId) {
   return summary;
 }
 
-module.exports = { processInboundMessage, summariseThread };
+module.exports = {
+  processInboundMessage,
+  summariseThread,
+  parseClassificationJson,
+  shouldPostAutoReply,
+  shouldEscalateClassification,
+  shouldCreateMaintenanceFromClassification,
+  shouldMarkAutoResponded,
+};
