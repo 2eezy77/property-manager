@@ -5,6 +5,7 @@ const { accessiblePropertyIds } = require('./access');
 const { fetchBillWithSplits } = require('./queries');
 const { maybeSettleBill } = require('./uc07-settle-bill');
 const { useCaseError } = require('./errors');
+const { assertWaiveAllowed, assertRejectDisputeAllowed } = require('./dispute-gates');
 
 async function loadSplitForStaff(splitId, userId, role) {
   const propIds = await accessiblePropertyIds(userId, role);
@@ -23,9 +24,7 @@ async function loadSplitForStaff(splitId, userId, role) {
 
 async function executeWaiveShare({ userId, role, splitId }) {
   const split = await loadSplitForStaff(splitId, userId, role);
-  if (['paid', 'waived'].includes(split.status)) {
-    throw useCaseError('INVALID_STATE', `Split already ${split.status}.`);
-  }
+  assertWaiveAllowed(split);
 
   await pool.query(
     `UPDATE utility_bill_splits
@@ -40,9 +39,7 @@ async function executeWaiveShare({ userId, role, splitId }) {
 
 async function executeRejectDispute({ userId, role, splitId }) {
   const split = await loadSplitForStaff(splitId, userId, role);
-  if (split.status !== 'disputed') {
-    throw useCaseError('INVALID_STATE', 'Split is not disputed.');
-  }
+  assertRejectDisputeAllowed(split);
 
   await pool.query(
     `UPDATE utility_bill_splits
@@ -54,4 +51,9 @@ async function executeRejectDispute({ userId, role, splitId }) {
   return fetchBillWithSplits(pool, split.bill_id);
 }
 
-module.exports = { executeWaiveShare, executeRejectDispute };
+module.exports = {
+  executeWaiveShare,
+  executeRejectDispute,
+  assertWaiveAllowed,
+  assertRejectDisputeAllowed,
+};
