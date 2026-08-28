@@ -4,6 +4,13 @@
 const pool = require('../db/client');
 const { sendEmail, getOperationalStaff, sendOperationalStaffEmail } = require('./email.service');
 const templates = require('./email-templates');
+const {
+  tenantDisplayName,
+  maintenanceCreatedSubjects,
+  maintenanceStatusSubjects,
+  shouldNotifyStaffOnStatus,
+  maintenanceBillSubjects,
+} = require('./maintenance-notify-policy');
 
 async function getRequestContext(requestId) {
   const { rows } = await pool.query(
@@ -48,8 +55,11 @@ async function notifyMaintenanceCreated(requestId) {
   const ctx = await getRequestContext(requestId);
   if (!ctx) return { sent: false };
 
-  const tenantName = [ctx.tenant_first, ctx.tenant_last].filter(Boolean).join(' ') || 'Tenant';
-  const subject = `Maintenance request received - ${ctx.title}`;
+  const tenantName = tenantDisplayName(ctx.tenant_first, ctx.tenant_last);
+  const { tenantSubject, staffSubject, isEmergency } = maintenanceCreatedSubjects({
+    title: ctx.title,
+    priority: ctx.priority,
+  });
   const { html, text } = templates.maintenanceCreated.render({
     tenantName,
     title: ctx.title,
@@ -61,13 +71,11 @@ async function notifyMaintenanceCreated(requestId) {
   await sendEmail({
     orgId: ctx.org_id,
     to: ctx.tenant_email,
-    subject,
+    subject: tenantSubject,
     text,
     html,
   });
 
-  const isEmergency = ctx.priority === 'emergency';
-  const staffSubject = `[Maintenance] ${isEmergency ? 'EMERGENCY - ' : ''}${ctx.title}`;
   const staffRendered = templates.maintenanceCreatedStaff.render({
     tenantName,
     tenantEmail: ctx.tenant_email,
@@ -94,9 +102,11 @@ async function notifyMaintenanceStatusChange(requestId, { oldStatus, newStatus, 
   const ctx = await getRequestContext(requestId);
   if (!ctx) return { sent: false };
 
-  const tenantName = [ctx.tenant_first, ctx.tenant_last].filter(Boolean).join(' ') || 'Tenant';
-  const statusLabel = newStatus.replace(/_/g, ' ');
-  const subject = `Maintenance update - ${ctx.title} (${statusLabel})`;
+  const tenantName = tenantDisplayName(ctx.tenant_first, ctx.tenant_last);
+  const { tenantSubject, staffSubject, statusLabel } = maintenanceStatusSubjects({
+    title: ctx.title,
+    newStatus,
+  });
   const { html, text } = templates.maintenanceStatus.render({
     tenantName,
     title: ctx.title,
@@ -108,12 +118,12 @@ async function notifyMaintenanceStatusChange(requestId, { oldStatus, newStatus, 
   await sendEmail({
     orgId: ctx.org_id,
     to: ctx.tenant_email,
-    subject,
+    subject: tenantSubject,
     text,
     html,
   });
 
-  if (['resolved', 'cancelled', 'assigned', 'in_progress'].includes(newStatus)) {
+  if (shouldNotifyStaffOnStatus(newStatus)) {
     const staffRendered = templates.maintenanceStatusStaff.render({
       title: ctx.title,
       propertyName: ctx.property_name,
@@ -125,7 +135,7 @@ async function notifyMaintenanceStatusChange(requestId, { oldStatus, newStatus, 
     });
     await notifyStaffMaintenance(pool, {
       orgId: ctx.org_id,
-      subject: `Maintenance ${statusLabel} - ${ctx.title}`,
+      subject: staffSubject,
       text: staffRendered.text,
       html: staffRendered.html,
       type: 'maintenance_status_staff',
@@ -140,9 +150,11 @@ async function notifyMaintenanceBill(requestId, { amount, paymentId }) {
   const ctx = await getRequestContext(requestId);
   if (!ctx) return { sent: false };
 
-  const tenantName = [ctx.tenant_first, ctx.tenant_last].filter(Boolean).join(' ') || 'Tenant';
-  const amt = `$${Number(amount).toFixed(2)}`;
-  const subject = `Charge for maintenance / damages - ${amt}`;
+  const tenantName = tenantDisplayName(ctx.tenant_first, ctx.tenant_last);
+  const { tenantSubject, staffSubject } = maintenanceBillSubjects({
+    amount,
+    title: ctx.title,
+  });
   const { html, text } = templates.maintenanceBill.render({
     tenantName,
     amount,
@@ -155,7 +167,7 @@ async function notifyMaintenanceBill(requestId, { amount, paymentId }) {
   await sendEmail({
     orgId: ctx.org_id,
     to: ctx.tenant_email,
-    subject,
+    subject: tenantSubject,
     text,
     html,
   });
@@ -168,7 +180,7 @@ async function notifyMaintenanceBill(requestId, { amount, paymentId }) {
 
   await notifyStaffMaintenance(pool, {
     orgId: ctx.org_id,
-    subject: `Maintenance charge recorded - ${amt} (${ctx.title})`,
+    subject: staffSubject,
     text: staffRendered.text,
     html: staffRendered.html,
     type: 'maintenance_bill_staff',
@@ -182,4 +194,9 @@ module.exports = {
   notifyMaintenanceCreated,
   notifyMaintenanceStatusChange,
   notifyMaintenanceBill,
+  tenantDisplayName,
+  maintenanceCreatedSubjects,
+  maintenanceStatusSubjects,
+  shouldNotifyStaffOnStatus,
+  maintenanceBillSubjects,
 };
