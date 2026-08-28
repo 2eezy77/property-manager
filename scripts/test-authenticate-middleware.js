@@ -80,9 +80,14 @@ function run(authHeader, extras = {}) {
 
 {
   const expired = jwt.sign(
-    { sub: 'u-exp', role: 'tenant' },
+    {
+      sub: 'u-exp',
+      role: 'tenant',
+      iat: Math.floor(Date.now() / 1000) - 120,
+      exp: Math.floor(Date.now() / 1000) - 60,
+    },
     process.env.JWT_ACCESS_SECRET,
-    { algorithm: 'HS256', expiresIn: -10 }
+    { algorithm: 'HS256' }
   );
   const { res, nextCalled } = run(`Bearer ${expired}`);
   check(res.statusCode === 401, 'expired token → 401');
