@@ -78,7 +78,12 @@
     "test:processing-fee": "node scripts/test-processing-fee.js",
     "test:balance-paid": "node scripts/test-balance-paid-month.js",
     "test:rent-collection-stats": "TZ=America/New_York node scripts/test-rent-collection-stats.js",
+    "test:rent-collection-copy": "node scripts/test-rent-collection-copy.js",
     "test:plaid-link-token": "node scripts/test-plaid-link-token.js",
+    "test:identity-alert-redact": "node scripts/test-identity-alert-redact.js",
+    "test:login-credentials-block": "node scripts/test-login-credentials-block.js",
+    "test:email-dev-override": "node scripts/test-email-dev-override.js",
+    "test:authenticate-middleware": "node scripts/test-authenticate-middleware.js",
     "test:identity-crypto": "node scripts/test-identity-crypto.js",
     "test:lease-invite-identity": "node scripts/test-lease-invite-identity.js",
     "test:identity:all": "npm run test:identity-crypto && npm run test:lease-invite-identity"
