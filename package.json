@@ -79,6 +79,8 @@
     "test:balance-paid": "node scripts/test-balance-paid-month.js",
     "test:rent-collection-stats": "TZ=America/New_York node scripts/test-rent-collection-stats.js",
     "test:plaid-link-token": "node scripts/test-plaid-link-token.js",
+    "test:password-admin-gates": "node scripts/test-password-admin-gates.js",
+    "test:cashapp-gmail-sync-env": "node scripts/test-cashapp-gmail-sync-env.js",
     "test:identity-crypto": "node scripts/test-identity-crypto.js",
     "test:lease-invite-identity": "node scripts/test-lease-invite-identity.js",
     "test:identity:all": "npm run test:identity-crypto && npm run test:lease-invite-identity"

@@ -140,5 +140,8 @@ function scheduleCashAppGmailSync() {
 module.exports = {
   scheduleCashAppGmailSync,
   runCashAppGmailSync,
+  syncEnabled,
+  intervalMs,
+  newerThanDays,
   ADVISORY_LOCK_KEY,
 };
