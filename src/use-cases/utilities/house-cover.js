@@ -20,6 +20,15 @@ function billingMonthKey(dateStr) {
   return null;
 }
 
+/**
+ * Dominion / provider cycles key house-cover month off period_end (statement
+ * month), not period_start — mid-month electric must pool with August siblings.
+ */
+function coverBillingMonthFromBill(bill) {
+  if (!bill) return null;
+  return billingMonthKey(bill.period_end || bill.period_start || bill.created_at);
+}
+
 function monthBounds(yearMonth) {
   const [y, m] = String(yearMonth).split('-').map(Number);
   if (!y || !m) return null;
@@ -127,6 +136,7 @@ function allocateMonthlyHouseCover({
 
 module.exports = {
   billingMonthKey,
+  coverBillingMonthFromBill,
   monthBounds,
   leasesOverlapMonth,
   countActiveLeasesForMonth,

@@ -4,25 +4,14 @@
  */
 const pool = require('../db/client');
 const { syncCashAppFromGmail } = require('./cashapp-gmail.service');
+const {
+  syncEnabled,
+  intervalMs,
+  newerThanDays,
+} = require('./cashapp-gmail-scheduler-policy');
 
 /** Stable int lock key for pg_try_advisory_lock (cashapp-gmail-sync). */
 const ADVISORY_LOCK_KEY = 742031517;
-
-/** Opt-in only — off-app Cash App Gmail import is retired (default off). */
-function syncEnabled() {
-  return process.env.CASHAPP_GMAIL_SYNC_ENABLED === 'true';
-}
-
-function intervalMs() {
-  const minutes = Number(process.env.CASHAPP_GMAIL_SYNC_MINUTES ?? 15);
-  const safe = Number.isFinite(minutes) && minutes >= 5 ? minutes : 15;
-  return safe * 60 * 1000;
-}
-
-function newerThanDays() {
-  const days = Number(process.env.CASHAPP_GMAIL_SYNC_NEWER_DAYS ?? 30);
-  return Number.isFinite(days) && days >= 1 ? days : 30;
-}
 
 /** Prefer an active owner on an org that has Gmail connected. */
 async function resolveGmailActor() {
@@ -141,4 +130,7 @@ module.exports = {
   scheduleCashAppGmailSync,
   runCashAppGmailSync,
   ADVISORY_LOCK_KEY,
+  syncEnabled,
+  intervalMs,
+  newerThanDays,
 };

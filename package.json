@@ -80,8 +80,11 @@
     "test:rent-collection-stats": "TZ=America/New_York node scripts/test-rent-collection-stats.js",
     "test:plaid-link-token": "node scripts/test-plaid-link-token.js",
     "test:identity-crypto": "node scripts/test-identity-crypto.js",
+    "test:identity-pii-failclose": "node scripts/test-identity-pii-failclose.js",
+    "test:room-visit-notice-emails": "node scripts/test-room-visit-notice-emails.js",
+    "test:cashapp-gmail-scheduler-policy": "node scripts/test-cashapp-gmail-scheduler-policy.js",
     "test:lease-invite-identity": "node scripts/test-lease-invite-identity.js",
-    "test:identity:all": "npm run test:identity-crypto && npm run test:lease-invite-identity"
+    "test:identity:all": "npm run test:identity-crypto && npm run test:identity-pii-failclose && npm run test:lease-invite-identity"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.27.0",

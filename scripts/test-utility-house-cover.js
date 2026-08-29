@@ -5,6 +5,7 @@
 const assert = require('assert');
 const {
   billingMonthKey,
+  coverBillingMonthFromBill,
   leasesOverlapMonth,
   countActiveLeasesForMonth,
   allocateMonthlyHouseCover,
@@ -21,6 +22,32 @@ assert.strictEqual(billingMonthKey('2026-07-01'), '2026-07');
 assert.strictEqual(billingMonthKey('2026-07-15T12:00:00Z'), '2026-07');
 assert.strictEqual(billingMonthKey(new Date('2026-07-01T00:00:00.000Z')), '2026-07');
 assert.strictEqual(billingMonthKey(null), null);
+
+// Dominion mid-month: period_start July → period_end August keys August siblings
+assert.strictEqual(
+  coverBillingMonthFromBill({
+    period_start: '2026-07-09',
+    period_end: '2026-08-08',
+    created_at: '2026-07-10T00:00:00.000Z',
+  }),
+  '2026-08',
+  'cover month prefers period_end'
+);
+assert.strictEqual(
+  coverBillingMonthFromBill({
+    period_start: '2026-07-01',
+    created_at: '2026-07-02T00:00:00.000Z',
+  }),
+  '2026-07',
+  'cover month falls back to period_start'
+);
+assert.strictEqual(
+  coverBillingMonthFromBill({ created_at: '2026-06-15T12:00:00.000Z' }),
+  '2026-06',
+  'cover month falls back to created_at'
+);
+assert.strictEqual(coverBillingMonthFromBill(null), null);
+assert.strictEqual(coverBillingMonthFromBill({}), null);
 
 assert.strictEqual(
   leasesOverlapMonth({ start_date: '2025-10-01', end_date: '2026-12-31' }, '2026-07'),

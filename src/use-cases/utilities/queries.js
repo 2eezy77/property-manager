@@ -1,7 +1,7 @@
 const pool = require('../../db/client');
 const { accessiblePropertyIds } = require('./access');
 const {
-  billingMonthKey,
+  coverBillingMonthFromBill,
   allocateMonthlyHouseCover,
   countActiveLeasesForMonth,
   monthBounds,
@@ -50,7 +50,7 @@ async function fetchBillWithSplits(db, billId) {
   const bill = bills[0];
   const coverRate = Number(bill.utility_house_cover_per_tenant || 0);
   if (coverRate > 0) {
-    const ym = billingMonthKey(bill.period_end || bill.period_start || bill.created_at);
+    const ym = coverBillingMonthFromBill(bill);
     if (ym) {
       const bounds = monthBounds(ym);
       const { rows: siblings } = await db.query(
