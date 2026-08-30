@@ -14,6 +14,7 @@
 require('../../src/config/env');
 const pool = require('../../src/db/client');
 const { getGmailClient, getMessage } = require('../../src/services/gmail.service');
+const { extractCode, looksLikeMfa } = require('../../src/utils/dominion-otp');
 
 const OWNER_EMAIL = process.env.OWNER_EMAIL || 'josemontero2002@gmail.com';
 const WAIT_SECONDS = Number(process.env.WAIT_SECONDS || 90);
@@ -28,27 +29,6 @@ const GMAIL_QUERY = [
   '(from:dominionenergy.com OR from:dominionenergy OR subject:Dominion OR subject:"verification code" OR subject:"one-time" OR subject:OTP OR subject:"security code")',
   `newer_than:${Math.max(1, Math.ceil(NEWER_THAN_MINUTES / (60 * 24)) || 1)}d`,
 ].join(' ');
-
-const CODE_PATTERNS = [
-  /\b(?:verification|security|authentication|one[-\s]?time|login)\s+code(?:\s+is)?[:\s]+(\d{6})\b/i,
-  /\b(?:your\s+)?code(?:\s+is)?[:\s]+(\d{6})\b/i,
-  /\b(\d{6})\b(?:\s+is\s+your\s+(?:verification|security|authentication)\s+code)/i,
-  /enter\s+(?:this\s+)?(?:code|:)\s*(\d{6})\b/i,
-];
-
-function extractCode(text) {
-  const flat = String(text || '').replace(/\s+/g, ' ');
-  for (const re of CODE_PATTERNS) {
-    const m = flat.match(re);
-    if (m?.[1]) return m[1];
-  }
-  // Last resort: lone 6-digit token in short MFA-looking bodies
-  if (flat.length < 800) {
-    const all = [...flat.matchAll(/\b(\d{6})\b/g)].map((m) => m[1]);
-    if (all.length === 1) return all[0];
-  }
-  return null;
-}
 
 async function resolveOwner() {
   const { rows } = await pool.query(
@@ -84,8 +64,7 @@ async function scanOnce(gmail) {
 
     // Avoid matching ordinary Dominion bill emails that happen to contain 6-digit account fragments
     // unless the body looks like an MFA / verification message.
-    const looksLikeMfa = /verif|security code|one[-\s]?time|authentication|sign[- ]?in|login code|passcode/i.test(blob);
-    if (!looksLikeMfa) continue;
+    if (!looksLikeMfa(blob)) continue;
 
     hits.push({
       id: msg.id,

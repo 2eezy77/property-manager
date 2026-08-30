@@ -79,6 +79,10 @@
     "test:balance-paid": "node scripts/test-balance-paid-month.js",
     "test:rent-collection-stats": "TZ=America/New_York node scripts/test-rent-collection-stats.js",
     "test:plaid-link-token": "node scripts/test-plaid-link-token.js",
+    "test:vacant-room-showing-emails": "node scripts/test-vacant-room-showing-emails.js",
+    "test:dominion-otp-extract": "node scripts/test-dominion-otp-extract.js",
+    "test:dominion-portal-extract": "node scripts/test-dominion-portal-extract.js",
+    "test:bank-link-reminder-email": "node scripts/test-bank-link-reminder-email.js",
     "test:identity-crypto": "node scripts/test-identity-crypto.js",
     "test:lease-invite-identity": "node scripts/test-lease-invite-identity.js",
     "test:identity:all": "npm run test:identity-crypto && npm run test:lease-invite-identity"
