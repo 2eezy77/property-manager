@@ -9,8 +9,11 @@ const {
   MIN_RENT_INSTALLMENT,
   allocateTowardRentAndFees,
 } = require('./rent-partial.service');
-
-const MIN_DEPOSIT_INSTALLMENT = 1;
+const {
+  MIN_DEPOSIT_INSTALLMENT,
+  resolveDepositChargeAmount,
+  resolveRentChargeAmount,
+} = require('./charge-amount-policy');
 
 async function assertNoInFlightDeposit(client, leaseId) {
   // Only block in-flight processing. Succeeded installments are expected while a
@@ -205,24 +208,15 @@ async function prepareTenantCharge(client, {
       );
     }
 
-    const remaining = roundMoney(parent.amount);
-    const requestedRaw = amount == null || amount === '' ? remaining : parseMoney(amount);
-    if (!Number.isFinite(requestedRaw)) {
-      const err = new Error('Enter a valid deposit amount.');
-      err.code = 'INVALID_DEPOSIT_AMOUNT';
-      throw err;
-    }
-    const requested = roundMoney(requestedRaw);
-    if (requested < MIN_DEPOSIT_INSTALLMENT) {
-      const err = new Error(`Minimum deposit payment is $${MIN_DEPOSIT_INSTALLMENT.toFixed(2)}.`);
-      err.code = 'INVALID_DEPOSIT_AMOUNT';
-      throw err;
-    }
-    if (requested > remaining + 0.001) {
-      const err = new Error(`Deposit payment cannot exceed the $${remaining.toFixed(2)} still owed.`);
-      err.code = 'INVALID_DEPOSIT_AMOUNT';
-      throw err;
-    }
+    const {
+      requested,
+      remaining,
+      isPartial,
+    } = resolveDepositChargeAmount({
+      amount,
+      remaining: parent.amount,
+      minInstallment: MIN_DEPOSIT_INSTALLMENT,
+    });
 
     const parentMeta = parent.metadata || {};
     const priorPaid = parseMoney(parentMeta.deposit_paid_total);
@@ -236,7 +230,6 @@ async function prepareTenantCharge(client, {
           : remaining + depositPaidTotal
       );
 
-    const isPartial = requested < remaining - 0.001;
     amountDollars = requested;
     amountCents = Math.round(amountDollars * 100);
     description = isPartial
@@ -326,37 +319,21 @@ async function prepareTenantCharge(client, {
     const breakdown = await rentBilling.computeChargeBreakdown(client, leaseId, { monthStart });
     const rentRemaining = breakdown.rentAmount;
     const lateFeeBalance = breakdown.lateFeeAmount;
-    const totalRemaining = breakdown.totalAmount;
-    if (totalRemaining <= 0.009) {
-      const err = new Error('Nothing is due for this period.');
-      err.code = 'NOTHING_DUE';
-      throw err;
-    }
-
-    const requestedRaw = amount == null || amount === '' ? totalRemaining : parseMoney(amount);
-    if (!Number.isFinite(requestedRaw)) {
-      const err = new Error('Enter a valid payment amount.');
-      err.code = 'INVALID_PAYMENT_AMOUNT';
-      throw err;
-    }
-    const requested = roundMoney(requestedRaw);
-    if (requested < MIN_RENT_INSTALLMENT) {
-      const err = new Error(`Minimum payment is $${MIN_RENT_INSTALLMENT.toFixed(2)}.`);
-      err.code = 'INVALID_PAYMENT_AMOUNT';
-      throw err;
-    }
-    if (requested > totalRemaining + 0.001) {
-      const err = new Error(`Payment cannot exceed the $${totalRemaining.toFixed(2)} still owed.`);
-      err.code = 'INVALID_PAYMENT_AMOUNT';
-      throw err;
-    }
+    const {
+      requested,
+      totalRemaining,
+      isPartial,
+    } = resolveRentChargeAmount({
+      amount,
+      totalRemaining: breakdown.totalAmount,
+      minInstallment: MIN_RENT_INSTALLMENT,
+    });
 
     const alloc = allocateTowardRentAndFees(requested, rentRemaining, lateFeeBalance);
     rentAmount = alloc.rentPortion;
     lateFeeAmount = alloc.lateFeePortion;
     amountDollars = alloc.totalAllocated;
     amountCents = Math.round(amountDollars * 100);
-    const isPartial = requested < totalRemaining - 0.001;
 
     const dueDate = new Date(now.getFullYear(), now.getMonth(), 1);
     const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0)
@@ -539,4 +516,6 @@ module.exports = {
   cancelReplacedDepositPaymentIntent,
   MIN_DEPOSIT_INSTALLMENT,
   MIN_RENT_INSTALLMENT,
+  resolveDepositChargeAmount,
+  resolveRentChargeAmount,
 };

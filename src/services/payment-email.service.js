@@ -5,22 +5,14 @@
 const pool = require('../db/client');
 const { sendEmail, resolveOrgIdForLease, getOperationalStaff, sendOperationalStaffEmail } = require('./email.service');
 const templates = require('./email-templates');
-
-function formatMoney(amount) {
-  return `$${parseFloat(amount).toFixed(2)}`;
-}
-
-function formatDate(dateStr) {
-  if (!dateStr) return 'this month';
-  const raw = dateStr instanceof Date ? dateStr.toISOString().slice(0, 10) : String(dateStr).slice(0, 10);
-  const d = new Date(`${raw}T12:00:00`);
-  if (Number.isNaN(d.getTime())) return raw;
-  return d.toLocaleDateString('en-US', {
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  });
-}
+const {
+  tenantDisplayName,
+  paymentReceivedSubjects,
+  paymentFailedSubjects,
+  rentDueSubject,
+  rentOverdueSubject,
+  lateFeeSubjects,
+} = require('./payment-email-subjects');
 
 async function getLeaseContext(db, leaseId) {
   const { rows } = await db.query(
@@ -59,8 +51,7 @@ async function getTenantContext(db, tenantId, leaseId) {
 }
 
 function tenantName(ctx) {
-  const name = [ctx?.tenant_first, ctx?.tenant_last].filter(Boolean).join(' ').trim();
-  return name || 'Tenant';
+  return tenantDisplayName(ctx);
 }
 
 async function recordEmailNotification(db, { userId, type, title, body, relatedEntityType, relatedEntityId, externalId }) {
@@ -115,12 +106,12 @@ async function notifyPaymentReceived({ paymentId, tenantId, leaseId, amount, pay
 
   const unitLabel = ctx?.unit_number ? `Unit ${ctx.unit_number}` : 'your unit';
   const propertyLabel = ctx?.property_name || '743 A Ave';
-  const amountStr = formatMoney(amount);
   const tenant = tenantName(ctx);
-
-  const subject = paymentType === 'utility'
-    ? `Utility payment confirmed - ${amountStr}`
-    : `Rent payment confirmed - ${amountStr}`;
+  const { tenantSubject: subject, staffSubject } = paymentReceivedSubjects({
+    amount,
+    paymentType,
+    tenant,
+  });
 
   const { html, text } = templates.paymentSucceeded.render({
     tenantName: tenant,
@@ -151,7 +142,6 @@ async function notifyPaymentReceived({ paymentId, tenantId, leaseId, amount, pay
     }
   }
 
-  const staffSubject = `${tenant} - ${paymentType === 'utility' ? 'utility' : 'rent'} payment received (${amountStr})`;
   const staffRendered = templates.paymentSucceededStaff.render({
     tenantName: tenant,
     tenantEmail: ctx?.tenant_email,
@@ -180,11 +170,13 @@ async function notifyPaymentFailed({ paymentId, tenantId, leaseId, amount, payme
   const effectiveOrgId = orgId || ctx?.org_id;
   if (!effectiveOrgId) return { sent: false, skipped: 'no_org' };
 
-  const amountStr = formatMoney(amount);
   const tenant = tenantName(ctx);
   const reason = failureReason || 'The bank returned the ACH debit.';
-
-  const subject = `${paymentType === 'utility' ? 'Utility' : 'Rent'} payment failed - ${amountStr}`;
+  const { tenantSubject: subject, staffSubject } = paymentFailedSubjects({
+    amount,
+    paymentType,
+    tenant,
+  });
   const { html, text } = templates.paymentFailed.render({
     tenantName: tenant,
     amount,
@@ -222,7 +214,7 @@ async function notifyPaymentFailed({ paymentId, tenantId, leaseId, amount, payme
 
   await notifyStaff(db, {
     orgId: effectiveOrgId,
-    subject: `Payment failed - ${tenant} (${amountStr})`,
+    subject: staffSubject,
     text: staffRendered.text,
     html: staffRendered.html,
     type: 'payment_failed_staff',
@@ -242,11 +234,9 @@ async function notifyRentDue({ paymentId, tenantId, leaseId, amount, dueDate }) 
   }
 
   const tenant = tenantName(ctx);
-  const amountStr = formatMoney(amount);
-  const dueStr = formatDate(dueDate);
+  const { subject } = rentDueSubject({ amount, dueDate });
   const unitLabel = ctx.unit_number ? `Unit ${ctx.unit_number}` : 'your unit';
 
-  const subject = `Rent due ${dueStr} - ${amountStr}`;
   const { html, text } = templates.rentDue.render({
     tenantName: tenant,
     amount,
@@ -288,10 +278,8 @@ async function notifyRentOverdue({ paymentId, tenantId, leaseId, amount, dueDate
   }
 
   const tenant = tenantName(ctx);
-  const amountStr = formatMoney(amount);
   const grace = gracePeriodDays ?? ctx.grace_period_days ?? 5;
-
-  const subject = `Overdue rent - ${amountStr} (late fees after ${grace}-day grace)`;
+  const { subject } = rentOverdueSubject({ amount, gracePeriodDays: grace });
   const { html, text } = templates.rentOverdue.render({
     tenantName: tenant,
     amount,
@@ -393,11 +381,9 @@ async function notifyLateFeeApplied({ lateFeeId, tenantId, leaseId, amount, days
   }
 
   const tenant = tenantName(ctx);
-  const amountStr = formatMoney(amount);
   const unitLabel = ctx.unit_number ? `Unit ${ctx.unit_number}` : 'your unit';
   const grace = ctx.grace_period_days ?? 5;
-
-  const subject = `Late fee applied - ${amountStr}`;
+  const { tenantSubject: subject, staffSubject } = lateFeeSubjects({ amount, tenant });
   const { html, text } = templates.lateFeeApplied.render({
     tenantName: tenant,
     amount,
@@ -438,7 +424,7 @@ async function notifyLateFeeApplied({ lateFeeId, tenantId, leaseId, amount, days
 
   await notifyStaff(db, {
     orgId: ctx.org_id,
-    subject: `Late fee applied - ${tenant} (${amountStr})`,
+    subject: staffSubject,
     text: staffRendered.text,
     html: staffRendered.html,
     type: 'late_fee_applied_staff',
