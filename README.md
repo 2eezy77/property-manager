@@ -66,7 +66,7 @@ Browser (React)  →  Express API (:8080)  →  Supabase Postgres
    (link bank)     (ACH + Cash App     (e-sign leases*)
                     + Connect)              │
                          │
-              Gmail (org OAuth: utility e-bills + Cash App receipt import)
+              Gmail (org OAuth: utility e-bills + owner-bill confirmations + Cash App receipts)
 ```
 
 - **Auth:** Custom JWT (Bearer access + HttpOnly refresh cookie on `/auth`).
@@ -122,6 +122,9 @@ cd client; npm run dev
 | `npm run payments:health` | Stripe / Plaid / tenant bank readiness |
 | `npm run tenant:bank:status` | Who still needs a verified bank |
 | `npm run import:cashapp -- --gmail` | Dry-run Cash App import from Gmail (prod also auto-imports every ~15m) |
+| `npm run owner-bills:gmail-sync` | Dry-run Owner Finance checklist from Gmail confirmations (Newrez / Vivint / T-Mobile / utilities) |
+| `npm run owner-bills:gmail-sync:apply` | Apply those confirmations (`last_paid_at` / `last_verified_at`). API also schedules this when `OWNER_BILL_GMAIL_SYNC_ENABLED` is not `false`. |
+| `npm run test:owner-bill-gmail` | Parser + Sep-1 Newrez attribution + duplicate-skip tests |
 | `npm run db:reset-password` | List / set passwords |
 | `npm run qa:bootstrap -- --apply` | Align local QA passwords (requires `SMOKE_TEST_PASSWORD` or `--staff-pw`) |
 

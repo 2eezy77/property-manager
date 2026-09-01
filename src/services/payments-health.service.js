@@ -180,6 +180,23 @@ function checkEnv(checks) {
       `Utilities sync every ${mins}m (import → notify → remind; never ACH)`
     ));
   }
+
+  if (process.env.OWNER_BILL_GMAIL_SYNC_ENABLED === 'false') {
+    checks.push(check(
+      'env.owner_bill_gmail_sync',
+      'env',
+      'warn',
+      'OWNER_BILL_GMAIL_SYNC_ENABLED=false — Owner Finance Gmail checklist worker will not auto-run'
+    ));
+  } else {
+    const mins = process.env.OWNER_BILL_GMAIL_SYNC_MINUTES ?? 30;
+    checks.push(check(
+      'env.owner_bill_gmail_sync',
+      'env',
+      'pass',
+      `Owner-bill Gmail checklist sync every ${mins}m (confirmations only; never charges)`
+    ));
+  }
 }
 
 async function checkStripeApi(checks) {
