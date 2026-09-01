@@ -273,7 +273,7 @@ async function checkStripeApi(checks) {
         { fix: 'Run npm run stripe:webhook:sync (or stripe:webhook-events:dry first)' }
       ));
     } else if (match) {
-      checks.push(check('stripe.webhook_events', 'stripe', 'pass', 'Webhook has all required events (payment_intent.*, charge.dispute.created, account.updated)'));
+      checks.push(check('stripe.webhook_events', 'stripe', 'pass', 'Webhook has all required events (payment_intent.*, charge.refunded, charge.refund.updated, refund.*, charge.dispute.created, account.updated)'));
     }
 
     try {

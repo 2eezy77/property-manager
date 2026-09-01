@@ -9,6 +9,8 @@
  *   charge.pending                    — ACH debit submitted to bank
  *   charge.succeeded                  — funds confirmed
  *   charge.failed                     — ACH returned / failed
+ *   charge.refunded                   — Dashboard / API refund (full or partial)
+ *   charge.refund.updated             — refund status change (sibling of charge.refunded)
  *   charge.dispute.created            — chargeback initiated
  *
  * Events handled (PaymentIntents — ACH, Cash App Pay, utilities):
@@ -16,6 +18,7 @@
  *   payment_intent.succeeded
  *   payment_intent.payment_failed
  *   payment_intent.canceled
+ *   refund.created / refund.updated   — Refund object siblings (same apply path)
  *
  * Connect / platform (safe no-op):
  *   account.updated
@@ -46,6 +49,10 @@ const {
   applyIdentitySessionUpdate,
   syncIdentityFeePaymentSucceeded,
 } = require('../services/tenant-identity.service');
+const {
+  applyChargeRefunded,
+  applyRefundObject,
+} = require('../services/payment-refund.service');
 
 const router = express.Router();
 const pool = require('../db/client');
@@ -161,6 +168,14 @@ async function handleEvent(event) {
       break;
     case 'charge.failed':
       await onChargeFailed(object, event.id);
+      break;
+    case 'charge.refunded':
+      await onChargeRefunded(object, event.id);
+      break;
+    case 'charge.refund.updated':
+    case 'refund.created':
+    case 'refund.updated':
+      await onRefundObject(object, event.id);
       break;
     case 'charge.dispute.created':
       await onDispute(object);
@@ -1139,5 +1154,38 @@ async function processSplits(client, paymentId, leaseId, totalAmount, pi) {
   // Platform fee tracked in metadata for now; add a platform_fees table in a future sprint.
 }
 
+async function onChargeRefunded(charge, eventId) {
+  const result = await applyChargeRefunded(pool, charge, eventId);
+  if (result.reason === 'unknown_charge') {
+    console.warn(`[stripe-webhook] refund skipped — no payment row for charge ${result.chargeId || charge?.id}`);
+    return result;
+  }
+  if (!result.applied) {
+    console.log(`[stripe-webhook] refund skipped (${result.reason}): charge ${result.chargeId} payment ${result.paymentId}`);
+    return result;
+  }
+  console.log(`[stripe-webhook] charge refunded: ${result.chargeId} payment ${result.paymentId} → ${result.status}`);
+  return result;
+}
+
+async function onRefundObject(refund, eventId) {
+  const result = await applyRefundObject(pool, refund, eventId);
+  if (result.reason === 'unknown_charge') {
+    console.warn(`[stripe-webhook] refund skipped — no payment row for ${result.chargeId || result.paymentIntentId || refund?.id}`);
+    return result;
+  }
+  if (!result.applied) {
+    console.log(`[stripe-webhook] refund skipped (${result.reason}): ${refund?.id} payment ${result.paymentId}`);
+    return result;
+  }
+  console.log(`[stripe-webhook] refund applied: ${refund?.id} payment ${result.paymentId} → ${result.status}`);
+  return result;
+}
+
 module.exports = router;
-module.exports.__test = { onChargeSucceeded };
+module.exports.__test = {
+  onChargeSucceeded,
+  onChargeRefunded,
+  onRefundObject,
+  handleEvent,
+};

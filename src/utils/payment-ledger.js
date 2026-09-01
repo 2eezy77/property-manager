@@ -43,7 +43,7 @@ function ledgerPaymentWhere(alias = 'p') {
       COALESCE(${alias}.metadata->>'source', '') IN ('cash_app_import', 'stripe_cashapp', 'manual', 'stripe_card')
       OR (
         ${alias}.stripe_payment_intent_id IS NOT NULL
-        AND ${alias}.status IN ('succeeded', 'processing', 'pending')
+        AND ${alias}.status IN ('succeeded', 'processing', 'pending', 'refunded', 'partially_refunded')
       )
     )`;
 }
