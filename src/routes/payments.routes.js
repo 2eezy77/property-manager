@@ -61,6 +61,8 @@ const {
 } = require('../services/payment-processing-fee.service');
 const { partnerErrorMessage, linkTokenCreateErrorMessage } = require('../utils/plaid-errors');
 const { achInitiationFailure } = require('../utils/chime-ach-bank');
+const { signalClientTransactionId } = require('../utils/plaid-signal-transaction-id');
+const { resolveAchChargeSource } = require('../services/tenant-ach-charge.service');
 const { assertAchDebitAllowed } = require('../services/plaid-ach-guard.service');
 const {
   createUpdateLinkTokenForAccount,
@@ -626,27 +628,43 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
       billIds = [],
     } = prep;
 
-    // 6. Plaid Signal / Balance gates, then Stripe ACH debit
-    const accessToken = decrypt(account.plaid_access_token_encrypted);
-
-    const guard = await assertAchDebitAllowed({
-      accessToken,
-      accountId: account.plaid_account_id,
-      amountCents,
-      userId: req.user.id,
-      userPresent: true,
-      clientTransactionId: `rent-${payment.id}`,
-      context: paymentType,
-    });
-    if (!guard.ok) {
-      await client.query('ROLLBACK');
-      return res.status(guard.status).json(guard.body);
+    // 6. Optional Plaid Signal / Balance, then Stripe ACH on the saved PM
+    const source = resolveAchChargeSource(account);
+    let accessToken = null;
+    if (source.canRunSignal) {
+      accessToken = decrypt(account.plaid_access_token_encrypted);
+      const guard = await assertAchDebitAllowed({
+        accessToken,
+        accountId: account.plaid_account_id,
+        amountCents,
+        userId: req.user.id,
+        userPresent: true,
+        clientTransactionId: signalClientTransactionId(payment.id),
+        context: paymentType,
+      });
+      if (!guard.ok) {
+        await client.query('ROLLBACK');
+        return res.status(guard.status).json(guard.body);
+      }
     }
 
-    const { routing, account: acctNum } = await plaid.getAchAccountNumbers(
-      accessToken, account.plaid_account_id
-    );
-    achRoutingNumber = routing;
+    let routing = null;
+    let acctNum = null;
+    if (source.needsPlaidNumbers) {
+      if (!accessToken) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: 'ACCOUNT_NOT_VERIFIED',
+          message: 'Bank account is not yet verified.',
+        });
+      }
+      const nums = await plaid.getAchAccountNumbers(
+        accessToken, account.plaid_account_id
+      );
+      routing = nums.routing;
+      acctNum = nums.account;
+      achRoutingNumber = routing;
+    }
 
     const { rows: [userRow] } = await client.query(
       `SELECT first_name, last_name, email FROM users WHERE id = $1`,
@@ -683,6 +701,7 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
     const paymentIntent = await stripe.chargeACH({
       amountCents,
       customerId:        account.stripe_customer_id,
+      paymentMethodId:   source.paymentMethodId || undefined,
       routingNumber:     routing,
       accountNumber:     acctNum,
       accountHolderName: holderName,

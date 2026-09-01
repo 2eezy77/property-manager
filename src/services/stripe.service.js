@@ -396,43 +396,89 @@ async function createConnectAccountLink(accountId, { returnUrl, refreshUrl }) {
   return link.url;
 }
 
-async function chargeACH({
-  amountCents, customerId, routingNumber, accountNumber, accountHolderName,
-  description, metadata, ipAddress, userAgent, transferDestination,
+function buildAchIntentParams({
+  amountCents,
+  customerId,
+  routingNumber,
+  accountNumber,
+  accountHolderName,
+  description,
+  metadata,
+  ipAddress,
+  userAgent,
+  transferDestination,
+  paymentMethodId,
 }) {
-  const nums = normalizeAchNumbers(routingNumber, accountNumber);
-
   const intentParams = {
-    amount:               amountCents,
-    currency:             'usd',
-    customer:             customerId,
+    amount: amountCents,
+    currency: 'usd',
+    customer: customerId,
     payment_method_types: ['us_bank_account'],
-    payment_method_data:  {
+    confirm: true,
+    description,
+    metadata: toStripeMetadata(metadata),
+  };
+
+  if (paymentMethodId) {
+    intentParams.payment_method = paymentMethodId;
+    if (ipAddress || userAgent) {
+      intentParams.mandate_data = {
+        customer_acceptance: {
+          type: 'online',
+          online: {
+            ip_address: ipAddress || '127.0.0.1',
+            user_agent: userAgent || 'PropertyManager',
+          },
+        },
+      };
+    } else {
+      intentParams.off_session = true;
+    }
+  } else {
+    const nums = normalizeAchNumbers(routingNumber, accountNumber);
+    intentParams.payment_method_data = {
       type: 'us_bank_account',
       us_bank_account: {
-        routing_number:      nums.routingNumber,
-        account_number:      nums.accountNumber,
+        routing_number: nums.routingNumber,
+        account_number: nums.accountNumber,
         account_holder_type: 'individual',
       },
       billing_details: { name: accountHolderName || 'Account Holder' },
-    },
-    confirm:              true,
-    description,
-    metadata: toStripeMetadata(metadata),
-    mandate_data: {
+    };
+    intentParams.mandate_data = {
       customer_acceptance: {
-        type:   'online',
+        type: 'online',
         online: {
           ip_address: ipAddress || '127.0.0.1',
           user_agent: userAgent || 'PropertyManager',
         },
       },
-    },
-  };
+    };
+  }
 
   if (transferDestination) {
     intentParams.transfer_data = { destination: transferDestination };
   }
+  return intentParams;
+}
+
+async function chargeACH({
+  amountCents, customerId, routingNumber, accountNumber, accountHolderName,
+  description, metadata, ipAddress, userAgent, transferDestination, paymentMethodId,
+}) {
+  const intentParams = buildAchIntentParams({
+    amountCents,
+    customerId,
+    routingNumber,
+    accountNumber,
+    accountHolderName,
+    description,
+    metadata,
+    ipAddress,
+    userAgent,
+    transferDestination,
+    paymentMethodId,
+  });
 
   let paymentIntent = await stripe.paymentIntents.create(intentParams);
 
@@ -724,6 +770,7 @@ module.exports = {
   retrieveConnectAccount,
   isConnectTransfersActive,
   createConnectAccountLink,
+  buildAchIntentParams,
   chargeACH,
   createTransfer,
   constructWebhookEvent,
