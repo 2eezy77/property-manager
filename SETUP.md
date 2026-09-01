@@ -97,6 +97,8 @@ STRIPE_WEBHOOK_SECRET=whsec_a1b2c3...
 
 Leave this terminal running whenever you're developing.
 
+`stripe listen` forwards all event types. **Production** is different: the Dashboard webhook must explicitly include `charge.refunded`, `charge.refund.updated`, `refund.created`, and `refund.updated` or Dashboard refunds never reach the portal. See `docs/stripe-webhook-events.md`. Do not assume those types are selected just because `charge.succeeded` is.
+
 > **Don't have the Stripe CLI?**
 > Download it at [stripe.com/docs/stripe-cli](https://stripe.com/docs/stripe-cli). It's a one-click installer.
 

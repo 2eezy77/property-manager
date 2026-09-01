@@ -140,6 +140,7 @@ cd client; npm run dev
 
 - Plaid tokens are encrypted with `ENCRYPTION_KEY` — do not rotate after banks are linked.
 - Stripe webhooks need the **raw body** + `STRIPE_WEBHOOK_SECRET`.
+- Production webhook must include **`charge.refunded`** (plus `charge.refund.updated`, `refund.created`, `refund.updated`) so Dashboard refunds update the portal ledger. See `docs/stripe-webhook-events.md`. Select them in the Stripe Dashboard or run `npm run stripe:webhook:sync` — this repo does not change the Dashboard by itself.
 - Refresh token is an HttpOnly cookie, not in the login JSON body.
 - Never commit `.env.local` or `client/dist`.
 

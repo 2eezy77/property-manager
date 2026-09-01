@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Merge ALL_WEBHOOK_EVENTS (payment_intent.*, Connect, Identity verification) into
+ * Merge ALL_WEBHOOK_EVENTS (payment_intent.*, refunds, Connect, Identity) into
  * the live Montero Rentals webhook endpoint.
  *
  *   node scripts/update-stripe-webhook-events.js --dry-run

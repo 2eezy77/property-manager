@@ -77,6 +77,7 @@ const STATUS_BADGE = {
   pending:    'bg-amber-50 text-amber-700',
   failed:     'bg-red-50 text-red-700',
   refunded:   'bg-slate-100 text-slate-600',
+  partially_refunded: 'bg-slate-100 text-slate-600',
 };
 
 const STATUS_LABEL = {
@@ -85,6 +86,7 @@ const STATUS_LABEL = {
   pending:    'pending',
   failed:     'not completed',
   refunded:   'refunded',
+  partially_refunded: 'partially refunded',
 };
 
 /** Soften Stripe/Cash App failure copy so abandoned attempts don't read as "declined forever". */

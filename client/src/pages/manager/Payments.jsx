@@ -51,6 +51,7 @@ const STATUS_META = {
   pending:    { label:'Pending',   color:'bg-yellow-100 text-yellow-700' },
   processing: { label:'Processing',color:'bg-blue-100 text-blue-700' },
   refunded:   { label:'Refunded',  color:'bg-gray-100 text-gray-500' },
+  partially_refunded: { label:'Partially refunded', color:'bg-gray-100 text-gray-500' },
 };
 
 const TYPE_LABEL = { rent:'Rent', late_fee:'Late Fee', security_deposit:'Security Deposit', utility:'Utility', other:'Other' };
