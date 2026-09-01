@@ -14,7 +14,7 @@ const BANK_ELEMENT_OPTIONS = {
   wallets: { applePay: 'never', googlePay: 'never', link: 'never' },
 };
 
-function CardCheckout({ onSuccess, onError, variant = 'card' }) {
+function CardCheckout({ onSuccess, onError, variant = 'card', returnUrl }) {
   const stripe = useStripe();
   const elements = useElements();
   const [submitting, setSubmitting] = useState(false);
@@ -34,7 +34,7 @@ function CardCheckout({ onSuccess, onError, variant = 'card' }) {
       const { error, paymentIntent } = await stripe.confirmPayment({
         elements,
         confirmParams: {
-          return_url: `${window.location.origin}${window.location.pathname}`,
+          return_url: returnUrl || `${window.location.origin}${window.location.pathname}`,
         },
         redirect: 'if_required',
       });
@@ -80,7 +80,14 @@ function CardCheckout({ onSuccess, onError, variant = 'card' }) {
   );
 }
 
-export default function CardPaymentForm({ clientSecret, publishableKey, onSuccess, onError, variant = 'card' }) {
+export default function CardPaymentForm({
+  clientSecret,
+  publishableKey,
+  onSuccess,
+  onError,
+  variant = 'card',
+  returnUrl,
+}) {
   const [configKey, setConfigKey] = useState(publishableKey || '');
   const [loadingConfig, setLoadingConfig] = useState(!publishableKey);
   const [configError, setConfigError] = useState('');
@@ -128,14 +135,21 @@ export default function CardPaymentForm({ clientSecret, publishableKey, onSucces
   if (configError || !stripePromise) {
     return (
       <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-        {configError || 'Card payments are not configured yet.'}
+        {configError || (variant === 'bank'
+          ? 'Bank ACH payments are not configured yet.'
+          : 'Card payments are not configured yet.')}
       </p>
     );
   }
 
   return (
     <Elements stripe={stripePromise} options={{ clientSecret }}>
-      <CardCheckout variant={variant} onSuccess={onSuccess} onError={onError} />
+      <CardCheckout
+        variant={variant}
+        returnUrl={returnUrl}
+        onSuccess={onSuccess}
+        onError={onError}
+      />
     </Elements>
   );
 }

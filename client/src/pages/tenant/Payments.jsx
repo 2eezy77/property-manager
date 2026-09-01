@@ -360,6 +360,47 @@ export default function PaymentsPage() {
       });
   }, [location.search, location.pathname, managerPreview]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // After bank ACH / Financial Connections redirect, sync status from Stripe
+  useEffect(() => {
+    if (managerPreview) return;
+    const params = new URLSearchParams(location.search);
+    const paymentIntent = params.get('payment_intent');
+    if (!params.get('bank_return') || !paymentIntent) return;
+
+    api.get(`/api/payments/bank/sync?payment_intent=${encodeURIComponent(paymentIntent)}`)
+      .then(({ data }) => {
+        if (data.status === 'succeeded') {
+          setPayResult({
+            success: true,
+            message: `Bank (ACH) payment of ${fmt(data.amount)} confirmed.`,
+          });
+          showToast(`Bank (ACH) payment of ${fmt(data.amount)} confirmed.`, 'success');
+          notifyCheckinRefresh();
+        } else if (data.status === 'processing') {
+          setPayResult({
+            success: true,
+            message: 'Bank (ACH) payment submitted — settles in 4–5 business days.',
+          });
+          showToast('Bank (ACH) payment submitted. ACH settles in 4–5 business days.', 'success');
+        } else if (data.status === 'failed') {
+          setPayResult({
+            success: false,
+            message: data.failureReason || 'Bank ACH payment was not completed.',
+          });
+        }
+        load(1);
+      })
+      .catch((err) => {
+        setPayResult({
+          success: false,
+          message: apiErrorMessage(err, 'Could not confirm bank ACH payment.'),
+        });
+      })
+      .finally(() => {
+        window.history.replaceState({}, '', location.pathname);
+      });
+  }, [location.search, location.pathname, managerPreview]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Auto-select default account when pay flow opens
   useEffect(() => {
     if (showPayFlow && !selectedAcct) {
@@ -771,9 +812,9 @@ export default function PaymentsPage() {
     setShowPayFlow(false);
     setPayResult({
       success: true,
-      message: paymentIntent?.status === 'processing'
-        ? `${kind} submitted — ACH settles in 4–5 business days.`
-        : `${kind} confirmed. We will update your balance shortly.`,
+      message: paymentIntent?.status === 'succeeded'
+        ? `${kind} confirmed. We will update your balance shortly.`
+        : `${kind} submitted — ACH settles in 4–5 business days.`,
     });
     showToast(`${kind} submitted.`, 'success');
     notifyCheckinRefresh();
@@ -1311,6 +1352,7 @@ export default function PaymentsPage() {
                   </p>
                   <CardPaymentForm
                     variant="bank"
+                    returnUrl={`${window.location.origin}/tenant/payments?bank_return=1`}
                     clientSecret={bankIntent.clientSecret}
                     publishableKey={bankIntent.publishableKey || stripeConfig?.publishableKey}
                     onSuccess={handleBankSuccess}

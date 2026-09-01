@@ -15,6 +15,7 @@
  *   POST /api/payments/card/create-intent      — tenant: start card / Link (card wallet) payment
  *   POST /api/payments/bank/create-intent      — tenant: start ACH (us_bank_account) rent/deposit payment
  *   GET  /api/payments/cashapp/sync            — tenant: sync status after Cash App redirect
+ *   GET  /api/payments/bank/sync               — tenant: sync status after ACH / Financial Connections redirect
  *   POST /api/payments/run-billing             — staff: generate invoices + apply late fees
  *   GET  /api/payments/health                  — staff: Stripe/Plaid/webhook/tenant readiness
  *   POST /api/payments/record                  — staff: record offline payment (Cash App, etc.)
@@ -1534,6 +1535,153 @@ router.get('/cashapp/sync', Guards.tenantOnly, async (req, res) => {
     });
   } catch (err) {
     console.error('[payments/cashapp/sync]', err);
+    res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/payments/bank/sync?payment_intent=pi_xxx — after ACH / Financial Connections
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/bank/sync', Guards.tenantOnly, async (req, res) => {
+  const paymentIntentId = req.query.payment_intent;
+  if (!paymentIntentId) return res.status(400).json({ error: 'MISSING_PARAMS' });
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, status, amount, payment_type, lease_id, tenant_id, failure_reason, metadata
+         FROM payments
+        WHERE stripe_payment_intent_id = $1 AND tenant_id = $2`,
+      [paymentIntentId, req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    const payment = rows[0];
+    const pi = await stripe.retrievePaymentIntent(paymentIntentId);
+    let status = payment.status;
+    let failureReason = payment.failure_reason;
+    const achMeta = JSON.stringify({ payment_method: 'ach', source: 'stripe_ach' });
+
+    if (pi.status === 'succeeded' && status !== 'succeeded') {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { rowCount } = await client.query(
+          `UPDATE payments
+              SET status = 'succeeded',
+                  stripe_charge_id = $1,
+                  paid_at = COALESCE(paid_at, NOW()),
+                  metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+                  updated_at = NOW()
+            WHERE id = $3 AND status <> 'succeeded'`,
+          [
+            typeof pi.latest_charge === 'string' ? pi.latest_charge : pi.latest_charge?.id ?? null,
+            achMeta,
+            payment.id,
+          ]
+        );
+        if (rowCount && payment.payment_type === 'security_deposit') {
+          const meta = payment.metadata || {};
+          const isInstallment = meta.partial_installment === true
+            || meta.partial_installment === 'true';
+          const { applyDepositCredit } = require('../services/security-deposit-partial.service');
+          if (isInstallment) {
+            const credit = await applyDepositCredit(client, {
+              leaseId: payment.lease_id,
+              creditAmount: parseFloat(payment.amount),
+              installmentPaymentId: payment.id,
+              paidAt: new Date(),
+              partMeta: { source: 'stripe_ach', payment_method: 'ach' },
+            });
+            if (credit.completed) {
+              await activateNativeLeaseAfterDeposit(client, payment.lease_id);
+            }
+          } else {
+            await client.query(
+              `UPDATE leases
+                  SET deposit_paid_at = COALESCE(deposit_paid_at, NOW()),
+                      updated_at = NOW()
+                WHERE id = $1`,
+              [payment.lease_id]
+            );
+            await activateNativeLeaseAfterDeposit(client, payment.lease_id);
+          }
+        }
+        if (rowCount && payment.payment_type === 'rent') {
+          const { settleRentPaymentSuccess } = require('../utils/payment-settlement');
+          await settleRentPaymentSuccess(client, {
+            paymentId: payment.id,
+            leaseId: payment.lease_id,
+            amount: parseFloat(payment.amount),
+          });
+        }
+        let utilityBillIds = [];
+        if (rowCount && payment.payment_type === 'utility') {
+          utilityBillIds = await markUtilitySplitsPaidForPayment(client, payment.id);
+        }
+        await client.query('COMMIT');
+        status = 'succeeded';
+        if (rowCount) {
+          for (const billId of utilityBillIds) {
+            const { maybeSettleBill } = require('../use-cases/utilities');
+            await maybeSettleBill(pool, billId).catch((e) =>
+              console.error('[payments/bank/sync] settle utility bill', billId, e.message)
+            );
+          }
+          await settleSuccessfulRentPayment(pool, {
+            paymentId: payment.id,
+            tenantId: payment.tenant_id,
+            leaseId: payment.lease_id,
+            amount: parseFloat(payment.amount),
+            paymentType: payment.payment_type,
+            skipLateFeeClear: payment.payment_type === 'rent',
+          });
+        }
+      } catch (syncErr) {
+        await client.query('ROLLBACK');
+        throw syncErr;
+      } finally {
+        client.release();
+      }
+    } else if (
+      (pi.status === 'processing' || pi.status === 'requires_action')
+      && status === 'pending'
+    ) {
+      await pool.query(
+        `UPDATE payments
+            SET status = 'processing',
+                metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+                updated_at = NOW()
+          WHERE id = $1`,
+        [payment.id, achMeta]
+      );
+      status = 'processing';
+    } else if (
+      (pi.status === 'canceled' || (pi.status === 'requires_payment_method' && pi.last_payment_error))
+      && status !== 'succeeded'
+    ) {
+      failureReason = pi.last_payment_error?.message || 'Bank ACH payment was not completed.';
+      const { rows: failedRows } = await pool.query(
+        `UPDATE payments
+            SET status = 'failed', failure_reason = $1, updated_at = NOW()
+          WHERE id = $2
+            AND status IN ('pending', 'processing')
+         RETURNING id, payment_type`,
+        [failureReason, payment.id]
+      );
+      if (failedRows[0]?.payment_type === 'utility') {
+        await releaseUtilitySplitsForFailedPayment(pool, failedRows[0].id);
+      }
+      if (failedRows[0]) status = 'failed';
+    }
+
+    res.json({
+      paymentId: payment.id,
+      status,
+      amount: parseFloat(payment.amount),
+      failureReason: status === 'failed' ? failureReason : null,
+    });
+  } catch (err) {
+    console.error('[payments/bank/sync]', err);
     res.status(500).json({ error: 'SERVER_ERROR' });
   }
 });

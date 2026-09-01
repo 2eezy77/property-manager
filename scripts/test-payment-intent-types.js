@@ -170,11 +170,15 @@ function testWiring() {
 
   const paymentsPage = read('client/src/pages/tenant/Payments.jsx');
   assert.match(paymentsPage, /\/api\/payments\/bank\/create-intent/, 'Bank tap starts a bank create-intent');
+  assert.match(paymentsPage, /\/api\/payments\/bank\/sync/, 'Financial Connections return syncs the ACH PI');
+  assert.match(paymentsPage, /bank_return=1/, 'bank Payment Element returns to a bank sync URL');
   assert.match(paymentsPage, /\/api\/payments\/card\/create-intent/);
   assert.match(paymentsPage, /\/api\/payments\/cashapp\/create-intent/);
   assert.match(paymentsPage, /Link \(card wallet\)|card wallet/, 'Link is labeled as a card wallet, not ACH');
   assert.match(paymentsPage, /Bank \(ACH\)/);
   assert.match(paymentsPage, /startBankPayment|handleBankCheckout/, 'pay flow always offers bank ACH');
+
+  assert.match(routes, /router\.get\('\/bank\/sync'/);
 
   const cardForm = read('client/src/components/payments/CardPaymentForm.jsx');
   assert.match(cardForm, /paymentMethodOrder:\s*\['card'\]/, 'card Payment Element is card/Link only');

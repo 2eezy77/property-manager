@@ -25,6 +25,7 @@ const SKIP_EXACT = new Set([
 
 const CASHAPP_SYNC_PATHS = new Set([
   '/api/payments/cashapp/sync',
+  '/api/payments/bank/sync',
   '/api/site-visits/payroll/cashapp/sync',
   '/api/manager-compensation/lease-signing/cashapp/sync',
 ]);
