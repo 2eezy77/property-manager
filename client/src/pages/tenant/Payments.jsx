@@ -8,7 +8,7 @@
  *  4. Payment History    — paginated table of all past payments
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation } from 'react-router';
 import { Landmark, CheckCircle2, XCircle, CreditCard } from 'lucide-react';
 import { loadStripe } from '@stripe/stripe-js';
@@ -266,6 +266,8 @@ export default function PaymentsPage() {
   const [cashAppLoading, setCashAppLoading] = useState(false);
   const [cardLoadingType, setCardLoadingType] = useState(null);
   const [cardIntent, setCardIntent] = useState(null);
+  const [payInFlight, setPayInFlight] = useState(false);
+  const payInFlightRef = useRef(false);
   const [stripeConfig, setStripeConfig] = useState(null);
   const [relinkAccount, setRelinkAccount] = useState(null);
   const [updateLinkToken, setUpdateLinkToken] = useState(null);
@@ -477,10 +479,24 @@ export default function PaymentsPage() {
     return { ok: true, amount: Math.round(raw * 100) / 100, remaining };
   }
 
+  function beginPay() {
+    if (payInFlightRef.current) return false;
+    payInFlightRef.current = true;
+    setPayInFlight(true);
+    return true;
+  }
+
+  function endPay() {
+    payInFlightRef.current = false;
+    setPayInFlight(false);
+  }
+
   async function handleDepositPay() {
     if (!selectedAcct || !balance?.lease || !balance?.securityDepositPayment) return;
+    if (!beginPay()) return;
     const resolved = resolveDepositAmount();
     if (!resolved.ok) {
+      endPay();
       setPayResult({ success: false, message: resolved.message });
       return;
     }
@@ -507,14 +523,17 @@ export default function PaymentsPage() {
         message: apiErrorMessage(err, 'Deposit payment failed. Please try again.'),
       });
     } finally {
+      endPay();
       setDepositPayLoading(false);
     }
   }
 
   async function handlePayConfirm() {
     if (!selectedAcct || !balance?.lease) return;
+    if (!beginPay()) return;
     const resolved = resolveRentAmount();
     if (!resolved.ok) {
+      endPay();
       setPayResult({ success: false, message: resolved.message });
       return;
     }
@@ -542,6 +561,7 @@ export default function PaymentsPage() {
         message: apiErrorMessage(err, 'Payment failed. Please try again.'),
       });
     } finally {
+      endPay();
       setPayLoading(false);
     }
   }
@@ -564,6 +584,7 @@ export default function PaymentsPage() {
       }
       amount = resolved.amount;
     }
+    if (!beginPay()) return;
     setCashAppPayType(paymentType);
     setCashAppLoading(true);
     setCardIntent(null);
@@ -598,12 +619,14 @@ export default function PaymentsPage() {
         message: apiErrorMessage(err, 'Cash App payment could not be started.'),
       });
     } finally {
+      endPay();
       setCashAppLoading(false);
     }
   }
 
   async function handleUtilityAchPay() {
     if (!selectedAcct || !balance?.lease) return;
+    if (!beginPay()) return;
     setUtilityPayLoading(true);
     setPayResult(null);
     try {
@@ -623,6 +646,7 @@ export default function PaymentsPage() {
         message: apiErrorMessage(err, 'Utility payment failed. Please try again.'),
       });
     } finally {
+      endPay();
       setUtilityPayLoading(false);
     }
   }
@@ -645,6 +669,9 @@ export default function PaymentsPage() {
       }
       amount = resolved.amount;
     }
+    if (cardLoadingType) return;
+    if (cardIntent?.paymentType === paymentType) return;
+    if (!beginPay()) return;
     setCardLoadingType(paymentType);
     setCardIntent(null);
     setPayResult(null);
@@ -661,6 +688,7 @@ export default function PaymentsPage() {
         message: apiErrorMessage(err, 'Card payment could not be started.'),
       });
     } finally {
+      endPay();
       setCardLoadingType(null);
     }
   }
@@ -1043,7 +1071,7 @@ export default function PaymentsPage() {
                   <button
                     type="button"
                     onClick={() => startCardPayment('rent')}
-                    disabled={!!cardLoadingType}
+                    disabled={!!cardLoadingType || payInFlight || cardIntent?.paymentType === 'rent'}
                     className="rounded-xl bg-indigo-600 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
                   >
                     {cardLoadingType === 'rent'
@@ -1055,7 +1083,7 @@ export default function PaymentsPage() {
                   <button
                     type="button"
                     onClick={() => startCardPayment('security_deposit')}
-                    disabled={!!cardLoadingType}
+                    disabled={!!cardLoadingType || payInFlight || cardIntent?.paymentType === 'security_deposit'}
                     className="rounded-xl border border-violet-300 bg-white py-2.5 text-sm font-semibold text-violet-900 hover:bg-violet-50 disabled:opacity-50"
                   >
                     {cardLoadingType === 'security_deposit'
@@ -1067,7 +1095,7 @@ export default function PaymentsPage() {
                   <button
                     type="button"
                     onClick={() => startCardPayment('utility')}
-                    disabled={!!cardLoadingType}
+                    disabled={!!cardLoadingType || payInFlight || cardIntent?.paymentType === 'utility'}
                     className="rounded-xl border border-amber-300 bg-white py-2.5 text-sm font-semibold text-amber-900 hover:bg-amber-50 disabled:opacity-50"
                   >
                     {cardLoadingType === 'utility'
@@ -1107,7 +1135,7 @@ export default function PaymentsPage() {
                   <button
                     type="button"
                     onClick={() => handleCashAppPay('rent')}
-                    disabled={cashAppLoading}
+                    disabled={cashAppLoading || payInFlight}
                     className="w-full rounded-xl bg-[#00D632] py-2.5 text-sm font-bold text-white hover:bg-[#00bf2d] disabled:opacity-50"
                   >
                     {cashAppLoading && cashAppPayType === 'rent'
@@ -1174,7 +1202,8 @@ export default function PaymentsPage() {
                 <button
                   type="button"
                   onClick={() => setShowConfirm(true)}
-                  className="w-full rounded-xl bg-brand py-2.5 text-sm font-semibold text-white hover:bg-brand-dark transition-colors"
+                  disabled={payLoading || payInFlight}
+                  className="w-full rounded-xl bg-brand py-2.5 text-sm font-semibold text-white hover:bg-brand-dark transition-colors disabled:opacity-50"
                 >
                   Pay {fmt(rentPayAmount)} with ····{selectedAcct.account_mask}
                 </button>

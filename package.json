@@ -82,6 +82,7 @@
     "owner-bills:gmail-sync": "node scripts/run-owner-bill-gmail-sync.js",
     "owner-bills:gmail-sync:apply": "node scripts/run-owner-bill-gmail-sync.js --apply",
     "test:ach-charge-path": "node scripts/test-ach-charge-path.js",
+    "test:duplicate-rent-charge": "node scripts/test-duplicate-rent-charge.js",
     "test:balance-paid": "node scripts/test-balance-paid-month.js",
     "test:rent-collection-stats": "TZ=America/New_York node scripts/test-rent-collection-stats.js",
     "test:plaid-link-token": "node scripts/test-plaid-link-token.js",

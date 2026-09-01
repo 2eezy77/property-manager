@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';
 import { loadStripe } from '@stripe/stripe-js';
 import api from '@/api/axios';
@@ -9,10 +9,13 @@ function CardCheckout({ onSuccess, onError }) {
   const elements = useElements();
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState('');
+  const confirmLockRef = useRef(false);
 
   async function handleSubmit(event) {
     event.preventDefault();
     if (!stripe || !elements) return;
+    if (confirmLockRef.current) return;
+    confirmLockRef.current = true;
 
     setSubmitting(true);
     setMessage('');
@@ -26,6 +29,8 @@ function CardCheckout({ onSuccess, onError }) {
       });
 
       if (error) {
+        confirmLockRef.current = false;
+        setSubmitting(false);
         setMessage(error.message || 'Card payment could not be completed.');
         onError?.(error);
         return;
@@ -33,11 +38,11 @@ function CardCheckout({ onSuccess, onError }) {
 
       onSuccess?.(paymentIntent);
     } catch (err) {
+      confirmLockRef.current = false;
+      setSubmitting(false);
       const fallback = 'Card payment could not be completed.';
       setMessage(err.message || fallback);
       onError?.(err);
-    } finally {
-      setSubmitting(false);
     }
   }
 

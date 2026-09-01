@@ -66,6 +66,16 @@ function payerMetadata({ name, email, userId, propertyLabel } = {}) {
  * Utility portal pay was spreading UUID arrays / booleans and Stripe rejected
  * the create with "Metadata values must be strings".
  */
+/** Stripe request options for POST idempotency (Idempotency-Key header). */
+function stripeIdempotencyOptions(idempotencyKey) {
+  if (idempotencyKey == null || idempotencyKey === '') return {};
+  return { idempotencyKey: String(idempotencyKey).slice(0, 255) };
+}
+
+function stripeClientOf(override) {
+  return override || stripe;
+}
+
 function toStripeMetadata(metadata = {}) {
   const out = {};
   for (const [key, value] of Object.entries(metadata || {})) {
@@ -465,6 +475,7 @@ function buildAchIntentParams({
 async function chargeACH({
   amountCents, customerId, routingNumber, accountNumber, accountHolderName,
   description, metadata, ipAddress, userAgent, transferDestination, paymentMethodId,
+  idempotencyKey, stripeClient,
 }) {
   const intentParams = buildAchIntentParams({
     amountCents,
@@ -480,7 +491,11 @@ async function chargeACH({
     paymentMethodId,
   });
 
-  let paymentIntent = await stripe.paymentIntents.create(intentParams);
+  const client = stripeClientOf(stripeClient);
+  let paymentIntent = await client.paymentIntents.create(
+    intentParams,
+    stripeIdempotencyOptions(idempotencyKey)
+  );
 
   // Sandbox: inline us_bank_account PMs often land in requires_action (microdeposits).
   // Stripe test mode accepts descriptor code SM11AA — auto-verify so webhooks can fire.
@@ -489,7 +504,7 @@ async function chargeACH({
     && paymentIntent.next_action?.type === 'verify_with_microdeposits'
     && (process.env.STRIPE_SECRET_KEY || '').startsWith('sk_test_')
   ) {
-    paymentIntent = await stripe.paymentIntents.verifyMicrodeposits(paymentIntent.id, {
+    paymentIntent = await client.paymentIntents.verifyMicrodeposits(paymentIntent.id, {
       descriptor_code: 'SM11AA',
     });
   }
@@ -694,6 +709,8 @@ async function createCashAppPaymentIntent({
   description,
   metadata,
   transferDestination,
+  idempotencyKey,
+  stripeClient,
 }) {
   const params = {
     amount: amountCents,
@@ -706,7 +723,10 @@ async function createCashAppPaymentIntent({
   if (transferDestination) {
     params.transfer_data = { destination: transferDestination };
   }
-  return stripe.paymentIntents.create(params);
+  return stripeClientOf(stripeClient).paymentIntents.create(
+    params,
+    stripeIdempotencyOptions(idempotencyKey)
+  );
 }
 
 async function createCardPaymentIntent({
@@ -714,16 +734,21 @@ async function createCardPaymentIntent({
   customerId,
   metadata = {},
   description,
+  idempotencyKey,
+  stripeClient,
 }) {
-  return stripe.paymentIntents.create({
-    amount: amountCents,
-    currency: 'usd',
-    customer: customerId,
-    payment_method_types: ['card'],
-    capture_method: 'automatic',
-    description,
-    metadata: toStripeMetadata(metadata),
-  });
+  return stripeClientOf(stripeClient).paymentIntents.create(
+    {
+      amount: amountCents,
+      currency: 'usd',
+      customer: customerId,
+      payment_method_types: ['card'],
+      capture_method: 'automatic',
+      description,
+      metadata: toStripeMetadata(metadata),
+    },
+    stripeIdempotencyOptions(idempotencyKey)
+  );
 }
 
 async function createIdentityVerificationSession({ returnUrl, metadata = {} }) {
@@ -798,5 +823,6 @@ module.exports = {
   withPayerLabel,
   payerMetadata,
   toStripeMetadata,
+  stripeIdempotencyOptions,
   syncCustomerProfile,
 };

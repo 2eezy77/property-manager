@@ -18,6 +18,8 @@ export const PAYMENT_ERROR_MESSAGES = {
     'Link your property operating account under Finance before paying via ACH.',
   DUPLICATE_PAYMENT:
     'A payment for this period is already in progress or complete.',
+  NOTHING_DUE:
+    'This period is already paid. Refresh to see your updated balance.',
   CASHAPP_NOT_CONFIGURED:
     'Cash App Pay is not available right now. Pay with bank (ACH) or contact your property manager.',
   CONNECT_ONBOARDING_REQUIRED:

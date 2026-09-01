@@ -46,6 +46,7 @@ const { getRentStatusRoster, getRentCollectionStats } = require('../services/ren
 const { syncCashAppFromGmail } = require('../services/cashapp-gmail.service');
 const { runPaymentsHealth } = require('../services/payments-health.service');
 const { prepareTenantCharge, assertNoInFlightDeposit, cancelReplacedDepositPaymentIntent } = require('../services/rent-charge.service');
+const { stripeIdempotencyKey } = require('../services/rent-charge-guard');
 const {
   listOpenUtilitySplits,
   summarizeOpenUtilities,
@@ -721,6 +722,11 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
       },
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'] ?? '',
+      idempotencyKey: stripeIdempotencyKey({
+        method: 'ach',
+        paymentId: payment.id,
+        attempt: Number(chargeMeta.stripe_intent_attempt || 1),
+      }),
     });
     stripePaymentIntentId = paymentIntent?.id || null;
 
@@ -979,6 +985,11 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
           propertyLabel,
         }),
       },
+      idempotencyKey: stripeIdempotencyKey({
+        method: 'cashapp',
+        paymentId: prep.payment.id,
+        attempt: Number(prep.chargeMeta?.stripe_intent_attempt || 1),
+      }),
     });
 
     await client.query(
@@ -1159,6 +1170,11 @@ router.post('/card/create-intent', Guards.tenantOnly, async (req, res) => {
           propertyLabel,
         }),
       },
+      idempotencyKey: stripeIdempotencyKey({
+        method: 'card',
+        paymentId: prep.payment.id,
+        attempt: Number(prep.chargeMeta?.stripe_intent_attempt || 1),
+      }),
     });
 
     await client.query(
