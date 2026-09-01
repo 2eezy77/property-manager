@@ -13,6 +13,19 @@ const NEWREZ_2026_09_01_POSTING = {
   loanLast4: '8062',
 };
 
+/** ET day of the Gmail/Newrez posting — only this day (or null) is rewritten. */
+const NEWREZ_SEP1_ET_START = '2026-09-01T00:00:00-04:00';
+const NEWREZ_SEP2_ET_START = '2026-09-02T00:00:00-04:00';
+
+/** True when migration 048 may set last_paid_at to Aug 31 noon ET. */
+function wouldRewriteMortgageLastPaidAt(lastPaidAt) {
+  if (lastPaidAt == null || lastPaidAt === '') return true;
+  const t = new Date(lastPaidAt).getTime();
+  if (Number.isNaN(t)) return false;
+  return t >= new Date(NEWREZ_SEP1_ET_START).getTime()
+    && t < new Date(NEWREZ_SEP2_ET_START).getTime();
+}
+
 function newrezAugust2026PaidNote() {
   const { amount, postedOn, confirmation, loanLast4 } = NEWREZ_2026_09_01_POSTING;
   const dollars = Number(amount).toLocaleString('en-US', {
@@ -185,4 +198,7 @@ module.exports = {
   lastPaidAtForPostedPayment,
   NEWREZ_2026_09_01_POSTING,
   newrezAugust2026PaidNote,
+  wouldRewriteMortgageLastPaidAt,
+  NEWREZ_SEP1_ET_START,
+  NEWREZ_SEP2_ET_START,
 };
