@@ -12,8 +12,10 @@ const {
 const {
   IN_FLIGHT_CONFIRM_STATUSES,
   assertRentPeriodAvailable,
+  classifyOpenRentCharge,
   lockRentChargePeriod,
 } = require('./rent-charge-guard');
+const { settleRentPaymentSuccess } = require('../utils/payment-settlement');
 
 const MIN_DEPOSIT_INSTALLMENT = 1;
 
@@ -328,19 +330,48 @@ async function prepareTenantCharge(client, {
     // Rent (optional amount — pay any portion of rent remaining + late fees).
     await lockRentChargePeriod(client, leaseId, monthStart);
 
-    const { rows: processing } = await client.query(
-      `SELECT id FROM payments
+    const { rows: openRows } = await client.query(
+      `SELECT id, status, amount, stripe_payment_intent_id, metadata
+         FROM payments
         WHERE lease_id = $1 AND payment_type = 'rent'
-          AND period_start = $2 AND status = 'processing'`,
+          AND period_start = $2
+          AND status IN ('pending', 'processing')
+          AND COALESCE(metadata->>'closed_by_installments', 'false') <> 'true'`,
       [leaseId, monthStart]
     );
+
+    let processingCount = 0;
+    let pendingOpenCount = 0;
+    for (const row of openRows) {
+      let pi = null;
+      if (row.stripe_payment_intent_id) {
+        try {
+          pi = await stripe.retrievePaymentIntent(row.stripe_payment_intent_id);
+        } catch {
+          pi = null;
+        }
+      }
+      const kind = classifyOpenRentCharge(row, pi);
+      if (kind === 'paid') {
+        await syncLocalPaymentIfStripeSucceeded(client, row, pi);
+        await settleRentPaymentSuccess(client, {
+          paymentId: row.id,
+          leaseId,
+          amount: parseMoney(row.amount),
+        });
+      } else if (kind === 'in_flight') {
+        if (row.status === 'processing') processingCount += 1;
+        else pendingOpenCount += 1;
+      }
+    }
 
     const breakdown = await rentBilling.computeChargeBreakdown(client, leaseId, { monthStart });
     const rentRemaining = breakdown.rentAmount;
     const lateFeeBalance = breakdown.lateFeeAmount;
     const totalRemaining = breakdown.totalAmount;
     assertRentPeriodAvailable({
-      processingCount: processing.length,
+      processingCount,
+      pendingOpenCount,
       remainingDue: totalRemaining,
     });
 

@@ -60,6 +60,7 @@ expectThrow(
 );
 assert.doesNotThrow(() => assertRentPeriodAvailable({
   processingCount: 0,
+  pendingOpenCount: 0,
   remainingDue: 450,
 }));
 assert.doesNotThrow(() => assertRentPeriodAvailable({
@@ -67,6 +68,16 @@ assert.doesNotThrow(() => assertRentPeriodAvailable({
   remainingDue: 100,
   requestedAmount: 50,
 }));
+// Isaiah gap: first card create-intent commits as pending, rent still due.
+expectThrow(
+  () => assertRentPeriodAvailable({
+    processingCount: 0,
+    pendingOpenCount: 1,
+    remainingDue: 450,
+  }),
+  'DUPLICATE_PAYMENT',
+  /already in progress/i
+);
 
 assert.ok(IN_FLIGHT_CONFIRM_STATUSES.has('processing'));
 assert.ok(IN_FLIGHT_CONFIRM_STATUSES.has('requires_action'));
@@ -115,9 +126,11 @@ async function simulateGuardedRentCharge({ store, createCharge, useLock }) {
   const claim = async () => {
     assertRentPeriodAvailable({
       processingCount: store.processingCount,
+      pendingOpenCount: store.pendingOpenCount || 0,
       remainingDue: store.remainingDue,
     });
-    store.processingCount += 1;
+    // Card create-intent commits `pending` (not processing); remainingDue stays due.
+    store.pendingOpenCount = (store.pendingOpenCount || 0) + 1;
     const pi = await createCharge();
     store.liveIntents.push(pi);
     return pi;
@@ -128,11 +141,12 @@ async function simulateGuardedRentCharge({ store, createCharge, useLock }) {
   // Stale read: both callers snapshot before either marks in-flight (the live bug).
   const snapshot = {
     processingCount: store.processingCount,
+    pendingOpenCount: store.pendingOpenCount || 0,
     remainingDue: store.remainingDue,
   };
   await Promise.resolve();
   assertRentPeriodAvailable(snapshot);
-  store.processingCount += 1;
+  store.pendingOpenCount = (store.pendingOpenCount || 0) + 1;
   const pi = await createCharge();
   store.liveIntents.push(pi);
   return pi;
@@ -176,6 +190,34 @@ async function testConcurrentCardPays() {
   assert.strictEqual(rejected[0].reason.code, 'DUPLICATE_PAYMENT');
   assert.strictEqual(locked.liveIntents.length, 1);
   assert.strictEqual(lockedStripe.length, 1);
+}
+
+async function testSecondCreateTwoMinutesAfterPendingIntent() {
+  const store = {
+    remainingDue: 450,
+    processingCount: 0,
+    pendingOpenCount: 0,
+    liveIntents: [],
+  };
+  let creates = 0;
+  const createCharge = async () => {
+    creates += 1;
+    return { id: `pi_later_${creates}`, status: 'requires_payment_method' };
+  };
+
+  await simulateGuardedRentCharge({ store, createCharge, useLock: true });
+  assert.strictEqual(creates, 1, 'first card create-intent creates one PaymentIntent');
+  assert.strictEqual(store.pendingOpenCount, 1, 'first commit leaves the rent row pending');
+  assert.strictEqual(store.processingCount, 0, 'card create-intent does not mark processing');
+  assert.strictEqual(store.remainingDue, 450, 'succeeded coverage has not changed yet');
+
+  // Lock is free; two minutes later is just another request against the same store.
+  await assert.rejects(
+    () => simulateGuardedRentCharge({ store, createCharge, useLock: true }),
+    (err) => err.code === 'DUPLICATE_PAYMENT' && /already in progress/i.test(err.message)
+  );
+  assert.strictEqual(creates, 1, 'second create-intent two minutes later must not create another PaymentIntent');
+  assert.strictEqual(store.liveIntents.length, 1);
 }
 
 async function testRetryAfterSuccess() {
@@ -262,6 +304,7 @@ function testProductionWiring() {
   const charge = read('src/services/rent-charge.service.js');
   assert.match(charge, /lockRentChargePeriod/, 'prepareTenantCharge takes an advisory lock');
   assert.match(charge, /assertRentPeriodAvailable/, 'prepareTenantCharge rejects a covered or in-flight period');
+  assert.match(charge, /pendingOpenCount/, 'pending card intents count as in-flight, not only processing');
   assert.match(charge, /rejectInFlightConfirm/, 'rent does not cancel a PI that is already confirming');
 
   const routes = read('src/routes/payments.routes.js');
@@ -294,6 +337,7 @@ function testProductionWiring() {
 
 async function main() {
   await testConcurrentCardPays();
+  await testSecondCreateTwoMinutesAfterPendingIntent();
   await testRetryAfterSuccess();
   await testAchDoesNotDouble();
   await testStripeCreatePassesIdempotencyKey();

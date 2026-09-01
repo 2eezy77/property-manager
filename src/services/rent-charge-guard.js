@@ -12,8 +12,28 @@ const IN_FLIGHT_CONFIRM_STATUSES = new Set([
   'succeeded',
 ]);
 
-function assertRentPeriodAvailable({ processingCount = 0, remainingDue = 0 } = {}) {
-  if (Number(processingCount) > 0) {
+/**
+ * pending + PI that is still usable (including unused requires_payment_method)
+ * is in-flight. Billing invoices with no PI are not. Canceled / declined PIs
+ * can be replaced.
+ */
+function classifyOpenRentCharge(row = {}, pi = null) {
+  if (row.status === 'processing') return 'in_flight';
+  if (row.status === 'succeeded') return 'paid';
+  if (!row.stripe_payment_intent_id) return 'open_invoice';
+  if (!pi) return 'in_flight';
+  if (pi.status === 'succeeded') return 'paid';
+  if (pi.status === 'canceled') return 'released';
+  if (pi.status === 'requires_payment_method' && pi.last_payment_error) return 'released';
+  return 'in_flight';
+}
+
+function assertRentPeriodAvailable({
+  processingCount = 0,
+  pendingOpenCount = 0,
+  remainingDue = 0,
+} = {}) {
+  if (Number(processingCount) + Number(pendingOpenCount) > 0) {
     const err = new Error('A rent payment is already in progress.');
     err.code = 'DUPLICATE_PAYMENT';
     throw err;
@@ -43,6 +63,7 @@ function stripeIdempotencyKey({ method, paymentId, attempt = 1 }) {
 
 module.exports = {
   IN_FLIGHT_CONFIRM_STATUSES,
+  classifyOpenRentCharge,
   assertRentPeriodAvailable,
   lockRentChargePeriod,
   stripeIdempotencyKey,
