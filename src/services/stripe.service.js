@@ -562,6 +562,101 @@ function stripeMode() {
   return 'unknown';
 }
 
+/**
+ * Plaid Technologies manages Connect-app PMC pmc_1Tb9l1… — ACH and Cash App are
+ * off, and the Dashboard has no toggles. Never send that id.
+ *
+ * Platform account Default PMC pmc_1TaLIy… already has card, Link, Cash App,
+ * and us_bank_account ON. Pin checkout PaymentIntents to it (or an env override)
+ * so Payment Element does not inherit the Plaid-managed config.
+ */
+const PLAID_MANAGED_CONNECT_PMC = 'pmc_1Tb9l1BaVh1caty8bPcFnpeq';
+const ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE = 'pmc_1TaLIyBaVh1caty8oLNE1bK7';
+
+function checkoutPaymentMethodConfigurationId() {
+  const fromEnv = String(process.env.STRIPE_CHECKOUT_PAYMENT_METHOD_CONFIGURATION || '').trim();
+  if (fromEnv === PLAID_MANAGED_CONNECT_PMC) return ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE;
+  if (fromEnv) return fromEnv;
+  if (stripeMode() === 'live') return ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE;
+  return '';
+}
+
+function withCheckoutPaymentMethodConfig(params) {
+  const pmc = checkoutPaymentMethodConfigurationId();
+  if (!pmc || pmc === PLAID_MANAGED_CONNECT_PMC) return params;
+  return { ...params, payment_method_configuration: pmc };
+}
+
+function paymentMethodTypesEqual(actual, expected) {
+  const a = [...(actual || [])].map(String).sort();
+  const e = [...(expected || [])].map(String).sort();
+  return a.length === e.length && a.every((value, i) => value === e[i]);
+}
+
+function isPaymentMethodParamConflict(err) {
+  const msg = String(err?.message || '').toLowerCase();
+  return msg.includes('mutually exclusive')
+    || msg.includes('you may only specify one')
+    || msg.includes('cannot specify both')
+    || (String(err?.param || '') === 'payment_method_configuration' && msg.includes('payment_method_types'));
+}
+
+function checkoutIntentPublicFields(paymentIntent) {
+  return {
+    paymentMethodTypes: paymentIntent?.payment_method_types || [],
+    paymentMethodConfiguration:
+      paymentIntent?.payment_method_configuration_details?.id
+      || paymentIntent?.payment_method_configuration
+      || null,
+  };
+}
+
+/**
+ * Create a checkout PaymentIntent locked to one Stripe method.
+ * Prefers the account-level PMC (ACH/Cash App enabled) plus explicit
+ * payment_method_types. If Stripe rejects the pair or the PMC widens
+ * the types, fall back to types-only (live tenant PIs already succeed that way).
+ */
+async function createLockedCheckoutPaymentIntent({
+  params,
+  expectedTypes,
+  idempotencyKey,
+  stripeClient,
+}) {
+  const client = stripeClientOf(stripeClient);
+  const typesOnlyParams = { ...params };
+  delete typesOnlyParams.payment_method_configuration;
+  const primaryOptions = stripeIdempotencyOptions(idempotencyKey);
+  const typesOnlyOptions = stripeIdempotencyOptions(
+    idempotencyKey ? `${idempotencyKey}:types-only` : undefined
+  );
+
+  let created;
+  try {
+    created = await client.paymentIntents.create(params, primaryOptions);
+  } catch (err) {
+    if (params.payment_method_configuration && isPaymentMethodParamConflict(err)) {
+      return client.paymentIntents.create(typesOnlyParams, typesOnlyOptions);
+    }
+    throw err;
+  }
+
+  if (paymentMethodTypesEqual(created.payment_method_types, expectedTypes)) {
+    return created;
+  }
+
+  if (
+    created.id
+    && created.status === 'requires_payment_method'
+    && Number(created.amount_received || 0) === 0
+    && client.paymentIntents.cancel
+  ) {
+    await client.paymentIntents.cancel(created.id).catch(() => {});
+  }
+
+  return client.paymentIntents.create(typesOnlyParams, typesOnlyOptions);
+}
+
 function isCashAppPayConfigured() {
   return Boolean(getPublishableKey() && process.env.STRIPE_SECRET_KEY);
 }
@@ -722,7 +817,7 @@ function buildCashAppIntentParams({
   if (transferDestination) {
     params.transfer_data = { destination: transferDestination };
   }
-  return params;
+  return withCheckoutPaymentMethodConfig(params);
 }
 
 function buildCardIntentParams({
@@ -731,7 +826,7 @@ function buildCardIntentParams({
   metadata = {},
   description,
 }) {
-  return {
+  return withCheckoutPaymentMethodConfig({
     amount: amountCents,
     currency: 'usd',
     customer: customerId,
@@ -739,7 +834,7 @@ function buildCardIntentParams({
     capture_method: 'automatic',
     description,
     metadata: toStripeMetadata(metadata),
-  };
+  });
 }
 
 /**
@@ -752,7 +847,7 @@ function buildBankCheckoutIntentParams({
   description,
   metadata,
 }) {
-  return {
+  return withCheckoutPaymentMethodConfig({
     amount: amountCents,
     currency: 'usd',
     customer: customerId,
@@ -766,7 +861,7 @@ function buildBankCheckoutIntentParams({
         },
       },
     },
-  };
+  });
 }
 
 /**
@@ -781,16 +876,18 @@ async function createCashAppPaymentIntent({
   idempotencyKey,
   stripeClient,
 }) {
-  return stripeClientOf(stripeClient).paymentIntents.create(
-    buildCashAppIntentParams({
+  return createLockedCheckoutPaymentIntent({
+    params: buildCashAppIntentParams({
       amountCents,
       customerId,
       description,
       metadata,
       transferDestination,
     }),
-    stripeIdempotencyOptions(idempotencyKey)
-  );
+    expectedTypes: ['cashapp'],
+    idempotencyKey,
+    stripeClient,
+  });
 }
 
 async function createCardPaymentIntent({
@@ -801,15 +898,17 @@ async function createCardPaymentIntent({
   idempotencyKey,
   stripeClient,
 }) {
-  return stripeClientOf(stripeClient).paymentIntents.create(
-    buildCardIntentParams({
+  return createLockedCheckoutPaymentIntent({
+    params: buildCardIntentParams({
       amountCents,
       customerId,
       metadata,
       description,
     }),
-    stripeIdempotencyOptions(idempotencyKey)
-  );
+    expectedTypes: ['card'],
+    idempotencyKey,
+    stripeClient,
+  });
 }
 
 async function createBankPaymentIntent({
@@ -820,15 +919,17 @@ async function createBankPaymentIntent({
   idempotencyKey,
   stripeClient,
 }) {
-  return stripeClientOf(stripeClient).paymentIntents.create(
-    buildBankCheckoutIntentParams({
+  return createLockedCheckoutPaymentIntent({
+    params: buildBankCheckoutIntentParams({
       amountCents,
       customerId,
       metadata,
       description,
     }),
-    stripeIdempotencyOptions(idempotencyKey)
-  );
+    expectedTypes: ['us_bank_account'],
+    idempotencyKey,
+    stripeClient,
+  });
 }
 
 async function createIdentityVerificationSession({ returnUrl, metadata = {} }) {
@@ -895,9 +996,15 @@ module.exports = {
   createCashAppPaymentIntent,
   createCardPaymentIntent,
   createBankPaymentIntent,
+  createLockedCheckoutPaymentIntent,
   buildCashAppIntentParams,
   buildCardIntentParams,
   buildBankCheckoutIntentParams,
+  checkoutPaymentMethodConfigurationId,
+  withCheckoutPaymentMethodConfig,
+  checkoutIntentPublicFields,
+  PLAID_MANAGED_CONNECT_PMC,
+  ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE,
   createIdentityVerificationSession,
   retrieveIdentityVerificationSession,
   retrievePaymentIntent,

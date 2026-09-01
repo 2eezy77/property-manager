@@ -1234,6 +1234,7 @@ export default function PaymentsPage() {
                   <CardPaymentForm
                     clientSecret={cardIntent.clientSecret}
                     publishableKey={cardIntent.publishableKey || stripeConfig?.publishableKey}
+                    paymentMethodTypes={cardIntent.paymentMethodTypes}
                     onSuccess={handleCardSuccess}
                     onError={(err) => setPayResult({
                       success: false,
@@ -1355,6 +1356,7 @@ export default function PaymentsPage() {
                     returnUrl={`${window.location.origin}/tenant/payments?bank_return=1`}
                     clientSecret={bankIntent.clientSecret}
                     publishableKey={bankIntent.publishableKey || stripeConfig?.publishableKey}
+                    paymentMethodTypes={bankIntent.paymentMethodTypes}
                     onSuccess={handleBankSuccess}
                     onError={(err) => setPayResult({
                       success: false,

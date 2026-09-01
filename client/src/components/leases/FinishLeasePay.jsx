@@ -513,6 +513,7 @@ export default function FinishLeasePay({ lease, onPaid }) {
               <CardPaymentForm
                 clientSecret={cardIntent.clientSecret}
                 publishableKey={cardIntent.publishableKey}
+                paymentMethodTypes={cardIntent.paymentMethodTypes}
                 onSuccess={handleCardSuccess}
                 onError={(err) => setMessage({ success: false, text: err.message || 'Card payment failed.' })}
               />
