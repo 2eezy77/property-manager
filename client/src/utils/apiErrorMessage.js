@@ -24,8 +24,12 @@ export const PAYMENT_ERROR_MESSAGES = {
     'Complete Stripe payout setup on the manager Boots on site page before paying.',
   CONNECT_NOT_ENABLED:
     'Stripe Connect is not enabled on this account. Contact the platform owner.',
+  CHIME_ACH_NOT_SUPPORTED:
+    "Chime doesn't allow bank ACH for rent. Pay with your Chime debit card instead.",
+  ACH_INITIATION_FAILED:
+    'This bank payment could not be started. Try paying with a debit card instead.',
   CHARGE_FAILED:
-    'Payment could not be initiated. Please try again or use another payment method.',
+    'This bank payment could not be started. Try paying with a debit card instead.',
 };
 
 export function apiErrorMessage(err, fallback = 'Something went wrong. Please try again.') {
