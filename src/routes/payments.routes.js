@@ -60,6 +60,7 @@ const {
   feeSchedulePublic,
 } = require('../services/payment-processing-fee.service');
 const { partnerErrorMessage, linkTokenCreateErrorMessage } = require('../utils/plaid-errors');
+const { achInitiationFailure } = require('../utils/chime-ach-bank');
 const { assertAchDebitAllowed } = require('../services/plaid-ach-guard.service');
 const {
   createUpdateLinkTokenForAccount,
@@ -561,17 +562,21 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
   }
 
   const client = await pool.connect();
+  let account = null;
+  let achRoutingNumber = null;
+  let stripePaymentIntentId = null;
   try {
     await client.query('BEGIN');
 
     // 1. Verify the bank account belongs to this tenant and is verified
     const { rows: accountRows } = await client.query(
       `SELECT stripe_customer_id, stripe_bank_account_id, status, link_status,
-              plaid_access_token_encrypted, plaid_account_id, account_name
+              plaid_access_token_encrypted, plaid_account_id, account_name,
+              institution_name, institution_id
          FROM bank_accounts WHERE id = $1 AND user_id = $2`,
       [bankAccountId, req.user.id]
     );
-    const account = accountRows[0];
+    account = accountRows[0];
     if (!account) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'ACCOUNT_NOT_FOUND' });
@@ -641,6 +646,7 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
     const { routing, account: acctNum } = await plaid.getAchAccountNumbers(
       accessToken, account.plaid_account_id
     );
+    achRoutingNumber = routing;
 
     const { rows: [userRow] } = await client.query(
       `SELECT first_name, last_name, email FROM users WHERE id = $1`,
@@ -697,6 +703,7 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'] ?? '',
     });
+    stripePaymentIntentId = paymentIntent?.id || null;
 
     const localStatus =
       paymentIntent.status === 'succeeded'  ? 'succeeded'
@@ -816,6 +823,13 @@ router.post('/charge', Guards.tenantOnly, async (req, res) => {
       return res.status(400).json({ error: err.code, message: err.message });
     }
     console.error('[payments/charge]', err);
+    if (!stripePaymentIntentId) {
+      return res.status(400).json(achInitiationFailure({
+        institutionName: account?.institution_name,
+        institutionId: account?.institution_id,
+        routingNumber: achRoutingNumber,
+      }));
+    }
     res.status(500).json({ error: 'CHARGE_FAILED', message: 'Payment could not be initiated.' });
   } finally {
     client.release();
