@@ -9,6 +9,11 @@ const {
   MIN_RENT_INSTALLMENT,
   allocateTowardRentAndFees,
 } = require('./rent-partial.service');
+const {
+  IN_FLIGHT_CONFIRM_STATUSES,
+  assertRentPeriodAvailable,
+  lockRentChargePeriod,
+} = require('./rent-charge-guard');
 
 const MIN_DEPOSIT_INSTALLMENT = 1;
 
@@ -32,7 +37,7 @@ async function assertNoInFlightDeposit(client, leaseId) {
  * Cancel an abandoned PaymentIntent, or signal that Stripe already finished it.
  * Returns { action: 'canceled'|'noop'|'succeeded'|'processing', pi }.
  */
-async function cancelReplacedDepositPaymentIntent(paymentIntentId) {
+async function cancelReplacedDepositPaymentIntent(paymentIntentId, { rejectInFlightConfirm = false } = {}) {
   if (!paymentIntentId) return { action: 'noop', pi: null };
 
   const pi = await stripe.retrievePaymentIntent(paymentIntentId);
@@ -41,6 +46,11 @@ async function cancelReplacedDepositPaymentIntent(paymentIntentId) {
   }
   if (pi.status === 'processing') {
     const err = new Error('A payment is already in progress.');
+    err.code = 'DUPLICATE_PAYMENT';
+    throw err;
+  }
+  if (rejectInFlightConfirm && IN_FLIGHT_CONFIRM_STATUSES.has(pi.status)) {
+    const err = new Error('A rent payment is already in progress.');
     err.code = 'DUPLICATE_PAYMENT';
     throw err;
   }
@@ -56,6 +66,11 @@ async function cancelReplacedDepositPaymentIntent(paymentIntentId) {
     }
     if (refreshed.status === 'processing') {
       const err = new Error('A payment is already in progress.');
+      err.code = 'DUPLICATE_PAYMENT';
+      throw err;
+    }
+    if (rejectInFlightConfirm && IN_FLIGHT_CONFIRM_STATUSES.has(refreshed.status)) {
+      const err = new Error('A rent payment is already in progress.');
       err.code = 'DUPLICATE_PAYMENT';
       throw err;
     }
@@ -311,27 +326,23 @@ async function prepareTenantCharge(client, {
     }
   } else {
     // Rent (optional amount — pay any portion of rent remaining + late fees).
+    await lockRentChargePeriod(client, leaseId, monthStart);
+
     const { rows: processing } = await client.query(
       `SELECT id FROM payments
         WHERE lease_id = $1 AND payment_type = 'rent'
           AND period_start = $2 AND status = 'processing'`,
       [leaseId, monthStart]
     );
-    if (processing.length > 0) {
-      const err = new Error('A rent payment is already in progress.');
-      err.code = 'DUPLICATE_PAYMENT';
-      throw err;
-    }
 
     const breakdown = await rentBilling.computeChargeBreakdown(client, leaseId, { monthStart });
     const rentRemaining = breakdown.rentAmount;
     const lateFeeBalance = breakdown.lateFeeAmount;
     const totalRemaining = breakdown.totalAmount;
-    if (totalRemaining <= 0.009) {
-      const err = new Error('Nothing is due for this period.');
-      err.code = 'NOTHING_DUE';
-      throw err;
-    }
+    assertRentPeriodAvailable({
+      processingCount: processing.length,
+      remainingDue: totalRemaining,
+    });
 
     const requestedRaw = amount == null || amount === '' ? totalRemaining : parseMoney(amount);
     if (!Number.isFinite(requestedRaw)) {
@@ -397,7 +408,9 @@ async function prepareTenantCharge(client, {
       );
       parent = inserted;
     } else {
-      const parentPi = await cancelReplacedDepositPaymentIntent(parent.stripe_payment_intent_id);
+      const parentPi = await cancelReplacedDepositPaymentIntent(parent.stripe_payment_intent_id, {
+        rejectInFlightConfirm: true,
+      });
       if (parentPi.action === 'succeeded') {
         await syncLocalPaymentIfStripeSucceeded(client, parent, parentPi.pi);
         const { settleRentPaymentSuccess } = require('../utils/payment-settlement');
@@ -441,7 +454,9 @@ async function prepareTenantCharge(client, {
       [leaseId, monthStart, parent.id]
     );
     for (const row of openInstallments) {
-      const res = await cancelReplacedDepositPaymentIntent(row.stripe_payment_intent_id);
+      const res = await cancelReplacedDepositPaymentIntent(row.stripe_payment_intent_id, {
+        rejectInFlightConfirm: true,
+      });
       if (res.action === 'succeeded') {
         await syncLocalPaymentIfStripeSucceeded(client, row, res.pi);
         const { settleRentPaymentSuccess } = require('../utils/payment-settlement');
@@ -462,9 +477,11 @@ async function prepareTenantCharge(client, {
       );
     }
 
+    const priorAttempt = Number((parent.metadata || {}).stripe_intent_attempt || 0);
     chargeMeta = {
       ...chargeMeta,
       payment_kind: 'rent',
+      stripe_intent_attempt: priorAttempt + 1,
       rent_amount: rentAmount.toFixed(2),
       late_fee_amount: lateFeeAmount.toFixed(2),
       rent_remaining_before: rentRemaining.toFixed(2),
