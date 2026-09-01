@@ -12,11 +12,10 @@ const CHIME_ACH_NOT_SUPPORTED_MESSAGE =
 const ACH_INITIATION_FAILED_MESSAGE =
   'This bank payment could not be started. Try paying with a debit card instead.';
 
-/** Official Chime partner ABA routing numbers (Chime help + known Stride variants). */
+/** Official Chime partner ABA routing numbers (Chime help). */
 const CHIME_PARTNER_ROUTING_NUMBERS = new Set([
   '031101279', // The Bancorp Bank, N.A.
-  '103100195', // Stride Bank, N.A. (current Chime listing)
-  '124303120', // Stride Bank (also used for some Chime accounts)
+  '103100195', // Stride Bank, N.A.
 ]);
 
 /** Known Plaid institution IDs for Chime (legacy / current Link records). */
