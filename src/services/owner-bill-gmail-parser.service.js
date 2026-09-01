@@ -1,7 +1,9 @@
 /**
  * Classify owner-bill Gmail (Newrez, Vivint, T-Mobile, Dominion/HRSD).
- * Payment confirmations only — never tenant rent, Stripe, or a bill statement.
- * Does not invent amounts.
+ * Payment confirmations only (posted / paid / confirmation number).
+ * Bill-ready and amount-due never mark paid or verified.
+ * Ambiguous mail is left for Ops — do not auto-guess.
+ * Does not invent amounts. Not tenant rent. Not Stripe.
  */
 
 const { lastPaidAtForPostedPayment } = require('./owner-checklist.service');
@@ -18,12 +20,15 @@ const PAID_PHRASES = [
   'we received your payment',
   'your payment of',
   'payment posted',
-  'was posted',
+  'payment was posted',
 ];
 
+/** Bill-ready / amount-due / statement — never mark paid or verified. */
 const BILL_PHRASES = [
   'bill is available',
   'bill is ready',
+  'your bill is ready',
+  'amount due',
   'statement is available',
   'monthly mortgage statement',
   'monthly statement',
@@ -135,15 +140,30 @@ function isRejected(text) {
   return null;
 }
 
+function isBillReadyOrAmountDue(hay) {
+  return BILL_PHRASES.some((p) => hay.includes(p));
+}
+
+function hasPaidConfirmationLanguage(hay) {
+  return PAID_PHRASES.some((p) => hay.includes(p));
+}
+
+/**
+ * Clear confirmation only: paid/posted language AND a confirmation number.
+ * Bill-ready / amount-due always win. One signal alone is left for Ops.
+ */
 function classifyKind(text) {
   const hay = text.toLowerCase();
-  const paid = PAID_PHRASES.some((p) => hay.includes(p));
+  if (isBillReadyOrAmountDue(hay)) {
+    return { kind: 'bill', skipReason: 'bill_not_confirmation' };
+  }
+  const paid = hasPaidConfirmationLanguage(hay);
   const upcoming = UPCOMING_PHRASES.some((p) => hay.includes(p));
-  const bill = BILL_PHRASES.some((p) => hay.includes(p));
-
   if (upcoming && !paid) return { kind: 'upcoming', skipReason: 'upcoming_or_scheduled' };
-  if (bill && !paid) return { kind: 'bill', skipReason: 'bill_not_confirmation' };
-  if (paid) return { kind: 'paid_confirmation', skipReason: null };
+
+  const hasConf = Boolean(parseConfirmation(text));
+  if (paid && hasConf) return { kind: 'paid_confirmation', skipReason: null };
+  if (paid || hasConf) return { kind: 'ambiguous', skipReason: 'ambiguous' };
   return { kind: 'ambiguous', skipReason: 'ambiguous' };
 }
 

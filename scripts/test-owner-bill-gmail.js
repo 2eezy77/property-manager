@@ -126,6 +126,38 @@ const AMBIGUOUS = {
   body: 'Just a newsletter. No payment mentioned.',
 };
 
+const AMOUNT_DUE_ONLY = {
+  id: 'gmail-amount-due-only',
+  from: 'Dominion Energy <Elec@domenergyvanc.com>',
+  subject: 'Amount due reminder',
+  date: 'Mon, 19 May 2026 10:00:00 -0400',
+  snippet: 'Amount Due: $744.21',
+  body: 'Amount Due: $744.21. Please pay by 06/15/2026. Confirmation number on file: 4984922320.',
+};
+
+const BILL_READY_WITH_PRIOR_POST = {
+  id: 'gmail-bill-ready-prior-post',
+  from: 'Newrez LLC <donotreply@newrez.com>',
+  subject: 'Your bill is ready',
+  date: 'Sun, 3 May 2026 08:00:00 -0400',
+  snippet: 'Your bill is ready. Amount due $2,295.37.',
+  body: [
+    'Your bill is ready to view.',
+    'Amount due $2,295.37.',
+    'Last payment was posted on 04/01/2026.',
+    'Confirmation number: 999111222.',
+  ].join(' '),
+};
+
+const PAID_LANGUAGE_NO_CONF = {
+  id: 'gmail-paid-no-conf',
+  from: 'Vivint Smart Home <noreply@vivint.com>',
+  subject: 'Thank you for your payment',
+  date: 'Tue, 18 Aug 2026 10:00:00 -0400',
+  snippet: 'We received your Vivint payment.',
+  body: 'We received your payment of $110.00. No reference listed.',
+};
+
 const mortgageItem = { category: 'mortgage', due_day: 1, last_paid_at: null, last_verified_at: null };
 const vivintItem = { category: 'vivint', due_day: null, last_paid_at: null, last_verified_at: null };
 
@@ -159,6 +191,25 @@ assert(parseOwnerBillEmail(AUTOPAY_UPCOMING).kind !== 'paid_confirmation', 'Upco
 assert(parseOwnerBillEmail(CASHAPP_RENT).kind !== 'paid_confirmation', 'Cash App rent is ignored');
 assert(parseOwnerBillEmail(STRIPE_PAYOUT).kind !== 'paid_confirmation', 'Stripe payout is ignored');
 assert(parseOwnerBillEmail(AMBIGUOUS).kind !== 'paid_confirmation', 'Ambiguous mail is not marked paid');
+
+function assertNeverMarks(parsed, label) {
+  assert(parsed.kind !== 'paid_confirmation', `${label} is not a paid confirmation`);
+  const decision = decideOwnerBillApply({
+    parsed,
+    item: { category: parsed.category || 'utilities', due_day: null },
+    existingByGmailId: new Set(),
+    existingByConfirmation: new Set(),
+  });
+  assert(decision.action === 'skip', `${label} decide → skip`);
+  assert(!decision.patch?.last_paid_at, `${label} must never set last_paid_at`);
+  assert(!decision.patch?.last_verified_at, `${label} must never set last_verified_at`);
+}
+
+assertNeverMarks(parseOwnerBillEmail(AMOUNT_DUE_ONLY), 'amount-due email');
+assertNeverMarks(parseOwnerBillEmail(BILL_READY_WITH_PRIOR_POST), 'bill-ready email with prior posted payment');
+assertNeverMarks(parseOwnerBillEmail(PAID_LANGUAGE_NO_CONF), 'thank-you without confirmation number');
+assertNeverMarks(parseOwnerBillEmail(DOMINION_BILL), 'Dominion bill-ready');
+assertNeverMarks(parseOwnerBillEmail(NEWREZ_STATEMENT), 'Newrez statement / amount due');
 
 const skipBill = decideOwnerBillApply({
   parsed: parseOwnerBillEmail(DOMINION_BILL),
@@ -291,6 +342,9 @@ const applySrc = fs.readFileSync(
 );
 assert(applySrc.includes('updateChecklistItem'), 'apply path uses existing checklist update');
 assert(!applySrc.includes('createPaymentIntent'), 'owner-bill worker does not create Stripe charges');
+assert(applySrc.includes('-subject:"bill is available"'), 'Gmail query excludes bill-available subjects');
+assert(applySrc.includes('-subject:"amount due"'), 'Gmail query excludes amount-due subjects');
+assert(!applySrc.includes('OR "confirmation number"'), 'Gmail query does not harvest confirmation-number body hits from bills');
 
 if (failed) {
   console.error(`\n${failed} failure(s)`);

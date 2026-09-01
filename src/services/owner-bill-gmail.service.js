@@ -16,6 +16,11 @@ const {
 const OWNER_BILL_QUERY = [
   '-from:cash@square.com',
   '-from:stripe.com',
+  '-subject:"bill is available"',
+  '-subject:"bill is ready"',
+  '-subject:"amount due"',
+  '-subject:"your bill is"',
+  '-subject:statement',
   '(',
   'from:newrez OR from:shellpoint',
   'OR from:vivint',
@@ -29,7 +34,6 @@ const OWNER_BILL_QUERY = [
   'OR subject:"payment received"',
   'OR subject:"payment posted"',
   'OR subject:"we received your payment"',
-  'OR "confirmation number"',
   ')',
 ].join(' ');
 
