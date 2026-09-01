@@ -9,6 +9,7 @@ const plaid = require('./plaid.service');
 const stripe = require('./stripe.service');
 const { decrypt } = require('../utils/encryption');
 const { assertAchDebitAllowed } = require('./plaid-ach-guard.service');
+const { signalClientTransactionId } = require('../utils/plaid-signal-transaction-id');
 
 function currentMonthStart(date = new Date()) {
   return new Date(date.getFullYear(), date.getMonth(), 1).toISOString().slice(0, 10);
@@ -147,7 +148,7 @@ async function processAutopayCharges(db = pool) {
         amountCents,
         userId: lease.tenant_id,
         userPresent: false,
-        clientTransactionId: `autopay-${paymentId}`,
+        clientTransactionId: signalClientTransactionId(paymentId),
         context: 'autopay_rent',
       });
       if (!guard.ok) {
@@ -272,7 +273,7 @@ async function chargeUtilitySplitAutopay(db, split) {
       amountCents,
       userId: split.tenant_id,
       userPresent: false,
-      clientTransactionId: `utility-autopay-${split.split_id}`,
+      clientTransactionId: signalClientTransactionId(split.split_id),
       context: 'autopay_utility',
     });
     if (!guard.ok) {
