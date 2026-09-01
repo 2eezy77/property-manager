@@ -315,6 +315,15 @@ function buildSummary({ actor, impersonator, method, path, body, statusCode }) {
       phase: 'started',
     });
   }
+  if (p === '/api/payments/bank/create-intent' && method === 'POST') {
+    return formatPaymentSummary(who, {
+      paymentType: b.paymentType || 'rent',
+      amount: b.amount,
+      method: 'ACH',
+      statusCode,
+      phase: 'started',
+    });
+  }
   if (p === '/api/payments/cashapp/create-intent' && method === 'POST') {
     return formatPaymentSummary(who, {
       paymentType: b.paymentType || 'rent',

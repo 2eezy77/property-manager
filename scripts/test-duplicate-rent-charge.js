@@ -20,6 +20,7 @@ const {
   chargeACH,
   createCardPaymentIntent,
   createCashAppPaymentIntent,
+  createBankPaymentIntent,
 } = require('../src/services/stripe.service');
 
 const root = path.resolve(__dirname, '..');
@@ -298,6 +299,18 @@ async function testStripeCreatePassesIdempotencyKey() {
     stripeClient,
   });
   assert.strictEqual(calls[0].options.idempotencyKey, `rent-ach-${paymentId}-a1`);
+
+  calls.length = 0;
+  await createBankPaymentIntent({
+    amountCents: 120000,
+    customerId: 'cus_test',
+    description: 'Rent',
+    metadata: {},
+    idempotencyKey: stripeIdempotencyKey({ method: 'ach', paymentId, attempt: 1 }),
+    stripeClient,
+  });
+  assert.strictEqual(calls[0].options.idempotencyKey, `rent-ach-${paymentId}-a1`);
+  assert.deepStrictEqual(calls[0].params.payment_method_types, ['us_bank_account']);
 }
 
 function testProductionWiring() {

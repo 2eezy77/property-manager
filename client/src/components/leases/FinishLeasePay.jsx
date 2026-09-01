@@ -448,7 +448,7 @@ export default function FinishLeasePay({ lease, onPaid }) {
 
       <div className="mt-5 flex flex-wrap gap-2">
         <button type="button" onClick={() => setMethod('card')} className={methodButtonClass('card')}>
-          <CreditCard size={16} /> Card
+          <CreditCard size={16} /> Card / Link (card wallet)
         </button>
         <button type="button" onClick={() => setMethod('ach')} className={methodButtonClass('ach')}>
           <Landmark size={16} /> ACH bank
@@ -489,7 +489,7 @@ export default function FinishLeasePay({ lease, onPaid }) {
             </span>
           </label>
           <p className="mb-3 text-xs text-slate-500">
-            Card and Cash App include a 2.9% + $0.30 processing fee. ACH has no fee.
+            Card and Link (card wallet) include a 2.9% + $0.30 processing fee. Bank ACH is a separate option with no fee.
           </p>
           {!cardIntent ? (
             <button

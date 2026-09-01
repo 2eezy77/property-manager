@@ -704,17 +704,12 @@ async function probeAchPaymentIntentAvailable() {
   }
 }
 
-/**
- * Create a PaymentIntent for Cash App Pay (client confirms via Stripe.js).
- */
-async function createCashAppPaymentIntent({
+function buildCashAppIntentParams({
   amountCents,
   customerId,
   description,
   metadata,
   transferDestination,
-  idempotencyKey,
-  stripeClient,
 }) {
   const params = {
     amount: amountCents,
@@ -727,8 +722,73 @@ async function createCashAppPaymentIntent({
   if (transferDestination) {
     params.transfer_data = { destination: transferDestination };
   }
+  return params;
+}
+
+function buildCardIntentParams({
+  amountCents,
+  customerId,
+  metadata = {},
+  description,
+}) {
+  return {
+    amount: amountCents,
+    currency: 'usd',
+    customer: customerId,
+    payment_method_types: ['card'],
+    capture_method: 'automatic',
+    description,
+    metadata: toStripeMetadata(metadata),
+  };
+}
+
+/**
+ * Unconfirmed ACH PaymentIntent for tenant checkout (Payment Element).
+ * Separate from chargeACH, which confirms immediately against a saved PM.
+ */
+function buildBankCheckoutIntentParams({
+  amountCents,
+  customerId,
+  description,
+  metadata,
+}) {
+  return {
+    amount: amountCents,
+    currency: 'usd',
+    customer: customerId,
+    payment_method_types: ['us_bank_account'],
+    description,
+    metadata: toStripeMetadata(metadata),
+    payment_method_options: {
+      us_bank_account: {
+        financial_connections: {
+          permissions: ['payment_method'],
+        },
+      },
+    },
+  };
+}
+
+/**
+ * Create a PaymentIntent for Cash App Pay (client confirms via Stripe.js).
+ */
+async function createCashAppPaymentIntent({
+  amountCents,
+  customerId,
+  description,
+  metadata,
+  transferDestination,
+  idempotencyKey,
+  stripeClient,
+}) {
   return stripeClientOf(stripeClient).paymentIntents.create(
-    params,
+    buildCashAppIntentParams({
+      amountCents,
+      customerId,
+      description,
+      metadata,
+      transferDestination,
+    }),
     stripeIdempotencyOptions(idempotencyKey)
   );
 }
@@ -742,15 +802,31 @@ async function createCardPaymentIntent({
   stripeClient,
 }) {
   return stripeClientOf(stripeClient).paymentIntents.create(
-    {
-      amount: amountCents,
-      currency: 'usd',
-      customer: customerId,
-      payment_method_types: ['card'],
-      capture_method: 'automatic',
+    buildCardIntentParams({
+      amountCents,
+      customerId,
+      metadata,
       description,
-      metadata: toStripeMetadata(metadata),
-    },
+    }),
+    stripeIdempotencyOptions(idempotencyKey)
+  );
+}
+
+async function createBankPaymentIntent({
+  amountCents,
+  customerId,
+  metadata = {},
+  description,
+  idempotencyKey,
+  stripeClient,
+}) {
+  return stripeClientOf(stripeClient).paymentIntents.create(
+    buildBankCheckoutIntentParams({
+      amountCents,
+      customerId,
+      metadata,
+      description,
+    }),
     stripeIdempotencyOptions(idempotencyKey)
   );
 }
@@ -818,6 +894,10 @@ module.exports = {
   probeAchPaymentIntentAvailable,
   createCashAppPaymentIntent,
   createCardPaymentIntent,
+  createBankPaymentIntent,
+  buildCashAppIntentParams,
+  buildCardIntentParams,
+  buildBankCheckoutIntentParams,
   createIdentityVerificationSession,
   retrieveIdentityVerificationSession,
   retrievePaymentIntent,

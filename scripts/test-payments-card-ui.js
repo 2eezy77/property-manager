@@ -26,8 +26,9 @@ function includesAll(source, label, snippets) {
 includesAll(paymentsPage, 'tenant Payments card integration', [
   "CardPaymentForm from '@/components/payments/CardPaymentForm'",
   "'/api/payments/card/create-intent'",
-  "paymentType: 'rent'",
-  "paymentType: 'security_deposit'",
+  "startCardPayment('rent')",
+  "startCardPayment('security_deposit')",
+  "startBankPayment('rent')",
   '<CardPaymentForm',
   "card: 'Card'",
   "p.metadata?.source === 'stripe_card'",
@@ -41,7 +42,7 @@ assert.match(
 
 assert.match(
   paymentsRoutes,
-  /l\.status IN \('active', 'awaiting_deposit'\)/,
+  /l\.status IN \('active', 'awaiting_deposit', 'awaiting_identity'\)/,
   'balance endpoint should surface awaiting-deposit leases so pending deposits can be paid'
 );
 

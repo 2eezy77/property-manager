@@ -230,6 +230,16 @@ assert.strictEqual(
   buildSummary({
     actor,
     method: 'POST',
+    path: '/api/payments/bank/create-intent',
+    statusCode: 200,
+    body: { paymentType: 'rent', amount: 1200 },
+  }),
+  'Osanin Murillo started $1200.00 rent payment via ACH'
+);
+assert.strictEqual(
+  buildSummary({
+    actor,
+    method: 'POST',
     path: '/api/payments/cashapp/create-intent',
     statusCode: 400,
     body: { paymentType: 'rent', amount: 1200 },

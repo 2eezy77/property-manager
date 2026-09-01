@@ -129,7 +129,7 @@ assertFalse(
 );
 
 const cardCatch = paymentsRoutes.slice(paymentsRoutes.indexOf("router.post('/card/create-intent'"));
-const cardHandler = cardCatch.slice(0, cardCatch.indexOf("router.get('/cashapp/sync'"));
+const cardHandler = cardCatch.slice(0, cardCatch.indexOf("router.post('/bank/create-intent'"));
 assert(
   cardHandler.includes("error: 'CARD_INTENT_FAILED'"),
   'Card create-intent still uses CARD_INTENT_FAILED'
