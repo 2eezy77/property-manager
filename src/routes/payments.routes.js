@@ -12,8 +12,10 @@
  *   GET  /api/payments/stripe-config           — tenant: Stripe publishable key + Cash App Pay flag
  *   GET  /api/payments/config                  — alias (publishableKey + cashAppEnabled)
  *   POST /api/payments/cashapp/create-intent   — tenant: start Cash App Pay rent/deposit payment
- *   POST /api/payments/card/create-intent      — tenant: start card rent/deposit payment
+ *   POST /api/payments/card/create-intent      — tenant: start card / Link (card wallet) payment
+ *   POST /api/payments/bank/create-intent      — tenant: start ACH (us_bank_account) rent/deposit payment
  *   GET  /api/payments/cashapp/sync            — tenant: sync status after Cash App redirect
+ *   GET  /api/payments/bank/sync               — tenant: sync status after ACH / Financial Connections redirect
  *   POST /api/payments/run-billing             — staff: generate invoices + apply late fees
  *   GET  /api/payments/health                  — staff: Stripe/Plaid/webhook/tenant readiness
  *   POST /api/payments/record                  — staff: record offline payment (Cash App, etc.)
@@ -1238,6 +1240,164 @@ router.post('/card/create-intent', Guards.tenantOnly, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// POST /api/payments/bank/create-intent — tenant: ACH / us_bank_account checkout
+// Body: { leaseId, paymentType?: 'rent'|'security_deposit'|'utility', amount?: number }
+// Does not apply card/Cash App processing fees. Not a card / Link-wallet PI.
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/bank/create-intent', Guards.tenantOnly, async (req, res) => {
+  if (blockManagerPaymentAccess(req, res)) return;
+
+  const { leaseId, paymentType = 'rent', amount = null, utilitySplitId = null } = req.body;
+  if (!leaseId) return res.status(400).json({ error: 'MISSING_PARAMS' });
+  if (!CLIENT_INTENT_PAYMENT_TYPES.has(paymentType)) {
+    return res.status(400).json({
+      error: 'UNSUPPORTED_TYPE',
+      message: 'Bank ACH is available for rent, security deposits, and utilities.',
+    });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const prep = paymentType === 'utility'
+      ? await prepareUtilityPortalCharge(client, {
+        tenantId: req.user.id,
+        leaseId,
+        splitId: utilitySplitId || null,
+        bankAccountId: null,
+        metadataExtra: {
+          payment_method: 'ach',
+          source: 'stripe_ach',
+        },
+      })
+      : await prepareTenantCharge(client, {
+        tenantId: req.user.id,
+        leaseId,
+        paymentType,
+        bankAccountId: null,
+        amount: ['rent', 'security_deposit'].includes(paymentType) ? amount : null,
+        metadataExtra: {
+          payment_method: 'ach',
+          source: 'stripe_ach',
+        },
+      });
+
+    const { rows: [userRow] } = await client.query(
+      `SELECT first_name, last_name, email FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    const customerId = await stripe.getOrCreateCustomer(req.user.id, userRow.email, {
+      firstName: userRow.first_name,
+      lastName: userRow.last_name,
+    });
+    const payerName = stripe.personDisplayName({
+      firstName: userRow.first_name,
+      lastName: userRow.last_name,
+      email: userRow.email,
+    });
+
+    const { rows: [loc] } = await client.query(
+      `SELECT p.name AS property_name, u.unit_number
+         FROM leases l
+         JOIN units u ON u.id = l.unit_id
+         JOIN properties p ON p.id = u.property_id
+        WHERE l.id = $1`,
+      [leaseId]
+    );
+    const propertyLabel = loc
+      ? stripe.formatPropertyLabel(loc.property_name, loc.unit_number)
+      : null;
+
+    const paymentIntent = await stripe.createBankPaymentIntent({
+      amountCents: prep.amountCents,
+      customerId,
+      description: stripe.withPayerLabel(prep.description, {
+        name: payerName,
+        email: userRow.email,
+        propertyLabel,
+      }),
+      metadata: {
+        payment_id: prep.payment.id,
+        lease_id: leaseId,
+        tenant_id: req.user.id,
+        payment_type: paymentType,
+        payment_method: 'ach',
+        source: 'stripe_ach',
+        ...prep.chargeMeta,
+        ...stripe.payerMetadata({
+          name: payerName,
+          email: userRow.email,
+          userId: req.user.id,
+          propertyLabel,
+        }),
+      },
+      idempotencyKey: stripeIdempotencyKey({
+        method: 'ach',
+        paymentId: prep.payment.id,
+        attempt: Number(prep.chargeMeta?.stripe_intent_attempt || 1),
+      }),
+    });
+
+    await client.query(
+      `UPDATE payments
+          SET stripe_payment_intent_id = $1,
+              metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+              updated_at = NOW()
+        WHERE id = $3`,
+      [
+        paymentIntent.id,
+        JSON.stringify({
+          payment_method: 'ach',
+          source: 'stripe_ach',
+        }),
+        prep.payment.id,
+      ]
+    );
+
+    await client.query('COMMIT');
+
+    res.json({
+      clientSecret: paymentIntent.client_secret,
+      paymentIntentId: paymentIntent.id,
+      paymentId: prep.payment.id,
+      amount: prep.amountDollars,
+      baseAmount: prep.amountDollars,
+      processingFee: 0,
+      publishableKey: stripe.getPublishableKey(),
+      isPartialDeposit: prep.chargeMeta?.partial_installment === true,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.code === 'LEASE_NOT_FOUND') {
+      return res.status(404).json({ error: 'LEASE_NOT_FOUND' });
+    }
+    if (err.code === 'NO_DEPOSIT_DUE') {
+      return res.status(404).json({ error: 'NO_DEPOSIT_DUE', message: err.message });
+    }
+    if (err.code === 'DUPLICATE_PAYMENT') {
+      return res.status(409).json({ error: 'DUPLICATE_PAYMENT', message: err.message });
+    }
+    if (err.code === 'INVALID_DEPOSIT_AMOUNT' || err.code === 'INVALID_PAYMENT_AMOUNT') {
+      return res.status(400).json({ error: err.code, message: err.message });
+    }
+    if (err.code === 'NOTHING_DUE') {
+      return res.status(404).json({ error: 'NOTHING_DUE', message: err.message });
+    }
+    if (isStripeAccountRestrictionError(err)) {
+      return res.status(503).json({
+        error: 'STRIPE_ACCOUNT_RESTRICTED',
+        message: err.message,
+      });
+    }
+    console.error('[payments/bank/create-intent]', err);
+    res.status(500).json({ error: 'BANK_INTENT_FAILED', message: 'Could not start bank ACH payment.' });
+  } finally {
+    client.release();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /api/payments/cashapp/sync?payment_intent=pi_xxx — after Cash App redirect
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/cashapp/sync', Guards.tenantOnly, async (req, res) => {
@@ -1375,6 +1535,153 @@ router.get('/cashapp/sync', Guards.tenantOnly, async (req, res) => {
     });
   } catch (err) {
     console.error('[payments/cashapp/sync]', err);
+    res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/payments/bank/sync?payment_intent=pi_xxx — after ACH / Financial Connections
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/bank/sync', Guards.tenantOnly, async (req, res) => {
+  const paymentIntentId = req.query.payment_intent;
+  if (!paymentIntentId) return res.status(400).json({ error: 'MISSING_PARAMS' });
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, status, amount, payment_type, lease_id, tenant_id, failure_reason, metadata
+         FROM payments
+        WHERE stripe_payment_intent_id = $1 AND tenant_id = $2`,
+      [paymentIntentId, req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    const payment = rows[0];
+    const pi = await stripe.retrievePaymentIntent(paymentIntentId);
+    let status = payment.status;
+    let failureReason = payment.failure_reason;
+    const achMeta = JSON.stringify({ payment_method: 'ach', source: 'stripe_ach' });
+
+    if (pi.status === 'succeeded' && status !== 'succeeded') {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { rowCount } = await client.query(
+          `UPDATE payments
+              SET status = 'succeeded',
+                  stripe_charge_id = $1,
+                  paid_at = COALESCE(paid_at, NOW()),
+                  metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+                  updated_at = NOW()
+            WHERE id = $3 AND status <> 'succeeded'`,
+          [
+            typeof pi.latest_charge === 'string' ? pi.latest_charge : pi.latest_charge?.id ?? null,
+            achMeta,
+            payment.id,
+          ]
+        );
+        if (rowCount && payment.payment_type === 'security_deposit') {
+          const meta = payment.metadata || {};
+          const isInstallment = meta.partial_installment === true
+            || meta.partial_installment === 'true';
+          const { applyDepositCredit } = require('../services/security-deposit-partial.service');
+          if (isInstallment) {
+            const credit = await applyDepositCredit(client, {
+              leaseId: payment.lease_id,
+              creditAmount: parseFloat(payment.amount),
+              installmentPaymentId: payment.id,
+              paidAt: new Date(),
+              partMeta: { source: 'stripe_ach', payment_method: 'ach' },
+            });
+            if (credit.completed) {
+              await activateNativeLeaseAfterDeposit(client, payment.lease_id);
+            }
+          } else {
+            await client.query(
+              `UPDATE leases
+                  SET deposit_paid_at = COALESCE(deposit_paid_at, NOW()),
+                      updated_at = NOW()
+                WHERE id = $1`,
+              [payment.lease_id]
+            );
+            await activateNativeLeaseAfterDeposit(client, payment.lease_id);
+          }
+        }
+        if (rowCount && payment.payment_type === 'rent') {
+          const { settleRentPaymentSuccess } = require('../utils/payment-settlement');
+          await settleRentPaymentSuccess(client, {
+            paymentId: payment.id,
+            leaseId: payment.lease_id,
+            amount: parseFloat(payment.amount),
+          });
+        }
+        let utilityBillIds = [];
+        if (rowCount && payment.payment_type === 'utility') {
+          utilityBillIds = await markUtilitySplitsPaidForPayment(client, payment.id);
+        }
+        await client.query('COMMIT');
+        status = 'succeeded';
+        if (rowCount) {
+          for (const billId of utilityBillIds) {
+            const { maybeSettleBill } = require('../use-cases/utilities');
+            await maybeSettleBill(pool, billId).catch((e) =>
+              console.error('[payments/bank/sync] settle utility bill', billId, e.message)
+            );
+          }
+          await settleSuccessfulRentPayment(pool, {
+            paymentId: payment.id,
+            tenantId: payment.tenant_id,
+            leaseId: payment.lease_id,
+            amount: parseFloat(payment.amount),
+            paymentType: payment.payment_type,
+            skipLateFeeClear: payment.payment_type === 'rent',
+          });
+        }
+      } catch (syncErr) {
+        await client.query('ROLLBACK');
+        throw syncErr;
+      } finally {
+        client.release();
+      }
+    } else if (
+      (pi.status === 'processing' || pi.status === 'requires_action')
+      && status === 'pending'
+    ) {
+      await pool.query(
+        `UPDATE payments
+            SET status = 'processing',
+                metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+                updated_at = NOW()
+          WHERE id = $1`,
+        [payment.id, achMeta]
+      );
+      status = 'processing';
+    } else if (
+      (pi.status === 'canceled' || (pi.status === 'requires_payment_method' && pi.last_payment_error))
+      && status !== 'succeeded'
+    ) {
+      failureReason = pi.last_payment_error?.message || 'Bank ACH payment was not completed.';
+      const { rows: failedRows } = await pool.query(
+        `UPDATE payments
+            SET status = 'failed', failure_reason = $1, updated_at = NOW()
+          WHERE id = $2
+            AND status IN ('pending', 'processing')
+         RETURNING id, payment_type`,
+        [failureReason, payment.id]
+      );
+      if (failedRows[0]?.payment_type === 'utility') {
+        await releaseUtilitySplitsForFailedPayment(pool, failedRows[0].id);
+      }
+      if (failedRows[0]) status = 'failed';
+    }
+
+    res.json({
+      paymentId: payment.id,
+      status,
+      amount: parseFloat(payment.amount),
+      failureReason: status === 'failed' ? failureReason : null,
+    });
+  } catch (err) {
+    console.error('[payments/bank/sync]', err);
     res.status(500).json({ error: 'SERVER_ERROR' });
   }
 });

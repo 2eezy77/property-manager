@@ -268,6 +268,8 @@ export default function PaymentsPage() {
   const [cashAppLoading, setCashAppLoading] = useState(false);
   const [cardLoadingType, setCardLoadingType] = useState(null);
   const [cardIntent, setCardIntent] = useState(null);
+  const [bankLoadingType, setBankLoadingType] = useState(null);
+  const [bankIntent, setBankIntent] = useState(null);
   const [payInFlight, setPayInFlight] = useState(false);
   const payInFlightRef = useRef(false);
   const [stripeConfig, setStripeConfig] = useState(null);
@@ -351,6 +353,47 @@ export default function PaymentsPage() {
         setPayResult({
           success: false,
           message: apiErrorMessage(err, 'Could not confirm Cash App payment.'),
+        });
+      })
+      .finally(() => {
+        window.history.replaceState({}, '', location.pathname);
+      });
+  }, [location.search, location.pathname, managerPreview]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // After bank ACH / Financial Connections redirect, sync status from Stripe
+  useEffect(() => {
+    if (managerPreview) return;
+    const params = new URLSearchParams(location.search);
+    const paymentIntent = params.get('payment_intent');
+    if (!params.get('bank_return') || !paymentIntent) return;
+
+    api.get(`/api/payments/bank/sync?payment_intent=${encodeURIComponent(paymentIntent)}`)
+      .then(({ data }) => {
+        if (data.status === 'succeeded') {
+          setPayResult({
+            success: true,
+            message: `Bank (ACH) payment of ${fmt(data.amount)} confirmed.`,
+          });
+          showToast(`Bank (ACH) payment of ${fmt(data.amount)} confirmed.`, 'success');
+          notifyCheckinRefresh();
+        } else if (data.status === 'processing') {
+          setPayResult({
+            success: true,
+            message: 'Bank (ACH) payment submitted — settles in 4–5 business days.',
+          });
+          showToast('Bank (ACH) payment submitted. ACH settles in 4–5 business days.', 'success');
+        } else if (data.status === 'failed') {
+          setPayResult({
+            success: false,
+            message: data.failureReason || 'Bank ACH payment was not completed.',
+          });
+        }
+        load(1);
+      })
+      .catch((err) => {
+        setPayResult({
+          success: false,
+          message: apiErrorMessage(err, 'Could not confirm bank ACH payment.'),
         });
       })
       .finally(() => {
@@ -590,6 +633,7 @@ export default function PaymentsPage() {
     setCashAppPayType(paymentType);
     setCashAppLoading(true);
     setCardIntent(null);
+    setBankIntent(null);
     setPayResult(null);
     try {
       const { data } = await api.post('/api/payments/cashapp/create-intent', {
@@ -676,6 +720,7 @@ export default function PaymentsPage() {
     if (!beginPay()) return;
     setCardLoadingType(paymentType);
     setCardIntent(null);
+    setBankIntent(null);
     setPayResult(null);
     try {
       const { data } = await api.post('/api/payments/card/create-intent', {
@@ -708,6 +753,68 @@ export default function PaymentsPage() {
       message: paymentIntent?.status === 'processing'
         ? `${kind} submitted — confirmation may take a moment.`
         : `${kind} confirmed. We will update your balance shortly.`,
+    });
+    showToast(`${kind} submitted.`, 'success');
+    notifyCheckinRefresh();
+    await load(1);
+  }
+
+  async function startBankPayment(paymentType) {
+    if (!balance?.lease) return;
+    let amount;
+    if (paymentType === 'security_deposit') {
+      const resolved = resolveDepositAmount();
+      if (!resolved.ok) {
+        setPayResult({ success: false, message: resolved.message });
+        return;
+      }
+      amount = resolved.amount;
+    } else if (paymentType === 'rent') {
+      const resolved = resolveRentAmount();
+      if (!resolved.ok) {
+        setPayResult({ success: false, message: resolved.message });
+        return;
+      }
+      amount = resolved.amount;
+    }
+    if (bankLoadingType) return;
+    if (bankIntent?.paymentType === paymentType) return;
+    if (!beginPay()) return;
+    setBankLoadingType(paymentType);
+    setBankIntent(null);
+    setCardIntent(null);
+    setPayResult(null);
+    try {
+      const { data } = await api.post('/api/payments/bank/create-intent', {
+        leaseId: balance.lease.id,
+        paymentType,
+        ...((paymentType === 'security_deposit' || paymentType === 'rent') ? { amount } : {}),
+      }, { skipGlobalError: true });
+      setBankIntent({ ...data, paymentType });
+    } catch (err) {
+      setPayResult({
+        success: false,
+        message: apiErrorMessage(err, 'Bank ACH payment could not be started.'),
+      });
+    } finally {
+      endPay();
+      setBankLoadingType(null);
+    }
+  }
+
+  async function handleBankSuccess(paymentIntent) {
+    const kind = bankIntent?.paymentType === 'security_deposit'
+      ? 'Security deposit'
+      : bankIntent?.paymentType === 'utility'
+        ? 'Utility payment'
+        : 'Bank (ACH) payment';
+    setBankIntent(null);
+    setShowPayFlow(false);
+    setPayResult({
+      success: true,
+      message: paymentIntent?.status === 'succeeded'
+        ? `${kind} confirmed. We will update your balance shortly.`
+        : `${kind} submitted — ACH settles in 4–5 business days.`,
     });
     showToast(`${kind} submitted.`, 'success');
     notifyCheckinRefresh();
@@ -886,6 +993,7 @@ export default function PaymentsPage() {
         onPay={managerPreview ? undefined : () => {
           setShowPayFlow(true);
           setCardIntent(null);
+          setBankIntent(null);
           setPayResult(null);
         }}
       />
@@ -916,7 +1024,7 @@ export default function PaymentsPage() {
       {depositDue && !showPayFlow && (
         <button
           type="button"
-          onClick={() => { setShowPayFlow(true); setCardIntent(null); setPayResult(null); }}
+          onClick={() => { setShowPayFlow(true); setCardIntent(null); setBankIntent(null); setPayResult(null); }}
           className="portal-card hover-lift flex w-full items-center justify-between gap-3 border border-violet-200 px-4 py-3 text-left ring-1 ring-violet-100"
         >
           <div>
@@ -936,7 +1044,7 @@ export default function PaymentsPage() {
       {utilityDue && !showPayFlow && (
         <button
           type="button"
-          onClick={() => { setShowPayFlow(true); setCardIntent(null); setPayResult(null); }}
+          onClick={() => { setShowPayFlow(true); setCardIntent(null); setBankIntent(null); setPayResult(null); }}
           className="portal-card hover-lift flex w-full items-center justify-between gap-3 border border-amber-200 px-4 py-3 text-left ring-1 ring-amber-100"
         >
           <div>
@@ -955,7 +1063,7 @@ export default function PaymentsPage() {
         <section aria-labelledby="pay-flow-heading" className="portal-card space-y-4 p-5">
           <div className="flex items-center justify-between">
             <h2 id="pay-flow-heading" className="text-base font-semibold text-slate-900">Choose how to pay</h2>
-            <button type="button" onClick={() => { setShowPayFlow(false); setCardIntent(null); }} className="text-slate-400 hover:text-slate-600 text-xl leading-none" aria-label="Close">×</button>
+            <button type="button" onClick={() => { setShowPayFlow(false); setCardIntent(null); setBankIntent(null); }} className="text-slate-400 hover:text-slate-600 text-xl leading-none" aria-label="Close">×</button>
           </div>
 
           <p className="text-xs text-slate-500">
@@ -1002,6 +1110,7 @@ export default function PaymentsPage() {
                     onChange={(e) => {
                       setRentAmountInput(e.target.value);
                       setCardIntent(null);
+                      setBankIntent(null);
                     }}
                     className="w-40 rounded-lg border border-slate-300 py-2 pl-7 pr-3 text-sm font-medium text-slate-900 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
                   />
@@ -1011,6 +1120,7 @@ export default function PaymentsPage() {
                   onClick={() => {
                     setRentAmountInput(rentTotalDue.toFixed(2));
                     setCardIntent(null);
+                    setBankIntent(null);
                   }}
                   className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-800 hover:bg-blue-50"
                 >
@@ -1044,6 +1154,7 @@ export default function PaymentsPage() {
                     onChange={(e) => {
                       setDepositAmountInput(e.target.value);
                       setCardIntent(null);
+                      setBankIntent(null);
                     }}
                     className="w-40 rounded-lg border border-slate-300 py-2 pl-7 pr-3 text-sm font-medium text-slate-900 focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100"
                   />
@@ -1053,6 +1164,7 @@ export default function PaymentsPage() {
                   onClick={() => {
                     setDepositAmountInput(depositRemaining.toFixed(2));
                     setCardIntent(null);
+                    setBankIntent(null);
                   }}
                   className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs font-semibold text-violet-800 hover:bg-violet-50"
                 >
@@ -1066,8 +1178,11 @@ export default function PaymentsPage() {
             <div className="space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
               <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <CreditCard size={16} aria-hidden />
-                Card
+                Card / Link (card wallet)
               </div>
+              <p className="text-xs text-slate-500">
+                Link is a card wallet (not bank ACH). Bank ACH is a separate option below with no processing fee.
+              </p>
               <div className="grid gap-2 sm:grid-cols-2">
                 {rentDue && (
                   <button
@@ -1179,12 +1294,104 @@ export default function PaymentsPage() {
             </div>
           )}
 
-          {verifiedAccounts.length === 0 ? (
+          {(rentDue || depositDue || utilityDue) && (
+            <div className="space-y-3 rounded-xl border border-emerald-100 bg-emerald-50/50 p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <Landmark size={16} aria-hidden />
+                Bank (ACH)
+              </div>
+              <p className="text-xs text-slate-500">
+                Real bank debit (us_bank_account) — no processing fee. This is not Link.
+                Link is a card wallet in the card form above.
+              </p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {rentDue && (
+                  <button
+                    type="button"
+                    onClick={() => startBankPayment('rent')}
+                    disabled={!!bankLoadingType || payInFlight || bankIntent?.paymentType === 'rent'}
+                    className="rounded-xl bg-brand py-2.5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
+                  >
+                    {bankLoadingType === 'rent'
+                      ? 'Preparing bank form…'
+                      : `Pay ${fmt(rentPayAmount)} with Bank (ACH)`}
+                  </button>
+                )}
+                {depositDue && (
+                  <button
+                    type="button"
+                    onClick={() => startBankPayment('security_deposit')}
+                    disabled={!!bankLoadingType || payInFlight || bankIntent?.paymentType === 'security_deposit'}
+                    className="rounded-xl border border-violet-300 bg-white py-2.5 text-sm font-semibold text-violet-900 hover:bg-violet-50 disabled:opacity-50"
+                  >
+                    {bankLoadingType === 'security_deposit'
+                      ? 'Preparing bank form…'
+                      : `Pay deposit ${fmt(depositPayAmount)} with Bank (ACH)`}
+                  </button>
+                )}
+                {utilityDue && (
+                  <button
+                    type="button"
+                    onClick={() => startBankPayment('utility')}
+                    disabled={!!bankLoadingType || payInFlight || bankIntent?.paymentType === 'utility'}
+                    className="rounded-xl border border-amber-300 bg-white py-2.5 text-sm font-semibold text-amber-900 hover:bg-amber-50 disabled:opacity-50"
+                  >
+                    {bankLoadingType === 'utility'
+                      ? 'Preparing bank form…'
+                      : `Pay utilities ${fmt(utilityDueAmount)} with Bank (ACH)`}
+                  </button>
+                )}
+              </div>
+              {bankIntent && (
+                <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+                  <p className="text-sm font-medium text-slate-700">
+                    Total: {fmt(bankIntent.amount)}
+                    <span className="ml-2 text-xs font-normal text-slate-500">
+                      (no processing fee)
+                    </span>
+                  </p>
+                  <CardPaymentForm
+                    variant="bank"
+                    returnUrl={`${window.location.origin}/tenant/payments?bank_return=1`}
+                    clientSecret={bankIntent.clientSecret}
+                    publishableKey={bankIntent.publishableKey || stripeConfig?.publishableKey}
+                    onSuccess={handleBankSuccess}
+                    onError={(err) => setPayResult({
+                      success: false,
+                      message: err.message || 'Bank ACH payment failed.',
+                    })}
+                  />
+                </div>
+              )}
+              {verifiedAccounts.length === 0 ? (
+                <p className="text-sm text-slate-500">
+                  Or connect a bank below with Plaid for saved ACH and Autopay.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    Saved bank (Plaid)
+                  </p>
+                  {verifiedAccounts.map((acct) => (
+                    <BankAccountCard
+                      key={acct.id}
+                      account={acct}
+                      isSelected={selectedAcct?.id === acct.id}
+                      onSelect={setSelectedAcct}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!(rentDue || depositDue || utilityDue) && verifiedAccounts.length === 0 && (
             <p className="text-sm text-slate-500">
-              Connect a bank below for ACH and Autopay
-              {rentDue || depositDue || utilityDue ? ' — or use card above.' : '.'}
+              Connect a bank below for ACH and Autopay.
             </p>
-          ) : (
+          )}
+
+          {!(rentDue || depositDue || utilityDue) && verifiedAccounts.length > 0 && (
             <div className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Bank (ACH)</p>
               {verifiedAccounts.map((acct) => (

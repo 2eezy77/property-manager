@@ -46,6 +46,16 @@ assert.strictEqual(
   shouldCapture({
     user: { id: 'u1' },
     method: 'GET',
+    path: '/sync',
+    originalUrl: '/api/payments/bank/sync',
+    baseUrl: '/api/payments',
+  }),
+  true
+);
+assert.strictEqual(
+  shouldCapture({
+    user: { id: 'u1' },
+    method: 'GET',
     path: '/me',
     originalUrl: '/auth/me',
   }),
@@ -225,6 +235,26 @@ assert.strictEqual(
     body: { paymentType: 'utility' },
   }),
   'Osanin Murillo started utilities payment via card'
+);
+assert.strictEqual(
+  buildSummary({
+    actor,
+    method: 'POST',
+    path: '/api/payments/bank/create-intent',
+    statusCode: 200,
+    body: { paymentType: 'rent', amount: 1200 },
+  }),
+  'Osanin Murillo started $1200.00 rent payment via ACH'
+);
+assert.strictEqual(
+  buildSummary({
+    actor,
+    method: 'GET',
+    path: '/api/payments/bank/sync',
+    statusCode: 200,
+    body: { paymentType: 'rent', amount: 1200 },
+  }),
+  'Osanin Murillo paid $1200.00 rent via ACH'
 );
 assert.strictEqual(
   buildSummary({
