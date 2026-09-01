@@ -35,7 +35,6 @@ assertTrue(isChimePartnerBank({ institutionId: 'ins_35' }), 'Plaid Chime institu
 assertTrue(isChimePartnerBank({ institutionId: 'INS_35' }), 'Plaid Chime institution id case');
 assertTrue(isChimePartnerBank({ routingNumber: '031101279' }), 'Bancorp Chime routing');
 assertTrue(isChimePartnerBank({ routingNumber: '103100195' }), 'Stride Chime routing');
-assertTrue(isChimePartnerBank({ routingNumber: '124303120' }), 'Stride alternate routing');
 assertTrue(
   isChimePartnerBank({ routingNumber: '031-101279' }),
   'routing digits only'
@@ -49,6 +48,10 @@ assertFalse(isChimePartnerBank({ institutionName: 'First Bancorp' }), 'First Ban
 assertFalse(isChimePartnerBank({ institutionId: 'ins_3' }), 'Chase Plaid id is not Chime');
 assertFalse(isChimePartnerBank({ routingNumber: '021000021' }), 'Chase routing is not Chime');
 assertFalse(isChimePartnerBank({ routingNumber: '110000000' }), 'Stripe test routing is not Chime');
+assertFalse(
+  isChimePartnerBank({ routingNumber: '124303120' }),
+  'Green Dot / Bonneville ABA is not Chime'
+);
 
 function expectChime(bank, label) {
   const body = achInitiationFailure(bank);
@@ -80,6 +83,7 @@ expectChime({ institutionId: 'ins_35' }, 'Plaid Chime ACH initiation');
 expectGeneric({}, 'unknown bank ACH initiation');
 expectGeneric({ institutionName: 'Navy Federal Credit Union' }, 'unknown credit union ACH');
 expectGeneric({ institutionId: 'ins_3', routingNumber: '021000021' }, 'Chase ACH initiation');
+expectGeneric({ routingNumber: '124303120' }, 'Green Dot ABA must not use Chime debit-card copy');
 
 // Charge route wires the helper; card / Cash App catch copy stays unchanged.
 const paymentsRoutes = fs.readFileSync(path.join(root, 'src/routes/payments.routes.js'), 'utf8');

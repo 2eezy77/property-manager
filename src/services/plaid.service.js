@@ -24,6 +24,7 @@
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } = require('plaid');
+const { signalClientTransactionId } = require('../utils/plaid-signal-transaction-id');
 
 function getPlaidEnv() {
   return String(process.env.PLAID_ENV || 'sandbox').trim().toLowerCase();
@@ -193,20 +194,17 @@ async function getAchAccountNumbers(accessToken, accountId) {
  * Plaid Signal — evaluate ACH return risk before debit.
  * @returns {Promise<{ rulesetResult: string|null, customerReturnRiskScore: number|null, bankReturnRiskScore: number|null }>}
  */
-async function evaluateAchRisk(accessToken, accountId, amountCents, options = {}) {
+function buildSignalEvaluateRequest(accessToken, accountId, amountCents, options = {}) {
   const rulesetKey = process.env.PLAID_SIGNAL_RULESET_KEY;
-  if (!rulesetKey) {
-    console.warn('[plaid] PLAID_SIGNAL_ENABLED but PLAID_SIGNAL_RULESET_KEY missing — skipping Signal');
-    return { rulesetResult: null, customerReturnRiskScore: null, bankReturnRiskScore: null };
-  }
-
   const amountDollars = amountCents / 100;
   const request = {
-    access_token:           accessToken,
-    account_id:             accountId,
-    amount:                 amountDollars,
-    client_transaction_id: options.clientTransactionId || `txn-${Date.now()}`,
-    user_present:           options.userPresent !== false,
+    access_token: accessToken,
+    account_id: accountId,
+    amount: amountDollars,
+    client_transaction_id: signalClientTransactionId(
+      options.clientTransactionId || `txn-${Date.now()}`
+    ),
+    user_present: options.userPresent !== false,
   };
 
   if (options.userId) {
@@ -215,6 +213,18 @@ async function evaluateAchRisk(accessToken, accountId, amountCents, options = {}
   if (rulesetKey) {
     request.ruleset_key = rulesetKey;
   }
+
+  return request;
+}
+
+async function evaluateAchRisk(accessToken, accountId, amountCents, options = {}) {
+  const rulesetKey = process.env.PLAID_SIGNAL_RULESET_KEY;
+  if (!rulesetKey) {
+    console.warn('[plaid] PLAID_SIGNAL_ENABLED but PLAID_SIGNAL_RULESET_KEY missing — skipping Signal');
+    return { rulesetResult: null, customerReturnRiskScore: null, bankReturnRiskScore: null };
+  }
+
+  const request = buildSignalEvaluateRequest(accessToken, accountId, amountCents, options);
 
   const { data } = await client.signalEvaluate(request);
 
@@ -355,6 +365,7 @@ module.exports = {
   createStripeBankAccountToken,
   getAccountDetails,
   getAchAccountNumbers,
+  buildSignalEvaluateRequest,
   evaluateAchRisk,
   getAvailableBalance,
   prepareSignalForItem,

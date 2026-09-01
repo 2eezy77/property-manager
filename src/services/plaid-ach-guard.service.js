@@ -40,73 +40,100 @@ async function assertAchDebitAllowed({
   userPresent = true,
   clientTransactionId,
   context = 'ach_debit',
-}) {
+} = {}, deps = {}) {
+  const evaluateAchRisk = deps.evaluateAchRisk || plaid.evaluateAchRisk;
+  const getAvailableBalance = deps.getAvailableBalance || plaid.getAvailableBalance;
+
   if (isSignalEnabled()) {
-    const signal = await plaid.evaluateAchRisk(accessToken, accountId, amountCents, {
-      userId,
-      userPresent,
-      clientTransactionId: clientTransactionId || `${context}-${Date.now()}`,
-    });
+    try {
+      const signal = await evaluateAchRisk(accessToken, accountId, amountCents, {
+        userId,
+        userPresent,
+        clientTransactionId: clientTransactionId || `${context}-${Date.now()}`,
+      });
 
-    const result = signal.rulesetResult?.toUpperCase?.() || null;
-    const blockSet = blockedSignalResults();
+      const result = signal.rulesetResult?.toUpperCase?.() || null;
+      const blockSet = blockedSignalResults();
 
-    if (result && blockSet.has(result)) {
-      console.warn('[plaid-ach-guard] Signal blocked charge', {
+      if (result && blockSet.has(result)) {
+        console.warn('[plaid-ach-guard] Signal blocked charge', {
+          context,
+          userId,
+          accountId,
+          amountCents,
+          rulesetResult: result,
+          score: signal.customerReturnRiskScore,
+        });
+        return {
+          ok: false,
+          status: 402,
+          body: {
+            error: 'ACH_RISK_BLOCKED',
+            message: result === 'REROUTE'
+              ? 'This bank account cannot be debited right now due to elevated return risk. Try another account or payment method.'
+              : 'This payment needs additional review before we can debit your account. Contact your property manager or try again later.',
+            signalResult: result,
+          },
+        };
+      }
+    } catch (err) {
+      const plaidErr = err.response?.data || {};
+      console.warn('[plaid-ach-guard] Signal check failed; allowing charge to reach Stripe', {
         context,
         userId,
         accountId,
-        amountCents,
-        rulesetResult: result,
-        score: signal.customerReturnRiskScore,
+        errorType: plaidErr.error_type || err.code,
+        errorCode: plaidErr.error_code,
+        errorMessage: plaidErr.error_message || err.message,
       });
-      return {
-        ok: false,
-        status: 402,
-        body: {
-          error: 'ACH_RISK_BLOCKED',
-          message: result === 'REROUTE'
-            ? 'This bank account cannot be debited right now due to elevated return risk. Try another account or payment method.'
-            : 'This payment needs additional review before we can debit your account. Contact your property manager or try again later.',
-          signalResult: result,
-        },
-      };
     }
   }
 
   if (isBalanceCheckEnabled()) {
-    const balance = await plaid.getAvailableBalance(accessToken, accountId);
-    const requiredCents = amountCents;
+    try {
+      const balance = await getAvailableBalance(accessToken, accountId);
+      const requiredCents = amountCents;
 
-    if (balance.availableCents != null && balance.availableCents < requiredCents) {
-      const msg = `Insufficient available balance (${(balance.availableCents / 100).toFixed(2)} available, ${(requiredCents / 100).toFixed(2)} required).`;
+      if (balance.availableCents != null && balance.availableCents < requiredCents) {
+        const msg = `Insufficient available balance (${(balance.availableCents / 100).toFixed(2)} available, ${(requiredCents / 100).toFixed(2)} required).`;
 
-      if (balanceBlocksCharge()) {
-        console.warn('[plaid-ach-guard] Balance blocked charge', {
+        if (balanceBlocksCharge()) {
+          console.warn('[plaid-ach-guard] Balance blocked charge', {
+            context,
+            userId,
+            accountId,
+            amountCents,
+            availableCents: balance.availableCents,
+          });
+          return {
+            ok: false,
+            status: 402,
+            body: {
+              error: 'INSUFFICIENT_BALANCE',
+              message: msg,
+              availableCents: balance.availableCents,
+              requiredCents,
+            },
+          };
+        }
+
+        console.warn('[plaid-ach-guard] Balance warning (charge allowed)', {
           context,
           userId,
           accountId,
           amountCents,
           availableCents: balance.availableCents,
         });
-        return {
-          ok: false,
-          status: 402,
-          body: {
-            error: 'INSUFFICIENT_BALANCE',
-            message: msg,
-            availableCents: balance.availableCents,
-            requiredCents,
-          },
-        };
       }
-
-      console.warn('[plaid-ach-guard] Balance warning (charge allowed)', {
+    } catch (err) {
+      const plaidErr = err.response?.data || {};
+      console.warn('[plaid-ach-guard] Balance check failed; allowing charge to reach Stripe', {
         context,
         userId,
         accountId,
-        amountCents,
-        availableCents: balance.availableCents,
+        errorType: plaidErr.error_type || err.code,
+        errorCode: plaidErr.error_code,
+        errorMessage: plaidErr.error_message || err.message,
       });
     }
   }

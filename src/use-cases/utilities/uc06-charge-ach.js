@@ -6,6 +6,7 @@ const plaid = require('../../services/plaid.service');
 const stripe = require('../../services/stripe.service');
 const { decrypt } = require('../../utils/encryption');
 const { assertAchDebitAllowed } = require('../../services/plaid-ach-guard.service');
+const { signalClientTransactionId } = require('../../utils/plaid-signal-transaction-id');
 const { accessiblePropertyIds } = require('./access');
 const { fetchBillWithSplits } = require('./queries');
 const { useCaseError } = require('./errors');
@@ -107,7 +108,7 @@ async function executeChargeBill({ userId, role, billId, force = false, ipAddres
         amountCents,
         userId: split.tenant_id,
         userPresent: false,
-        clientTransactionId: `utility-${split.split_id}`,
+        clientTransactionId: signalClientTransactionId(split.split_id),
         context: 'utility_split',
       });
       if (!guard.ok) {
