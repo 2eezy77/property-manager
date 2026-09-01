@@ -292,6 +292,14 @@ app.listen(PORT, HOST, () => {
       console.warn('[utilities-sync] scheduler not started:', err.message);
     }
   }
+  if (process.env.OWNER_BILL_GMAIL_SYNC_ENABLED !== 'false') {
+    try {
+      const { scheduleOwnerBillGmailSync } = require('./services/owner-bill-gmail-scheduler.service');
+      scheduleOwnerBillGmailSync();
+    } catch (err) {
+      console.warn('[owner-bill-gmail] scheduler not started:', err.message);
+    }
+  }
   try {
     const { startEventsPoller } = require('./services/rocketlawyer.service');
     startEventsPoller();

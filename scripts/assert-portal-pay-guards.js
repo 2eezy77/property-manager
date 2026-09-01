@@ -32,6 +32,16 @@ mustNotContain(
   ['executeChargeBill', '/charge', 'chargeACH'],
   'utilities worker must never ACH'
 );
+mustNotContain(
+  'src/services/owner-bill-gmail.service.js',
+  ['executeChargeBill', 'chargeACH', 'createPaymentIntent', 'paymentIntents'],
+  'owner-bill Gmail worker must never charge anyone'
+);
+mustContain(
+  'src/services/owner-bill-gmail.service.js',
+  ['updateChecklistItem', 'parseOwnerBillEmail'],
+  'owner-bill worker must mark checklist via existing update path'
+);
 
 // Manager Utilities UI must not expose charge CTAs (after Task 2)
 mustNotContain(
