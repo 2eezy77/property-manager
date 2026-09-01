@@ -80,9 +80,18 @@ function CardCheckout({ onSuccess, onError, variant = 'card', returnUrl }) {
   );
 }
 
+function paymentTypesMatchVariant(variant, types) {
+  if (!Array.isArray(types) || types.length === 0) return true;
+  if (variant === 'bank') {
+    return types.includes('us_bank_account') && !types.includes('card');
+  }
+  return types.includes('card') && !types.includes('us_bank_account');
+}
+
 export default function CardPaymentForm({
   clientSecret,
   publishableKey,
+  paymentMethodTypes,
   onSuccess,
   onError,
   variant = 'card',
@@ -123,6 +132,16 @@ export default function CardPaymentForm({
   );
 
   if (!clientSecret) return null;
+
+  if (!paymentTypesMatchVariant(variant, paymentMethodTypes)) {
+    return (
+      <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        {variant === 'bank'
+          ? 'Bank ACH checkout received a non-ACH payment form. Refresh and use Bank (ACH) again.'
+          : 'Card / Link checkout received a non-card payment form. Refresh and try again.'}
+      </p>
+    );
+  }
 
   if (loadingConfig) {
     return (

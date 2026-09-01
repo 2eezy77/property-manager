@@ -21,7 +21,11 @@ const {
   createCardPaymentIntent,
   createCashAppPaymentIntent,
   createBankPaymentIntent,
+  createLockedCheckoutPaymentIntent,
   buildAchIntentParams,
+  checkoutPaymentMethodConfigurationId,
+  PLAID_MANAGED_CONNECT_PMC,
+  ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE,
 } = require('../src/services/stripe.service');
 
 const root = path.resolve(__dirname, '..');
@@ -58,6 +62,11 @@ assert.strictEqual(cardParams.currency, 'usd');
 assert.strictEqual(cardParams.capture_method, 'automatic');
 assert.ok(!cardParams.payment_method_types.includes('us_bank_account'));
 assert.ok(!cardParams.payment_method_types.includes('cashapp'));
+assert.notStrictEqual(
+  cardParams.payment_method_configuration,
+  PLAID_MANAGED_CONNECT_PMC,
+  'card/Link must not use the Plaid-managed Connect PMC'
+);
 
 const cashAppParams = buildCashAppIntentParams({
   amountCents: 123654,
@@ -68,6 +77,7 @@ const cashAppParams = buildCashAppIntentParams({
 assert.deepStrictEqual(cashAppParams.payment_method_types, ['cashapp']);
 assert.ok(!cashAppParams.payment_method_types.includes('card'));
 assert.ok(!cashAppParams.payment_method_types.includes('us_bank_account'));
+assert.notStrictEqual(cashAppParams.payment_method_configuration, PLAID_MANAGED_CONNECT_PMC);
 
 const bankParams = buildBankCheckoutIntentParams({
   amountCents: 120000,
@@ -81,6 +91,11 @@ assert.ok(!bankParams.confirm, 'bank checkout PI is unconfirmed so Payment Eleme
 assert.ok(!bankParams.payment_method_types.includes('card'));
 assert.ok(!bankParams.payment_method_types.includes('cashapp'));
 assert.strictEqual(bankParams.amount, 120000, 'ACH checkout charges the ledger amount (no card fee)');
+assert.notStrictEqual(
+  bankParams.payment_method_configuration,
+  PLAID_MANAGED_CONNECT_PMC,
+  'bank ACH must not use the Plaid-managed Connect PMC'
+);
 
 const savedAch = buildAchIntentParams({
   amountCents: 120000,
@@ -126,6 +141,127 @@ async function testCreateHelpers() {
   });
   assert.deepStrictEqual(bankCalls[0].params.payment_method_types, ['us_bank_account']);
   assert.ok(!bankCalls[0].params.confirm);
+  assert.notStrictEqual(bankCalls[0].params.payment_method_configuration, PLAID_MANAGED_CONNECT_PMC);
+}
+
+function testAccountPmcPin() {
+  const prev = process.env.STRIPE_CHECKOUT_PAYMENT_METHOD_CONFIGURATION;
+  process.env.STRIPE_CHECKOUT_PAYMENT_METHOD_CONFIGURATION = ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE;
+  try {
+    assert.strictEqual(checkoutPaymentMethodConfigurationId(), ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE);
+    const bank = buildBankCheckoutIntentParams({
+      amountCents: 120000,
+      customerId: 'cus_test',
+      description: 'Rent',
+      metadata: {},
+    });
+    assert.deepStrictEqual(bank.payment_method_types, ['us_bank_account']);
+    assert.strictEqual(bank.payment_method_configuration, ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE);
+
+    const card = buildCardIntentParams({
+      amountCents: 123510,
+      customerId: 'cus_test',
+      description: 'Rent',
+      metadata: {},
+    });
+    assert.deepStrictEqual(card.payment_method_types, ['card']);
+    assert.strictEqual(card.payment_method_configuration, ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE);
+
+    const cash = buildCashAppIntentParams({
+      amountCents: 123510,
+      customerId: 'cus_test',
+      description: 'Rent',
+      metadata: {},
+    });
+    assert.deepStrictEqual(cash.payment_method_types, ['cashapp']);
+    assert.strictEqual(cash.payment_method_configuration, ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE);
+
+    process.env.STRIPE_CHECKOUT_PAYMENT_METHOD_CONFIGURATION = PLAID_MANAGED_CONNECT_PMC;
+    assert.strictEqual(
+      checkoutPaymentMethodConfigurationId(),
+      ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE,
+      'Plaid-managed Connect PMC must be remapped to the account-level Default PMC'
+    );
+  } finally {
+    if (prev == null) delete process.env.STRIPE_CHECKOUT_PAYMENT_METHOD_CONFIGURATION;
+    else process.env.STRIPE_CHECKOUT_PAYMENT_METHOD_CONFIGURATION = prev;
+  }
+}
+
+async function testLockedCreateFallback() {
+  const conflictCalls = [];
+  const conflictClient = {
+    paymentIntents: {
+      create: async (params) => {
+        conflictCalls.push(params);
+        if (params.payment_method_configuration) {
+          const err = new Error('You may only specify one of these parameters: payment_method_types, payment_method_configuration.');
+          err.param = 'payment_method_configuration';
+          throw err;
+        }
+        return {
+          id: 'pi_types_only',
+          payment_method_types: params.payment_method_types,
+          status: 'requires_payment_method',
+          amount_received: 0,
+        };
+      },
+    },
+  };
+  const recovered = await createLockedCheckoutPaymentIntent({
+    params: {
+      amount: 120000,
+      currency: 'usd',
+      payment_method_types: ['us_bank_account'],
+      payment_method_configuration: ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE,
+    },
+    expectedTypes: ['us_bank_account'],
+    stripeClient: conflictClient,
+  });
+  assert.strictEqual(recovered.id, 'pi_types_only');
+  assert.strictEqual(conflictCalls.length, 2);
+  assert.ok(!conflictCalls[1].payment_method_configuration);
+
+  const widenedCalls = [];
+  const canceled = [];
+  const widenClient = {
+    paymentIntents: {
+      create: async (params) => {
+        widenedCalls.push(params);
+        if (params.payment_method_configuration) {
+          return {
+            id: 'pi_wide',
+            payment_method_types: ['card', 'us_bank_account', 'cashapp'],
+            status: 'requires_payment_method',
+            amount_received: 0,
+          };
+        }
+        return {
+          id: 'pi_locked',
+          payment_method_types: params.payment_method_types,
+          status: 'requires_payment_method',
+          amount_received: 0,
+        };
+      },
+      cancel: async (id) => {
+        canceled.push(id);
+        return { id, status: 'canceled' };
+      },
+    },
+  };
+  const locked = await createLockedCheckoutPaymentIntent({
+    params: {
+      amount: 120000,
+      currency: 'usd',
+      payment_method_types: ['us_bank_account'],
+      payment_method_configuration: ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE,
+    },
+    expectedTypes: ['us_bank_account'],
+    stripeClient: widenClient,
+  });
+  assert.deepStrictEqual(canceled, ['pi_wide']);
+  assert.strictEqual(locked.id, 'pi_locked');
+  assert.deepStrictEqual(locked.payment_method_types, ['us_bank_account']);
 }
 
 // ── Route + UI wiring ───────────────────────────────────────────────────────
@@ -187,6 +323,12 @@ function testWiring() {
     /paymentMethodOrder:\s*\['card',\s*'us_bank_account'\]/,
     'card form must not mix ACH onto the card PI'
   );
+  assert.match(cardForm, /paymentTypesMatchVariant/, 'refuse to mount a bank form on a card PI');
+  assert.match(cardForm, /paymentMethodTypes/, 'card form checks the PI method types from create-intent');
+
+  assert.match(routes, /checkoutIntentPublicFields/);
+  assert.match(routes, /checkoutPaymentMethodConfiguration/);
+  assert.doesNotMatch(routes, /pmc_1Tb9l1BaVh1caty8bPcFnpeq/);
 
   const finishLease = read('client/src/components/leases/FinishLeasePay.jsx');
   assert.match(finishLease, /\/api\/payments\/card\/create-intent/);
@@ -196,6 +338,8 @@ function testWiring() {
 
 async function main() {
   await testCreateHelpers();
+  testAccountPmcPin();
+  await testLockedCreateFallback();
   testWiring();
   console.log('test-payment-intent-types OK');
 }

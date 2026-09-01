@@ -871,6 +871,7 @@ function tenantStripeClientConfig() {
     cashAppPayAvailable,
     cashAppEnabled: cashAppPayAvailable,
     processingFees: feeSchedulePublic(),
+    checkoutPaymentMethodConfiguration: stripe.checkoutPaymentMethodConfigurationId() || null,
   };
 }
 
@@ -1022,6 +1023,7 @@ router.post('/cashapp/create-intent', Guards.tenantOnly, async (req, res) => {
       processingFee: fee.processingFee,
       publishableKey: stripe.getPublishableKey(),
       isPartialDeposit: prep.chargeMeta?.partial_installment === true,
+      ...stripe.checkoutIntentPublicFields(paymentIntent),
     });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -1208,6 +1210,7 @@ router.post('/card/create-intent', Guards.tenantOnly, async (req, res) => {
       processingFee: fee.processingFee,
       publishableKey: stripe.getPublishableKey(),
       isPartialDeposit: prep.chargeMeta?.partial_installment === true,
+      ...stripe.checkoutIntentPublicFields(paymentIntent),
     });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -1366,6 +1369,7 @@ router.post('/bank/create-intent', Guards.tenantOnly, async (req, res) => {
       processingFee: 0,
       publishableKey: stripe.getPublishableKey(),
       isPartialDeposit: prep.chargeMeta?.partial_installment === true,
+      ...stripe.checkoutIntentPublicFields(paymentIntent),
     });
   } catch (err) {
     await client.query('ROLLBACK');
