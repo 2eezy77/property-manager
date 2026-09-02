@@ -88,9 +88,13 @@
     "test:stripe-refund": "node scripts/test-stripe-refund-webhook.js",
     "test:rent-collection-stats": "TZ=America/New_York node scripts/test-rent-collection-stats.js",
     "test:plaid-link-token": "node scripts/test-plaid-link-token.js",
+    "test:charge-amount-policy": "node scripts/test-charge-amount-policy.js",
+    "test:identity-alert-redact": "node scripts/test-identity-alert-redact.js",
+    "test:security-notice-emails": "node scripts/test-security-notice-emails.js",
+    "test:email-dev-override": "node scripts/test-email-dev-override.js",
     "test:identity-crypto": "node scripts/test-identity-crypto.js",
     "test:lease-invite-identity": "node scripts/test-lease-invite-identity.js",
-    "test:identity:all": "npm run test:identity-crypto && npm run test:lease-invite-identity"
+    "test:identity:all": "npm run test:identity-crypto && npm run test:lease-invite-identity && npm run test:identity-alert-redact"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.27.0",
