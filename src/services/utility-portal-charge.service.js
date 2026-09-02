@@ -8,7 +8,12 @@
  * rows are never selected.
  */
 
-const PAYABLE_SPLIT_STATUSES = ['pending', 'notified', 'disputed', 'failed'];
+const {
+  PAYABLE_SPLIT_STATUSES,
+  assertLeaseReadyForPortalCharge,
+  assertSplitsReadyForPortalCharge,
+  assertPortalChargeClaimComplete,
+} = require('./utility-portal-charge-gates');
 
 async function listOpenUtilitySplits(client, tenantId, { leaseId = null, splitId = null, forUpdate = false } = {}) {
   const params = [tenantId];
@@ -92,57 +97,17 @@ async function prepareUtilityPortalCharge(client, {
       WHERE id = $1 AND tenant_id = $2 AND status = 'active'`,
     [leaseId, tenantId]
   );
-  if (!leaseRows[0]) {
-    const err = new Error('LEASE_NOT_FOUND');
-    err.code = 'LEASE_NOT_FOUND';
-    throw err;
-  }
+  assertLeaseReadyForPortalCharge(leaseRows[0]);
 
   const splits = await listOpenUtilitySplits(client, tenantId, { leaseId, splitId, forUpdate: true });
-  if (!splits.length) {
-    const err = new Error('No open utility balance to pay.');
-    err.code = 'NOTHING_DUE';
-    throw err;
-  }
-
-  // Guard: all splits must belong to the same lease (caller supplied leaseId).
-  if (splits.some((s) => s.lease_id !== leaseId)) {
-    const err = new Error('Utility shares must match the selected lease.');
-    err.code = 'LEASE_MISMATCH';
-    throw err;
-  }
-
-  // Re-check after FOR UPDATE — another charge must not have claimed a share.
-  if (
-    splits.some(
-      (s) =>
-        s.payment_id != null
-        || !PAYABLE_SPLIT_STATUSES.includes(String(s.split_status))
-    )
-  ) {
-    const err = new Error('No open utility balance to pay.');
-    err.code = 'NOTHING_DUE';
-    throw err;
-  }
-
-  const amountDollars = Math.round(
-    splits.reduce((sum, s) => sum + Number(s.amount || 0), 0) * 100
-  ) / 100;
-  if (amountDollars <= 0.009) {
-    const err = new Error('No open utility balance to pay.');
-    err.code = 'NOTHING_DUE';
-    throw err;
-  }
-  const amountCents = Math.round(amountDollars * 100);
-
-  const services = [...new Set(splits.map((s) => s.service_type))];
-  const description = services.length === 1
-    ? `Utility share (${services[0]})`
-    : `Utility shares (${services.join(', ')})`;
-
-  const splitIds = splits.map((s) => s.split_id);
-  const billIds = [...new Set(splits.map((s) => s.bill_id))];
-  const dueDate = splits.map((s) => s.due_date).filter(Boolean).sort()[0] || null;
+  const {
+    amountDollars,
+    amountCents,
+    description,
+    splitIds,
+    billIds,
+    dueDate,
+  } = assertSplitsReadyForPortalCharge(splits, { leaseId });
 
   const chargeMeta = {
     ...metadataExtra,
@@ -178,11 +143,7 @@ async function prepareUtilityPortalCharge(client, {
     [payment.id, splitIds, PAYABLE_SPLIT_STATUSES]
   );
 
-  if (Number(claimed) !== splitIds.length) {
-    const err = new Error('No open utility balance to pay.');
-    err.code = 'NOTHING_DUE';
-    throw err;
-  }
+  assertPortalChargeClaimComplete(claimed, splitIds);
 
   await client.query(
     `UPDATE utility_bills

@@ -8,8 +8,12 @@ const { decrypt } = require('../../utils/encryption');
 const { assertAchDebitAllowed } = require('../../services/plaid-ach-guard.service');
 const { signalClientTransactionId } = require('../../utils/plaid-signal-transaction-id');
 const { accessiblePropertyIds } = require('./access');
+const {
+  assertBillAccessibleForCharge,
+  assertChargeBillReady,
+  classifyEligibleSplitSkip,
+} = require('./charge-bill-gates');
 const { fetchBillWithSplits } = require('./queries');
-const { useCaseError } = require('./errors');
 
 async function executeChargeBill({ userId, role, billId, force = false, ipAddress, userAgent }) {
   const propIds = await accessiblePropertyIds(userId, role);
@@ -18,26 +22,12 @@ async function executeChargeBill({ userId, role, billId, force = false, ipAddres
     `SELECT * FROM utility_bills WHERE id = $1`,
     [billId]
   );
-  if (!bill || !propIds.includes(bill.property_id)) {
-    throw useCaseError('NOT_FOUND', 'Bill not found.');
-  }
-  if (bill.status !== 'notified' && bill.status !== 'charging') {
-    throw useCaseError('INVALID_STATE', `Bill is ${bill.status}; only notified bills can be charged.`);
-  }
-  if (!force && bill.dispute_deadline_at && new Date(bill.dispute_deadline_at) > new Date()) {
-    throw useCaseError(
-      'DEADLINE_NOT_REACHED',
-      'Dispute deadline has not passed. Pass force=true to charge anyway.'
-    );
-  }
-
-  if (!force && bill.service_type === 'electric' && !isElectricBillChargeable(bill)) {
-    const after = bill.chargeable_after || bill.period_end;
-    throw useCaseError(
-      'BILLING_PERIOD_OPEN',
-      `Electric bill billing period has not ended yet. Charge on or after ${after}, or pass force=true.`
-    );
-  }
+  assertBillAccessibleForCharge({ bill, accessiblePropertyIds: propIds });
+  assertChargeBillReady({
+    bill,
+    force,
+    isElectricChargeable: isElectricBillChargeable,
+  });
 
   const { rows: eligible } = await pool.query(
     `SELECT s.id AS split_id,
@@ -75,12 +65,9 @@ async function executeChargeBill({ userId, role, billId, force = false, ipAddres
   }
 
   for (const split of eligible) {
-    if (!split.bank_account_id) {
-      skipped.push({ split_id: split.split_id, reason: 'NO_VERIFIED_BANK' });
-      continue;
-    }
-    if (split.link_status === 'needs_relink') {
-      skipped.push({ split_id: split.split_id, reason: 'ACCOUNT_NEEDS_RELINK' });
+    const skipReason = classifyEligibleSplitSkip(split);
+    if (skipReason) {
+      skipped.push({ split_id: split.split_id, reason: skipReason });
       continue;
     }
 
