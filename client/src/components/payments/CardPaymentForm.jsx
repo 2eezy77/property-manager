@@ -4,9 +4,11 @@ import { loadStripe } from '@stripe/stripe-js';
 import api from '@/api/axios';
 import { apiErrorMessage } from '@/utils/apiErrorMessage';
 
+// Link-by-email often auto-selects a broken Link balance (brand "link" / last4 0000)
+// and returns generic_decline — Osanin Sep 2026. Force manual card entry instead.
 const CARD_ELEMENT_OPTIONS = {
   paymentMethodOrder: ['card'],
-  wallets: { link: 'auto', applePay: 'auto', googlePay: 'auto' },
+  wallets: { link: 'never', applePay: 'auto', googlePay: 'auto' },
 };
 
 const BANK_ELEMENT_OPTIONS = {
@@ -42,9 +44,25 @@ function CardCheckout({ onSuccess, onError, variant = 'card', returnUrl }) {
       if (error) {
         confirmLockRef.current = false;
         setSubmitting(false);
-        setMessage(error.message || (isBank
-          ? 'Bank payment could not be completed.'
-          : 'Card payment could not be completed.'));
+        const declineCode = error.decline_code || error.payment_intent?.last_payment_error?.decline_code;
+        const pmType = error.payment_method?.type
+          || error.payment_intent?.last_payment_error?.payment_method?.type;
+        const cardBrand = error.payment_method?.card?.brand
+          || error.payment_intent?.last_payment_error?.payment_method?.card?.brand;
+        const linkDeclined = !isBank && (
+          pmType === 'link'
+          || cardBrand === 'link'
+          || /link/i.test(error.message || '')
+        );
+        setMessage(
+          linkDeclined
+            ? 'Link wallet was declined. Enter your debit or credit card number, or use Cash App / Bank ACH instead.'
+            : declineCode === 'generic_decline' && !isBank
+              ? 'Card was declined. Try another card, Cash App, or Bank ACH (no fee).'
+              : (error.message || (isBank
+                ? 'Bank payment could not be completed.'
+                : 'Card payment could not be completed.'))
+        );
         onError?.(error);
         return;
       }

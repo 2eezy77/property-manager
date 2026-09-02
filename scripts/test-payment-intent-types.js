@@ -310,14 +310,19 @@ function testWiring() {
   assert.match(paymentsPage, /bank_return=1/, 'bank Payment Element returns to a bank sync URL');
   assert.match(paymentsPage, /\/api\/payments\/card\/create-intent/);
   assert.match(paymentsPage, /\/api\/payments\/cashapp\/create-intent/);
-  assert.match(paymentsPage, /Link \(card wallet\)|card wallet/, 'Link is labeled as a card wallet, not ACH');
+  assert.match(paymentsPage, /Debit \/ credit card/, 'card path is labeled as card entry, not Link-as-bank');
   assert.match(paymentsPage, /Bank \(ACH\)/);
   assert.match(paymentsPage, /startBankPayment|handleBankCheckout/, 'pay flow always offers bank ACH');
 
   assert.match(routes, /router\.get\('\/bank\/sync'/);
 
   const cardForm = read('client/src/components/payments/CardPaymentForm.jsx');
-  assert.match(cardForm, /paymentMethodOrder:\s*\['card'\]/, 'card Payment Element is card/Link only');
+  assert.match(cardForm, /paymentMethodOrder:\s*\['card'\]/, 'card Payment Element is card only');
+  assert.match(
+    cardForm,
+    /wallets:\s*\{\s*link:\s*'never'/,
+    'card Payment Element disables Stripe Link (Osanin Link generic_decline)'
+  );
   assert.doesNotMatch(
     cardForm,
     /paymentMethodOrder:\s*\['card',\s*'us_bank_account'\]/,

@@ -1,24 +1,34 @@
 /**
  * Helpers for staff "view as tenant" preview sessions.
- * Property managers may preview the portal but must not access bank/payment actions.
+ * Any staff preview must not access bank/payment actions (owners included).
  */
 
 function isManagerImpersonation(req) {
   return req.user?.impersonatorRole === 'property_manager';
 }
 
-function blockManagerPaymentAccess(req, res) {
-  if (isManagerImpersonation(req)) {
+/** True when the JWT is an impersonated tenant session (any staff actor). */
+function isStaffImpersonation(req) {
+  return Boolean(req.user?.impersonatedBy);
+}
+
+function blockStaffPaymentAccess(req, res) {
+  if (isStaffImpersonation(req)) {
     res.status(403).json({
-      error:   'MANAGER_PREVIEW_NO_PAYMENTS',
-      message: 'Managers cannot access tenant bank accounts or initiate payments in preview mode.',
+      error: 'PREVIEW_NO_PAYMENTS',
+      message: 'Cannot link banks or start payments while previewing a tenant portal. Exit preview and have the tenant pay, or use Manager → Payments to record offline.',
     });
     return true;
   }
   return false;
 }
 
-/** Strip linked-bank details from payment history for manager preview. */
+/** @deprecated Use blockStaffPaymentAccess — kept as alias for existing call sites. */
+function blockManagerPaymentAccess(req, res) {
+  return blockStaffPaymentAccess(req, res);
+}
+
+/** Strip linked-bank details from payment history for staff preview. */
 function redactPaymentHistoryRow(row) {
   const out = { ...row };
   delete out.institution_name;
@@ -29,6 +39,8 @@ function redactPaymentHistoryRow(row) {
 
 module.exports = {
   isManagerImpersonation,
+  isStaffImpersonation,
+  blockStaffPaymentAccess,
   blockManagerPaymentAccess,
   redactPaymentHistoryRow,
 };

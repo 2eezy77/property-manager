@@ -20,6 +20,10 @@ export const PAYMENT_ERROR_MESSAGES = {
     'A payment for this period is already in progress or complete.',
   NOTHING_DUE:
     'This period is already paid. Refresh to see your updated balance.',
+  PREVIEW_NO_PAYMENTS:
+    'Cannot pay or link banks while previewing a tenant. Exit preview first.',
+  MANAGER_PREVIEW_NO_PAYMENTS:
+    'Cannot pay or link banks while previewing a tenant. Exit preview first.',
   CASHAPP_NOT_CONFIGURED:
     'Cash App Pay is not available right now. Pay with bank (ACH) or contact your property manager.',
   CONNECT_ONBOARDING_REQUIRED:

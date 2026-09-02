@@ -448,7 +448,7 @@ export default function FinishLeasePay({ lease, onPaid }) {
 
       <div className="mt-5 flex flex-wrap gap-2">
         <button type="button" onClick={() => setMethod('card')} className={methodButtonClass('card')}>
-          <CreditCard size={16} /> Card / Link (card wallet)
+          <CreditCard size={16} /> Debit / credit card
         </button>
         <button type="button" onClick={() => setMethod('ach')} className={methodButtonClass('ach')}>
           <Landmark size={16} /> ACH bank

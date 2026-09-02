@@ -23,7 +23,7 @@ import CheckInBanner from '@/components/tenant/CheckInBanner';
 import CheckOutBanner from '@/components/tenant/CheckOutBanner';
 import { useCheckin } from '@/hooks/useCheckin';
 import { useOffboarding, notifyOffboardingRefresh } from '@/hooks/useOffboarding';
-import { isManagerImpersonation } from '@/utils/impersonation';
+import { isStaffImpersonation } from '@/utils/impersonation';
 
 function fmt(n) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n ?? 0);
@@ -248,10 +248,10 @@ const MSG_ICON = {
 };
 
 export default function TenantDashboard() {
-  const managerPreview = isManagerImpersonation();
-  const { checkin, loading: checkinLoading } = useCheckin({ enabled: !managerPreview });
+  const staffPreview = isStaffImpersonation();
+  const { checkin, loading: checkinLoading } = useCheckin({ enabled: !staffPreview });
   const { offboarding, loading: offboardLoading, refetch: refetchOffboard } = useOffboarding({
-    enabled: !managerPreview,
+    enabled: !staffPreview,
   });
   const [offboardBusy, setOffboardBusy] = useState(null);
 
@@ -310,7 +310,7 @@ export default function TenantDashboard() {
 
   return (
     <div className="stagger-section space-y-6">
-      {!managerPreview && !offboardLoading && offboarding?.active && (
+      {!staffPreview && !offboardLoading && offboarding?.active && (
         <div className="-mx-1 sm:mx-0">
           <CheckOutBanner
             offboarding={offboarding}
@@ -320,7 +320,7 @@ export default function TenantDashboard() {
         </div>
       )}
 
-      {!managerPreview && !checkinLoading && !offboarding?.active && (
+      {!staffPreview && !checkinLoading && !offboarding?.active && (
         <div className="-mx-1 sm:mx-0">
           <CheckInBanner checkin={checkin} />
         </div>
@@ -329,7 +329,7 @@ export default function TenantDashboard() {
       <ActionDock
         portal="tenant"
         actions={[
-          ...(managerPreview ? [] : [{ to: '/tenant/payments', label: 'Pay Rent', icon: <CreditCard size={22} strokeWidth={2} /> }]),
+          ...(staffPreview ? [] : [{ to: '/tenant/payments', label: 'Pay Rent', icon: <CreditCard size={22} strokeWidth={2} /> }]),
           { to: '/tenant/maintenance', label: 'Report',   icon: <Wrench size={22} strokeWidth={2} />,        badge: openMaint },
           { to: '/tenant/messages',    label: 'Messages', icon: <MessageSquare size={22} strokeWidth={2} />, badge: unreadMsgs },
           { to: '/tenant/lease',       label: 'My Lease', icon: <FileText size={22} strokeWidth={2} /> },
@@ -344,7 +344,7 @@ export default function TenantDashboard() {
       ) : (
         <>
           {/* Rent first — ePayRent / Oshadhi pattern */}
-          <RentHero balance={balance} hidePayAction={managerPreview} />
+          <RentHero balance={balance} hidePayAction={staffPreview} />
 
           <Link
             to="/tenant/payments"

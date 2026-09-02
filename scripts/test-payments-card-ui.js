@@ -32,7 +32,18 @@ includesAll(paymentsPage, 'tenant Payments card integration', [
   '<CardPaymentForm',
   "card: 'Card'",
   "p.metadata?.source === 'stripe_card'",
+  'Debit / credit card',
 ]);
+
+const cardForm = fs.readFileSync(
+  path.join(root, 'client/src/components/payments/CardPaymentForm.jsx'),
+  'utf8'
+);
+assert.match(
+  cardForm,
+  /wallets:\s*\{\s*link:\s*'never'/,
+  'card Payment Element must disable Stripe Link (Osanin Link generic_decline)'
+);
 
 assert.match(
   paymentsPage,

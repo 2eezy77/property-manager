@@ -22,12 +22,13 @@ export function isImpersonating() {
   return !!readImpersonation();
 }
 
-/** Staff preview — managers get history-only mode; owners see full portal. */
+/** Property-manager preview only (legacy). Prefer isStaffImpersonation for pay gating. */
 export function isManagerImpersonation() {
   const data = readImpersonation();
   return data?.ownerUser?.role === 'property_manager';
 }
 
+/** Any staff viewing as tenant — hide pay/bank actions. */
 export function isStaffImpersonation() {
   return isImpersonating();
 }

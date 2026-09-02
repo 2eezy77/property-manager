@@ -16,7 +16,7 @@ import api from '@/api/axios';
 import { apiErrorMessage } from '@/utils/apiErrorMessage';
 import { usePlaidLink } from '@/hooks/usePlaidLink';
 import { notifyCheckinRefresh } from '@/hooks/useCheckin';
-import { isManagerImpersonation } from '@/utils/impersonation';
+import { isStaffImpersonation } from '@/utils/impersonation';
 import RentHero from '@/components/ui/RentHero';
 import TableScroll from '@/components/ui/TableScroll';
 import CardPaymentForm from '@/components/payments/CardPaymentForm';
@@ -96,6 +96,9 @@ function friendlyFailureReason(reason) {
   if (/customer declined/i.test(r)) return 'Payment was cancelled before it finished.';
   if (/superseded/i.test(r)) return 'Replaced by another payment for this month.';
   if (/canceled|cancelled/i.test(r)) return 'Payment was cancelled.';
+  if (/^the payment failed\.?$/i.test(r.trim())) {
+    return 'Payment did not go through — try Cash App, Bank ACH, or enter a card (not Link).';
+  }
   return r;
 }
 
@@ -240,7 +243,7 @@ function PayConfirmModal({ account, balance, payAmount, onConfirm, onCancel, loa
 // ── Main page component ───────────────────────────────────────────────────────
 export default function PaymentsPage() {
   const location = useLocation();
-  const managerPreview = isManagerImpersonation();
+  const staffPreview = isStaffImpersonation();
   const [balance,  setBalance]  = useState(null);
   const [accounts, setAccounts] = useState([]);
   const [history,  setHistory]  = useState([]);
@@ -285,17 +288,17 @@ export default function PaymentsPage() {
         api.get('/api/payments/balance'),
         api.get(`/api/payments/history?page=${historyPage}&limit=10`),
       ];
-      if (!managerPreview) {
+      if (!staffPreview) {
         requests.splice(1, 0, api.get('/api/payments/bank-accounts'));
         requests.push(api.get('/api/payments/autopay'));
         requests.push(api.get('/api/payments/config'));
       }
       const results = await Promise.all(requests);
       const balRes = results[0];
-      const acctRes = managerPreview ? null : results[1];
-      const histRes = managerPreview ? results[1] : results[2];
-      const autopayRes = managerPreview ? null : results[3];
-      const stripeRes = managerPreview ? null : results[4];
+      const acctRes = staffPreview ? null : results[1];
+      const histRes = staffPreview ? results[1] : results[2];
+      const autopayRes = staffPreview ? null : results[3];
+      const stripeRes = staffPreview ? null : results[4];
       setBalance(balRes.data);
       setAccounts(acctRes?.data?.accounts ?? []);
       setHistory(histRes.data.payments);
@@ -315,13 +318,13 @@ export default function PaymentsPage() {
     } finally {
       setPageLoading(false);
     }
-  }, [managerPreview]);
+  }, [staffPreview]);
 
   useEffect(() => { load(histPage); }, [load, histPage]);
 
   // After Cash App redirect, sync payment status from Stripe
   useEffect(() => {
-    if (managerPreview) return;
+    if (staffPreview) return;
     const params = new URLSearchParams(location.search);
     const paymentIntent = params.get('payment_intent');
     if (!params.get('cashapp_return') || !paymentIntent) return;
@@ -358,11 +361,11 @@ export default function PaymentsPage() {
       .finally(() => {
         window.history.replaceState({}, '', location.pathname);
       });
-  }, [location.search, location.pathname, managerPreview]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [location.search, location.pathname, staffPreview]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // After bank ACH / Financial Connections redirect, sync status from Stripe
   useEffect(() => {
-    if (managerPreview) return;
+    if (staffPreview) return;
     const params = new URLSearchParams(location.search);
     const paymentIntent = params.get('payment_intent');
     if (!params.get('bank_return') || !paymentIntent) return;
@@ -399,7 +402,7 @@ export default function PaymentsPage() {
       .finally(() => {
         window.history.replaceState({}, '', location.pathname);
       });
-  }, [location.search, location.pathname, managerPreview]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [location.search, location.pathname, staffPreview]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-select default account when pay flow opens
   useEffect(() => {
@@ -450,7 +453,7 @@ export default function PaymentsPage() {
 
   const { open: openPlaid, ready: plaidReady, error: plaidError, loading: plaidLoading } = usePlaidLink({
     onSuccess: handlePlaidSuccess,
-    enabled: !managerPreview && !updateLinkToken,
+    enabled: !staffPreview && !updateLinkToken,
     exchangePath: '/api/payments/plaid/exchange',
     returnTo: location.pathname,
   });
@@ -462,7 +465,7 @@ export default function PaymentsPage() {
     loading: relinkPlaidLoading,
   } = usePlaidLink({
     onSuccess: handleRelinkSuccess,
-    enabled: !managerPreview && !!updateLinkToken,
+    enabled: !staffPreview && !!updateLinkToken,
     initialLinkToken: updateLinkToken,
     linkTokenPath: '/api/payments/plaid/update-link-token',
     exchangePath: '/api/payments/plaid/exchange-update',
@@ -887,9 +890,9 @@ export default function PaymentsPage() {
   const noBankLinked = verifiedAccounts.length === 0;
   const rentDue = balance?.lease?.status === 'active' && Number(balance?.totalDue || 0) > 0;
   const utilityDueAmount = Number(balance?.utilityDue || 0);
-  const utilityDue = !managerPreview && utilityDueAmount > 0.009 && !!balance?.lease;
+  const utilityDue = !staffPreview && utilityDueAmount > 0.009 && !!balance?.lease;
   const utilitySplits = Array.isArray(balance?.utilitySplits) ? balance.utilitySplits : [];
-  const depositDue = !managerPreview && balance?.securityDepositPayment;
+  const depositDue = !staffPreview && balance?.securityDepositPayment;
   const depositRemaining = Number(
     balance?.securityDepositPayment?.remaining
     ?? balance?.securityDepositPayment?.amount
@@ -912,9 +915,9 @@ export default function PaymentsPage() {
 
   return (
     <div className="stagger-section space-y-6">
-      {managerPreview && (
+      {staffPreview && (
         <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          Preview only — payment history is visible; bank accounts and pay actions are hidden.
+          Preview only — history is visible; bank linking and pay actions are disabled for all staff previews (including owner).
         </div>
       )}
 
@@ -936,7 +939,7 @@ export default function PaymentsPage() {
         </div>
       )}
 
-      {!managerPreview && needsRelinkAccounts.length > 0 && (
+      {!staffPreview && needsRelinkAccounts.length > 0 && (
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-4">
           <p className="text-sm font-semibold text-amber-900">Reconnect your bank</p>
           <p className="mt-1 text-sm text-amber-800">
@@ -989,8 +992,8 @@ export default function PaymentsPage() {
 
       <RentHero
         balance={balance}
-        hidePayAction={managerPreview}
-        onPay={managerPreview ? undefined : () => {
+        hidePayAction={staffPreview}
+        onPay={staffPreview ? undefined : () => {
           setShowPayFlow(true);
           setCardIntent(null);
           setBankIntent(null);
@@ -998,7 +1001,7 @@ export default function PaymentsPage() {
         }}
       />
 
-      {!managerPreview && rentDue && cashAppAvailable && !showPayFlow && (
+      {!staffPreview && rentDue && cashAppAvailable && !showPayFlow && (
         <button
           type="button"
           onClick={() => handleCashAppPay('rent')}
@@ -1059,7 +1062,7 @@ export default function PaymentsPage() {
         </button>
       )}
 
-      {!managerPreview && showPayFlow && (
+      {!staffPreview && showPayFlow && (
         <section aria-labelledby="pay-flow-heading" className="portal-card space-y-4 p-5">
           <div className="flex items-center justify-between">
             <h2 id="pay-flow-heading" className="text-base font-semibold text-slate-900">Choose how to pay</h2>
@@ -1178,10 +1181,10 @@ export default function PaymentsPage() {
             <div className="space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
               <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <CreditCard size={16} aria-hidden />
-                Card / Link (card wallet)
+                Debit / credit card
               </div>
               <p className="text-xs text-slate-500">
-                Link is a card wallet (not bank ACH). Bank ACH is a separate option below with no processing fee.
+                Enter your card number in the form (do not use Link email pay). Bank ACH below has no processing fee.
               </p>
               <div className="grid gap-2 sm:grid-cols-2">
                 {rentDue && (
@@ -1495,7 +1498,7 @@ export default function PaymentsPage() {
         />
       )}
 
-      {!managerPreview && (
+      {!staffPreview && (
       <section
         aria-labelledby="autopay-heading"
         className={`portal-card flex items-start justify-between gap-3 p-5 ${
@@ -1531,7 +1534,7 @@ export default function PaymentsPage() {
       </section>
       )}
 
-      {!managerPreview && (
+      {!staffPreview && (
       <section aria-labelledby="bank-accounts-heading" className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 id="bank-accounts-heading" className="text-base font-semibold text-slate-900">Bank accounts</h2>

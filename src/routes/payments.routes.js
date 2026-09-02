@@ -34,7 +34,7 @@ const { Guards }         = require('../middleware/authorize');
 const {
   blockManagerPaymentAccess,
   redactPaymentHistoryRow,
-  isManagerImpersonation,
+  isStaffImpersonation,
 } = require('../middleware/impersonation');
 const plaid              = require('../services/plaid.service');
 const stripe             = require('../services/stripe.service');
@@ -1720,7 +1720,7 @@ router.get('/history', async (req, res) => {
       [req.user.id]
     );
 
-    const payments = isManagerImpersonation(req)
+    const payments = isStaffImpersonation(req)
       ? rows.map(redactPaymentHistoryRow)
       : rows;
 

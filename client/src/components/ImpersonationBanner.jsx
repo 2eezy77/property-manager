@@ -31,8 +31,8 @@ export default function ImpersonationBanner() {
         <span className="font-semibold">Previewing {portal}:</span>{' '}
         {name}
         <span className="hidden sm:inline text-amber-800/80">
-          {isTenant && impersonation.ownerUser?.role === 'property_manager'
-            ? ' — history only, no bank or pay actions'
+          {isTenant
+            ? ' — preview only; pay and bank actions are disabled'
             : ' — what they see (1 hour)'}
         </span>
       </p>
