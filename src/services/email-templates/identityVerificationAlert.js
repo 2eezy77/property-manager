@@ -60,4 +60,4 @@ function render({
   return { html, text };
 }
 
-module.exports = { render };
+module.exports = { render, humanStatus, redactSensitive };

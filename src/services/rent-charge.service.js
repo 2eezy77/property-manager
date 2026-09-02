@@ -15,6 +15,10 @@ const {
   classifyOpenRentCharge,
   lockRentChargePeriod,
 } = require('./rent-charge-guard');
+const {
+  resolveRentInstallmentAmount,
+  resolveDepositInstallmentAmount,
+} = require('./charge-amount-policy');
 const { settleRentPaymentSuccess } = require('../utils/payment-settlement');
 
 const MIN_DEPOSIT_INSTALLMENT = 1;
@@ -223,23 +227,11 @@ async function prepareTenantCharge(client, {
     }
 
     const remaining = roundMoney(parent.amount);
-    const requestedRaw = amount == null || amount === '' ? remaining : parseMoney(amount);
-    if (!Number.isFinite(requestedRaw)) {
-      const err = new Error('Enter a valid deposit amount.');
-      err.code = 'INVALID_DEPOSIT_AMOUNT';
-      throw err;
-    }
-    const requested = roundMoney(requestedRaw);
-    if (requested < MIN_DEPOSIT_INSTALLMENT) {
-      const err = new Error(`Minimum deposit payment is $${MIN_DEPOSIT_INSTALLMENT.toFixed(2)}.`);
-      err.code = 'INVALID_DEPOSIT_AMOUNT';
-      throw err;
-    }
-    if (requested > remaining + 0.001) {
-      const err = new Error(`Deposit payment cannot exceed the $${remaining.toFixed(2)} still owed.`);
-      err.code = 'INVALID_DEPOSIT_AMOUNT';
-      throw err;
-    }
+    const requested = resolveDepositInstallmentAmount(
+      amount,
+      remaining,
+      MIN_DEPOSIT_INSTALLMENT
+    );
 
     const parentMeta = parent.metadata || {};
     const priorPaid = parseMoney(parentMeta.deposit_paid_total);
@@ -375,23 +367,11 @@ async function prepareTenantCharge(client, {
       remainingDue: totalRemaining,
     });
 
-    const requestedRaw = amount == null || amount === '' ? totalRemaining : parseMoney(amount);
-    if (!Number.isFinite(requestedRaw)) {
-      const err = new Error('Enter a valid payment amount.');
-      err.code = 'INVALID_PAYMENT_AMOUNT';
-      throw err;
-    }
-    const requested = roundMoney(requestedRaw);
-    if (requested < MIN_RENT_INSTALLMENT) {
-      const err = new Error(`Minimum payment is $${MIN_RENT_INSTALLMENT.toFixed(2)}.`);
-      err.code = 'INVALID_PAYMENT_AMOUNT';
-      throw err;
-    }
-    if (requested > totalRemaining + 0.001) {
-      const err = new Error(`Payment cannot exceed the $${totalRemaining.toFixed(2)} still owed.`);
-      err.code = 'INVALID_PAYMENT_AMOUNT';
-      throw err;
-    }
+    const requested = resolveRentInstallmentAmount(
+      amount,
+      totalRemaining,
+      MIN_RENT_INSTALLMENT
+    );
 
     const alloc = allocateTowardRentAndFees(requested, rentRemaining, lateFeeBalance);
     rentAmount = alloc.rentPortion;
