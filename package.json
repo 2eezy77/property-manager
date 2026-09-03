@@ -88,6 +88,9 @@
     "test:stripe-refund": "node scripts/test-stripe-refund-webhook.js",
     "test:rent-collection-stats": "TZ=America/New_York node scripts/test-rent-collection-stats.js",
     "test:plaid-link-token": "node scripts/test-plaid-link-token.js",
+    "test:authenticate-middleware": "node scripts/test-authenticate-middleware.js",
+    "test:impersonation-payment-gates": "node scripts/test-impersonation-payment-gates.js",
+    "test:password-admin-gates": "node scripts/test-password-admin-gates.js",
     "test:identity-crypto": "node scripts/test-identity-crypto.js",
     "test:lease-invite-identity": "node scripts/test-lease-invite-identity.js",
     "test:identity:all": "npm run test:identity-crypto && npm run test:lease-invite-identity"

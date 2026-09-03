@@ -84,6 +84,46 @@ try {
     check(req.link_customization_name === 'montero-rent', 'named Link customization is passed through');
   });
 
+  withEnv({
+    PLAID_SIGNAL_ENABLED: 'true',
+    PLAID_REDIRECT_URI: 'https://www.monterorentals.com/oauth-return',
+    PLAID_WEBHOOK_URL: 'https://www.monterorentals.com/webhooks/plaid',
+    PLAID_LINK_CUSTOMIZATION_NAME: '',
+    PLAID_ENV: 'production',
+    CLIENT_ORIGIN: 'https://www.monterorentals.com',
+  }, () => {
+    const updateReq = buildLinkTokenRequest('user-3', {
+      updateMode: true,
+      accessToken: 'access-sandbox-relink',
+    });
+    check(updateReq.access_token === 'access-sandbox-relink', 'update mode passes access_token');
+    check(!updateReq.products, 'update mode omits products (re-auth existing Item)');
+    check(!updateReq.account_filters, 'update mode omits account_filters');
+    check(
+      updateReq.redirect_uri === 'https://www.monterorentals.com/oauth-return',
+      'update mode still sets redirect_uri'
+    );
+
+    const noToken = buildLinkTokenRequest('user-3', { updateMode: true });
+    check(Array.isArray(noToken.products), 'updateMode without accessToken falls back to new-link products');
+    check(!noToken.access_token, 'updateMode without accessToken does not set access_token');
+  });
+
+  const bankLinkSrc = fs.readFileSync(
+    path.join(__dirname, '../src/services/plaid-bank-link.service.js'),
+    'utf8'
+  );
+  check(
+    bankLinkSrc.includes("err.code = 'NOT_FOUND'")
+      && bankLinkSrc.includes('createUpdateLinkTokenForAccount'),
+    'bank-link update token throws NOT_FOUND when account missing'
+  );
+  check(
+    /scope === 'owner_property'/.test(bankLinkSrc)
+      && /scope === 'manager_payout'/.test(bankLinkSrc),
+    'bank-link update scopes owner_property and manager_payout separately from tenant'
+  );
+
   const dtmErr = {
     response: {
       data: {
