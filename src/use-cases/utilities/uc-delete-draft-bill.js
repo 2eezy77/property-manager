@@ -1,5 +1,6 @@
 const pool = require('../../db/client');
 const { accessiblePropertyIds } = require('./access');
+const { assertDraftBillDeletable } = require('./create-bill-gates');
 const { useCaseError } = require('./errors');
 
 async function executeDeleteDraftBill({ userId, role, billId }) {
@@ -10,12 +11,7 @@ async function executeDeleteDraftBill({ userId, role, billId }) {
     `SELECT id, property_id, status FROM utility_bills WHERE id = $1`,
     [billId]
   );
-  if (!bill || !propIds.includes(bill.property_id)) {
-    throw useCaseError('NOT_FOUND', 'Bill not found.');
-  }
-  if (bill.status !== 'draft') {
-    throw useCaseError('INVALID_STATE', 'Only draft bills can be deleted.');
-  }
+  assertDraftBillDeletable({ bill, accessiblePropertyIds: propIds });
 
   await pool.query('DELETE FROM utility_bill_splits WHERE bill_id = $1', [billId]);
   await pool.query('DELETE FROM utility_bills WHERE id = $1', [billId]);

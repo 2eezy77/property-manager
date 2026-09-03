@@ -2,6 +2,7 @@
 
 const pool = require('../../db/client');
 const { assertPropertyAccess } = require('./access');
+const { assertCreateBillParams } = require('./create-bill-gates');
 const { loadActiveLeases, insertBillWithSplits } = require('./domain');
 const { fetchBillWithSplits } = require('./queries');
 const { useCaseError } = require('./errors');
@@ -10,18 +11,7 @@ async function executeCreateBill({ userId, role, body }) {
   const {
     property_id, service_type, period_start, period_end,
     total_amount, due_date, provider_name, notes, bill_document_url,
-  } = body;
-
-  if (!property_id || !service_type || !period_start || !period_end
-      || !total_amount || !due_date) {
-    throw useCaseError(
-      'MISSING_PARAMS',
-      'property_id, service_type, period_start, period_end, total_amount, due_date are required.'
-    );
-  }
-  if (Number(total_amount) <= 0) {
-    throw useCaseError('INVALID_AMOUNT', 'total_amount must be positive.');
-  }
+  } = assertCreateBillParams(body);
 
   await assertPropertyAccess(property_id, userId, role);
 
