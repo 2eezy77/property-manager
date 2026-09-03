@@ -112,17 +112,10 @@ async function sendCredentialEmail({ orgId, user, plainPassword, unitNumber, pro
 }
 
 /**
- * Owner/manager sets a user's password; optionally email credentials (never for primary owner).
+ * Gate admin password sets before hashing/emailing.
+ * Primary owner and other owners (except self-service) cannot be reset from Users.
  */
-async function adminSetPassword({
-  actorUserId,
-  targetUserId,
-  password,
-  generate = false,
-  sendEmail: shouldSend = true,
-  primaryOwnerId = null,
-}) {
-  const target = await loadUser(targetUserId);
+function assertAdminSetPasswordAllowed(target, { actorUserId, primaryOwnerId = null } = {}) {
   if (!target || !target.is_active) {
     const err = new Error('User not found or inactive.');
     err.code = 'NOT_FOUND';
@@ -140,6 +133,23 @@ async function adminSetPassword({
     err.code = 'FORBIDDEN';
     throw err;
   }
+
+  return true;
+}
+
+/**
+ * Owner/manager sets a user's password; optionally email credentials (never for primary owner).
+ */
+async function adminSetPassword({
+  actorUserId,
+  targetUserId,
+  password,
+  generate = false,
+  sendEmail: shouldSend = true,
+  primaryOwnerId = null,
+}) {
+  const target = await loadUser(targetUserId);
+  assertAdminSetPasswordAllowed(target, { actorUserId, primaryOwnerId });
 
   const plain = generate ? generatePassword() : validatePassword(password);
   await setPasswordHash(target.id, plain);
@@ -238,6 +248,7 @@ async function adminEmailAllTenantPasswords({ actorUserId, primaryOwnerId }) {
 module.exports = {
   generatePassword,
   validatePassword,
+  assertAdminSetPasswordAllowed,
   setPasswordHash,
   resolveOrgIdForUser,
   adminSetPassword,
