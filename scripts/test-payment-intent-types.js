@@ -24,9 +24,12 @@ const {
   createLockedCheckoutPaymentIntent,
   buildAchIntentParams,
   checkoutPaymentMethodConfigurationId,
+  isPaymentMethodParamConflict,
   PLAID_MANAGED_CONNECT_PMC,
   ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE,
 } = require('../src/services/stripe.service');
+
+delete process.env.STRIPE_CHECKOUT_PAYMENT_METHOD_CONFIGURATION;
 
 const root = path.resolve(__dirname, '..');
 
@@ -62,6 +65,10 @@ assert.strictEqual(cardParams.currency, 'usd');
 assert.strictEqual(cardParams.capture_method, 'automatic');
 assert.ok(!cardParams.payment_method_types.includes('us_bank_account'));
 assert.ok(!cardParams.payment_method_types.includes('cashapp'));
+assert.ok(
+  !cardParams.payment_method_configuration,
+  'card checkout is types-only unless STRIPE_CHECKOUT_PAYMENT_METHOD_CONFIGURATION is set'
+);
 assert.notStrictEqual(
   cardParams.payment_method_configuration,
   PLAID_MANAGED_CONNECT_PMC,
@@ -77,6 +84,7 @@ const cashAppParams = buildCashAppIntentParams({
 assert.deepStrictEqual(cashAppParams.payment_method_types, ['cashapp']);
 assert.ok(!cashAppParams.payment_method_types.includes('card'));
 assert.ok(!cashAppParams.payment_method_types.includes('us_bank_account'));
+assert.ok(!cashAppParams.payment_method_configuration, 'Cash App checkout is types-only by default');
 assert.notStrictEqual(cashAppParams.payment_method_configuration, PLAID_MANAGED_CONNECT_PMC);
 
 const bankParams = buildBankCheckoutIntentParams({
@@ -91,6 +99,7 @@ assert.ok(!bankParams.confirm, 'bank checkout PI is unconfirmed so Payment Eleme
 assert.ok(!bankParams.payment_method_types.includes('card'));
 assert.ok(!bankParams.payment_method_types.includes('cashapp'));
 assert.strictEqual(bankParams.amount, 120000, 'ACH checkout charges the ledger amount (no card fee)');
+assert.ok(!bankParams.payment_method_configuration, 'bank checkout is types-only by default');
 assert.notStrictEqual(
   bankParams.payment_method_configuration,
   PLAID_MANAGED_CONNECT_PMC,
@@ -141,6 +150,10 @@ async function testCreateHelpers() {
   });
   assert.deepStrictEqual(bankCalls[0].params.payment_method_types, ['us_bank_account']);
   assert.ok(!bankCalls[0].params.confirm);
+  assert.ok(
+    !bankCalls[0].params.payment_method_configuration,
+    'bank create-intent must not pin a PMC when env is unset'
+  );
   assert.notStrictEqual(bankCalls[0].params.payment_method_configuration, PLAID_MANAGED_CONNECT_PMC);
 }
 
@@ -179,8 +192,15 @@ function testAccountPmcPin() {
     process.env.STRIPE_CHECKOUT_PAYMENT_METHOD_CONFIGURATION = PLAID_MANAGED_CONNECT_PMC;
     assert.strictEqual(
       checkoutPaymentMethodConfigurationId(),
-      ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE,
-      'Plaid-managed Connect PMC must be remapped to the account-level Default PMC'
+      '',
+      'Plaid-managed Connect PMC must be skipped (types-only), not remapped to pmc_1TaLIy'
+    );
+
+    delete process.env.STRIPE_CHECKOUT_PAYMENT_METHOD_CONFIGURATION;
+    assert.strictEqual(
+      checkoutPaymentMethodConfigurationId(),
+      '',
+      'live default is types-only; do not auto-pin pmc_1TaLIy'
     );
   } finally {
     if (prev == null) delete process.env.STRIPE_CHECKOUT_PAYMENT_METHOD_CONFIGURATION;
@@ -189,6 +209,16 @@ function testAccountPmcPin() {
 }
 
 async function testLockedCreateFallback() {
+  const liveApmErr = new Error(
+    'You must enable `automatic_payment_methods` to specify a `payment_method_configuration`.'
+  );
+  liveApmErr.name = 'StripeInvalidRequestError';
+  liveApmErr.type = 'StripeInvalidRequestError';
+  assert.ok(
+    isPaymentMethodParamConflict(liveApmErr),
+    'live Lily create-intent Stripe error must match the types-only retry detector'
+  );
+
   const conflictCalls = [];
   const conflictClient = {
     paymentIntents: {
@@ -221,6 +251,44 @@ async function testLockedCreateFallback() {
   assert.strictEqual(recovered.id, 'pi_types_only');
   assert.strictEqual(conflictCalls.length, 2);
   assert.ok(!conflictCalls[1].payment_method_configuration);
+
+  const liveCalls = [];
+  const liveApmClient = {
+    paymentIntents: {
+      create: async (params) => {
+        liveCalls.push(params);
+        if (params.payment_method_configuration) {
+          const err = new Error(
+            'You must enable `automatic_payment_methods` to specify a `payment_method_configuration`.'
+          );
+          err.name = 'StripeInvalidRequestError';
+          err.type = 'StripeInvalidRequestError';
+          throw err;
+        }
+        return {
+          id: 'pi_bank_types_only',
+          payment_method_types: params.payment_method_types,
+          status: 'requires_payment_method',
+          amount_received: 0,
+        };
+      },
+    },
+  };
+  const bankRecovered = await createLockedCheckoutPaymentIntent({
+    params: {
+      amount: 120000,
+      currency: 'usd',
+      payment_method_types: ['us_bank_account'],
+      payment_method_configuration: ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE,
+    },
+    expectedTypes: ['us_bank_account'],
+    stripeClient: liveApmClient,
+  });
+  assert.strictEqual(bankRecovered.id, 'pi_bank_types_only');
+  assert.deepStrictEqual(bankRecovered.payment_method_types, ['us_bank_account']);
+  assert.strictEqual(liveCalls.length, 2);
+  assert.ok(liveCalls[0].payment_method_configuration);
+  assert.ok(!liveCalls[1].payment_method_configuration);
 
   const widenedCalls = [];
   const canceled = [];

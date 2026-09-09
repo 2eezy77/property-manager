@@ -566,19 +566,19 @@ function stripeMode() {
  * Plaid Technologies manages Connect-app PMC pmc_1Tb9l1… — ACH and Cash App are
  * off, and the Dashboard has no toggles. Never send that id.
  *
- * Platform account Default PMC pmc_1TaLIy… already has card, Link, Cash App,
- * and us_bank_account ON. Pin checkout PaymentIntents to it (or an env override)
- * so Payment Element does not inherit the Plaid-managed config.
+ * Checkout locks methods with explicit payment_method_types (card / cashapp /
+ * us_bank_account). Types-only is proven live (Osanin ACH had
+ * payment_method_configuration_details null). Do not pin pmc_1TaLIy… by default:
+ * Stripe rejects PMC + payment_method_types unless automatic_payment_methods
+ * is also enabled (Lily Fortman 2026-09-09 bank create-intent 500).
  */
 const PLAID_MANAGED_CONNECT_PMC = 'pmc_1Tb9l1BaVh1caty8bPcFnpeq';
 const ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE = 'pmc_1TaLIyBaVh1caty8oLNE1bK7';
 
 function checkoutPaymentMethodConfigurationId() {
   const fromEnv = String(process.env.STRIPE_CHECKOUT_PAYMENT_METHOD_CONFIGURATION || '').trim();
-  if (fromEnv === PLAID_MANAGED_CONNECT_PMC) return ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE;
-  if (fromEnv) return fromEnv;
-  if (stripeMode() === 'live') return ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE;
-  return '';
+  if (!fromEnv || fromEnv === PLAID_MANAGED_CONNECT_PMC) return '';
+  return fromEnv;
 }
 
 function withCheckoutPaymentMethodConfig(params) {
@@ -595,10 +595,14 @@ function paymentMethodTypesEqual(actual, expected) {
 
 function isPaymentMethodParamConflict(err) {
   const msg = String(err?.message || '').toLowerCase();
-  return msg.includes('mutually exclusive')
+  const param = String(err?.param || '').toLowerCase();
+  return msg.includes('payment_method_configuration')
+    || param === 'payment_method_configuration'
+    || msg.includes('automatic_payment_methods')
+    || param === 'automatic_payment_methods'
+    || msg.includes('mutually exclusive')
     || msg.includes('you may only specify one')
-    || msg.includes('cannot specify both')
-    || (String(err?.param || '') === 'payment_method_configuration' && msg.includes('payment_method_types'));
+    || msg.includes('cannot specify both');
 }
 
 function checkoutIntentPublicFields(paymentIntent) {
@@ -613,9 +617,8 @@ function checkoutIntentPublicFields(paymentIntent) {
 
 /**
  * Create a checkout PaymentIntent locked to one Stripe method.
- * Prefers the account-level PMC (ACH/Cash App enabled) plus explicit
- * payment_method_types. If Stripe rejects the pair or the PMC widens
- * the types, fall back to types-only (live tenant PIs already succeed that way).
+ * Prefer types-only. If an env-pinned PMC is present and Stripe rejects the
+ * pair (or the PMC widens the types), immediately retry types-only.
  */
 async function createLockedCheckoutPaymentIntent({
   params,
@@ -636,6 +639,10 @@ async function createLockedCheckoutPaymentIntent({
     created = await client.paymentIntents.create(params, primaryOptions);
   } catch (err) {
     if (params.payment_method_configuration && isPaymentMethodParamConflict(err)) {
+      console.warn('[stripe] PMC+types rejected; retrying types-only', {
+        message: err.message,
+        param: err.param,
+      });
       return client.paymentIntents.create(typesOnlyParams, typesOnlyOptions);
     }
     throw err;
@@ -1002,6 +1009,7 @@ module.exports = {
   buildBankCheckoutIntentParams,
   checkoutPaymentMethodConfigurationId,
   withCheckoutPaymentMethodConfig,
+  isPaymentMethodParamConflict,
   checkoutIntentPublicFields,
   PLAID_MANAGED_CONNECT_PMC,
   ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE,
