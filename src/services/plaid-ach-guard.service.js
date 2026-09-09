@@ -28,8 +28,15 @@ function signalHardBlockEnabled() {
 }
 
 function blockedSignalResults() {
-  const raw = process.env.PLAID_SIGNAL_BLOCK_RESULTS || 'REVIEW,REROUTE';
+  const raw = process.env.PLAID_SIGNAL_BLOCK_RESULTS || 'DENY,BLOCK';
   return new Set(raw.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean));
+}
+
+function isSoftSignalAllow(result, score) {
+  if (!result || result === 'ACCEPT' || result === 'REROUTE' || result === 'REVIEW') {
+    return true;
+  }
+  return score == null || Number.isNaN(Number(score));
 }
 
 /**
@@ -59,18 +66,21 @@ async function assertAchDebitAllowed({
       const result = signal.rulesetResult?.toUpperCase?.() || null;
       const blockSet = blockedSignalResults();
 
-      if (result && blockSet.has(result)) {
-        // REROUTE (Lily 2026-09-09, score null) must never hard-block rent ACH.
-        // Other results fail-open unless PLAID_SIGNAL_HARD_BLOCK is opted in.
-        const hardBlock = signalHardBlockEnabled() && result !== 'REROUTE';
-        if (hardBlock) {
+      if (result && result !== 'ACCEPT') {
+        const score = signal.customerReturnRiskScore;
+        // Live Lily rent: REROUTE + score null must log and still charge.
+        if (
+          signalHardBlockEnabled()
+          && blockSet.has(result)
+          && !isSoftSignalAllow(result, score)
+        ) {
           console.warn('[plaid-ach-guard] Signal blocked charge', {
             context,
             userId,
             accountId,
             amountCents,
             rulesetResult: result,
-            score: signal.customerReturnRiskScore,
+            score,
           });
           return {
             ok: false,
@@ -88,7 +98,7 @@ async function assertAchDebitAllowed({
           accountId,
           amountCents,
           rulesetResult: result,
-          score: signal.customerReturnRiskScore,
+          score,
         });
       }
     } catch (err) {
