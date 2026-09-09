@@ -1336,7 +1336,7 @@ router.post('/bank/create-intent', Guards.tenantOnly, async (req, res) => {
         }),
       },
       idempotencyKey: stripeIdempotencyKey({
-        method: 'ach',
+        method: 'ach-to',
         paymentId: prep.payment.id,
         attempt: Number(prep.chargeMeta?.stripe_intent_attempt || 1),
       }),

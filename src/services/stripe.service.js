@@ -616,9 +616,22 @@ function checkoutIntentPublicFields(paymentIntent) {
 }
 
 /**
+ * Stripe Idempotency-Key that is safe after a PMC+types failure.
+ * Live Lily bank create-intent used rent-ach-<id>-a1 with pmc_1TaLIy and
+ * cached the 500. Retries must not reuse that key (same key + new params
+ * is also an idempotency error).
+ */
+function checkoutTypesOnlyIdempotencyKey(idempotencyKey) {
+  if (idempotencyKey == null || idempotencyKey === '') return undefined;
+  const key = String(idempotencyKey);
+  return key.endsWith(':types-only') ? key : `${key}:types-only`;
+}
+
+/**
  * Create a checkout PaymentIntent locked to one Stripe method.
- * Prefer types-only. If an env-pinned PMC is present and Stripe rejects the
- * pair (or the PMC widens the types), immediately retry types-only.
+ * Prefer types-only. Never send the failed PMC request's idempotency key
+ * for a types-only create. If an env-pinned PMC is present and Stripe
+ * rejects the pair (or the PMC widens the types), immediately retry types-only.
  */
 async function createLockedCheckoutPaymentIntent({
   params,
@@ -629,16 +642,19 @@ async function createLockedCheckoutPaymentIntent({
   const client = stripeClientOf(stripeClient);
   const typesOnlyParams = { ...params };
   delete typesOnlyParams.payment_method_configuration;
-  const primaryOptions = stripeIdempotencyOptions(idempotencyKey);
-  const typesOnlyOptions = stripeIdempotencyOptions(
-    idempotencyKey ? `${idempotencyKey}:types-only` : undefined
-  );
+  const hasPmc = Boolean(params.payment_method_configuration);
+  const typesOnlyKey = checkoutTypesOnlyIdempotencyKey(idempotencyKey);
+  const primaryOptions = stripeIdempotencyOptions(hasPmc ? idempotencyKey : typesOnlyKey);
+  const typesOnlyOptions = stripeIdempotencyOptions(typesOnlyKey);
 
   let created;
   try {
-    created = await client.paymentIntents.create(params, primaryOptions);
+    created = await client.paymentIntents.create(
+      hasPmc ? params : typesOnlyParams,
+      primaryOptions
+    );
   } catch (err) {
-    if (params.payment_method_configuration && isPaymentMethodParamConflict(err)) {
+    if (hasPmc && isPaymentMethodParamConflict(err)) {
       console.warn('[stripe] PMC+types rejected; retrying types-only', {
         message: err.message,
         param: err.param,
@@ -1004,6 +1020,7 @@ module.exports = {
   createCardPaymentIntent,
   createBankPaymentIntent,
   createLockedCheckoutPaymentIntent,
+  checkoutTypesOnlyIdempotencyKey,
   buildCashAppIntentParams,
   buildCardIntentParams,
   buildBankCheckoutIntentParams,
