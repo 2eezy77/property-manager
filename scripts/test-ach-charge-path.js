@@ -58,8 +58,10 @@ assert.strictEqual(signalReq.user_present, true);
 async function testSignalGuard() {
   const prevSignal = process.env.PLAID_SIGNAL_ENABLED;
   const prevBalance = process.env.PLAID_BALANCE_CHECK_ENABLED;
+  const prevHardBlock = process.env.PLAID_SIGNAL_HARD_BLOCK;
   process.env.PLAID_SIGNAL_ENABLED = 'true';
   process.env.PLAID_BALANCE_CHECK_ENABLED = 'false';
+  delete process.env.PLAID_SIGNAL_HARD_BLOCK;
 
   try {
     const signalErr = Object.assign(new Error('Request failed with status code 400'), {
@@ -84,6 +86,31 @@ async function testSignalGuard() {
     });
     assert.strictEqual(open.ok, true, 'Signal INVALID_FIELD must not block Stripe charge');
 
+    const rerouteOpen = await assertAchDebitAllowed({
+      accessToken: 'access-sandbox-test',
+      accountId: LILY_PLAID_ACCOUNT_ID,
+      amountCents: 90000,
+      userId: 'ed270b84-ae0f-428f-8403-3ef878531cef',
+      clientTransactionId: LILY_PAYMENT_ID,
+      context: 'rent',
+    }, {
+      evaluateAchRisk: async () => ({ rulesetResult: 'REROUTE', customerReturnRiskScore: null }),
+    });
+    assert.strictEqual(rerouteOpen.ok, true, 'Signal REROUTE must fail-open so saved ba_ can reach Stripe');
+
+    const reviewOpen = await assertAchDebitAllowed({
+      accessToken: 'access-sandbox-test',
+      accountId: LILY_PLAID_ACCOUNT_ID,
+      amountCents: 90000,
+      userId: 'ed270b84-ae0f-428f-8403-3ef878531cef',
+      clientTransactionId: LILY_PAYMENT_ID,
+      context: 'rent',
+    }, {
+      evaluateAchRisk: async () => ({ rulesetResult: 'REVIEW' }),
+    });
+    assert.strictEqual(reviewOpen.ok, true, 'Signal REVIEW must fail-open');
+
+    process.env.PLAID_SIGNAL_HARD_BLOCK = 'true';
     const blocked = await assertAchDebitAllowed({
       accessToken: 'access-sandbox-test',
       accountId: LILY_PLAID_ACCOUNT_ID,
@@ -94,9 +121,10 @@ async function testSignalGuard() {
     }, {
       evaluateAchRisk: async () => ({ rulesetResult: 'REROUTE' }),
     });
-    assert.strictEqual(blocked.ok, false, 'Signal REROUTE still blocks');
+    assert.strictEqual(blocked.ok, false, 'Signal REROUTE still blocks when hard-block is opted in');
     assert.strictEqual(blocked.status, 402);
     assert.strictEqual(blocked.body.error, 'ACH_RISK_BLOCKED');
+    delete process.env.PLAID_SIGNAL_HARD_BLOCK;
 
     process.env.PLAID_BALANCE_CHECK_ENABLED = 'true';
     const balanceOpen = await assertAchDebitAllowed({
@@ -120,6 +148,8 @@ async function testSignalGuard() {
     else process.env.PLAID_SIGNAL_ENABLED = prevSignal;
     if (prevBalance == null) delete process.env.PLAID_BALANCE_CHECK_ENABLED;
     else process.env.PLAID_BALANCE_CHECK_ENABLED = prevBalance;
+    if (prevHardBlock == null) delete process.env.PLAID_SIGNAL_HARD_BLOCK;
+    else process.env.PLAID_SIGNAL_HARD_BLOCK = prevHardBlock;
   }
 }
 

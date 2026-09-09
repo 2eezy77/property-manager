@@ -23,6 +23,10 @@ function balanceBlocksCharge() {
   return process.env.PLAID_BALANCE_BLOCK !== 'false';
 }
 
+function signalHardBlockEnabled() {
+  return envFlag('PLAID_SIGNAL_HARD_BLOCK');
+}
+
 function blockedSignalResults() {
   const raw = process.env.PLAID_SIGNAL_BLOCK_RESULTS || 'REVIEW,REROUTE';
   return new Set(raw.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean));
@@ -56,7 +60,31 @@ async function assertAchDebitAllowed({
       const blockSet = blockedSignalResults();
 
       if (result && blockSet.has(result)) {
-        console.warn('[plaid-ach-guard] Signal blocked charge', {
+        // Default fail-open: Signal API errors already continue, and live
+        // REROUTE (Lily Fortman 2026-09-09, score null) was blocking Stripe
+        // with a 402 and no PaymentIntent. Opt in to hard-block via env.
+        if (signalHardBlockEnabled()) {
+          console.warn('[plaid-ach-guard] Signal blocked charge', {
+            context,
+            userId,
+            accountId,
+            amountCents,
+            rulesetResult: result,
+            score: signal.customerReturnRiskScore,
+          });
+          return {
+            ok: false,
+            status: 402,
+            body: {
+              error: 'ACH_RISK_BLOCKED',
+              message: result === 'REROUTE'
+                ? 'This bank account cannot be debited right now due to elevated return risk. Try another account or payment method.'
+                : 'This payment needs additional review before we can debit your account. Contact your property manager or try again later.',
+              signalResult: result,
+            },
+          };
+        }
+        console.warn('[plaid-ach-guard] Signal flagged charge; allowing Stripe (fail-open)', {
           context,
           userId,
           accountId,
@@ -64,17 +92,6 @@ async function assertAchDebitAllowed({
           rulesetResult: result,
           score: signal.customerReturnRiskScore,
         });
-        return {
-          ok: false,
-          status: 402,
-          body: {
-            error: 'ACH_RISK_BLOCKED',
-            message: result === 'REROUTE'
-              ? 'This bank account cannot be debited right now due to elevated return risk. Try another account or payment method.'
-              : 'This payment needs additional review before we can debit your account. Contact your property manager or try again later.',
-            signalResult: result,
-          },
-        };
       }
     } catch (err) {
       const plaidErr = err.response?.data || {};
@@ -145,4 +162,5 @@ module.exports = {
   assertAchDebitAllowed,
   isSignalEnabled,
   isBalanceCheckEnabled,
+  signalHardBlockEnabled,
 };
