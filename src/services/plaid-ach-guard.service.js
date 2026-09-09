@@ -60,10 +60,10 @@ async function assertAchDebitAllowed({
       const blockSet = blockedSignalResults();
 
       if (result && blockSet.has(result)) {
-        // Default fail-open: Signal API errors already continue, and live
-        // REROUTE (Lily Fortman 2026-09-09, score null) was blocking Stripe
-        // with a 402 and no PaymentIntent. Opt in to hard-block via env.
-        if (signalHardBlockEnabled()) {
+        // REROUTE (Lily 2026-09-09, score null) must never hard-block rent ACH.
+        // Other results fail-open unless PLAID_SIGNAL_HARD_BLOCK is opted in.
+        const hardBlock = signalHardBlockEnabled() && result !== 'REROUTE';
+        if (hardBlock) {
           console.warn('[plaid-ach-guard] Signal blocked charge', {
             context,
             userId,
@@ -77,9 +77,7 @@ async function assertAchDebitAllowed({
             status: 402,
             body: {
               error: 'ACH_RISK_BLOCKED',
-              message: result === 'REROUTE'
-                ? 'This bank account cannot be debited right now due to elevated return risk. Try another account or payment method.'
-                : 'This payment needs additional review before we can debit your account. Contact your property manager or try again later.',
+              message: 'This payment needs additional review before we can debit your account. Contact your property manager or try again later.',
               signalResult: result,
             },
           };

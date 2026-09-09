@@ -272,7 +272,7 @@ async function testStripeCreatePassesIdempotencyKey() {
     idempotencyKey: stripeIdempotencyKey({ method: 'card', paymentId, attempt: 1 }),
     stripeClient,
   });
-  assert.strictEqual(calls[0].options.idempotencyKey, `rent-card-${paymentId}-a1`);
+  assert.strictEqual(calls[0].options.idempotencyKey, `rent-card-${paymentId}-a1:types-only`);
   assert.ok(!calls[0].params.idempotencyKey, 'idempotency key is a request option, not a PI field');
 
   calls.length = 0;
@@ -284,7 +284,7 @@ async function testStripeCreatePassesIdempotencyKey() {
     idempotencyKey: stripeIdempotencyKey({ method: 'cashapp', paymentId, attempt: 1 }),
     stripeClient,
   });
-  assert.strictEqual(calls[0].options.idempotencyKey, `rent-cashapp-${paymentId}-a1`);
+  assert.strictEqual(calls[0].options.idempotencyKey, `rent-cashapp-${paymentId}-a1:types-only`);
 
   calls.length = 0;
   await chargeACH({
@@ -309,7 +309,12 @@ async function testStripeCreatePassesIdempotencyKey() {
     idempotencyKey: stripeIdempotencyKey({ method: 'ach', paymentId, attempt: 1 }),
     stripeClient,
   });
-  assert.strictEqual(calls[0].options.idempotencyKey, `rent-ach-${paymentId}-a1`);
+  assert.strictEqual(
+    calls[0].options.idempotencyKey,
+    `rent-ach-${paymentId}-a1:types-only`,
+    'bank checkout must not reuse the sticky PMC-failure key'
+  );
+  assert.ok(!calls[0].params.payment_method_configuration);
   assert.deepStrictEqual(calls[0].params.payment_method_types, ['us_bank_account']);
 }
 

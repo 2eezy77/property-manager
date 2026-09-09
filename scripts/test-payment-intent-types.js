@@ -22,6 +22,7 @@ const {
   createCashAppPaymentIntent,
   createBankPaymentIntent,
   createLockedCheckoutPaymentIntent,
+  checkoutTypesOnlyIdempotencyKey,
   buildAchIntentParams,
   checkoutPaymentMethodConfigurationId,
   isPaymentMethodParamConflict,
@@ -141,11 +142,13 @@ async function testCreateHelpers() {
   assert.deepStrictEqual(cashCalls[0].params.payment_method_types, ['cashapp']);
 
   const bankCalls = [];
+  const stickyKey = 'rent-ach-lily-a1';
   await createBankPaymentIntent({
     amountCents: 120000,
     customerId: 'cus_test',
     description: 'Rent',
     metadata: {},
+    idempotencyKey: stickyKey,
     stripeClient: mockStripeClient(bankCalls),
   });
   assert.deepStrictEqual(bankCalls[0].params.payment_method_types, ['us_bank_account']);
@@ -155,6 +158,15 @@ async function testCreateHelpers() {
     'bank create-intent must not pin a PMC when env is unset'
   );
   assert.notStrictEqual(bankCalls[0].params.payment_method_configuration, PLAID_MANAGED_CONNECT_PMC);
+  assert.strictEqual(
+    bankCalls[0].options.idempotencyKey,
+    `${stickyKey}:types-only`,
+    'types-only ACH must not reuse the sticky PMC-failure idempotency key'
+  );
+  assert.strictEqual(
+    checkoutTypesOnlyIdempotencyKey(stickyKey),
+    `${stickyKey}:types-only`
+  );
 }
 
 function testAccountPmcPin() {
@@ -354,6 +366,7 @@ function testWiring() {
   assert.match(bankHandler, /payment_method:\s*'ach'/);
   assert.match(bankHandler, /source:\s*'stripe_ach'/);
   assert.match(bankHandler, /stripeIdempotencyKey/, 'keep #97 idempotency on bank create-intent');
+  assert.match(bankHandler, /method:\s*'ach-to'/, 'bank checkout uses a new key so PMC 500s are not replayed');
 
   const cardHandler = routes.slice(
     routes.indexOf("router.post('/card/create-intent'"),
