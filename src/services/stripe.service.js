@@ -582,6 +582,13 @@ function checkoutPaymentMethodConfigurationId() {
 }
 
 function withCheckoutPaymentMethodConfig(params) {
+  // Never pair a PMC with explicit payment_method_types (live Stripe 400/500:
+  // must enable automatic_payment_methods to specify payment_method_configuration).
+  if (Array.isArray(params.payment_method_types) && params.payment_method_types.length) {
+    const next = { ...params };
+    delete next.payment_method_configuration;
+    return next;
+  }
   const pmc = checkoutPaymentMethodConfigurationId();
   if (!pmc || pmc === PLAID_MANAGED_CONNECT_PMC) return params;
   return { ...params, payment_method_configuration: pmc };

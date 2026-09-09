@@ -181,7 +181,10 @@ function testAccountPmcPin() {
       metadata: {},
     });
     assert.deepStrictEqual(bank.payment_method_types, ['us_bank_account']);
-    assert.strictEqual(bank.payment_method_configuration, ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE);
+    assert.ok(
+      !bank.payment_method_configuration,
+      'typed bank checkout must not send PMC even when env pin is set'
+    );
 
     const card = buildCardIntentParams({
       amountCents: 123510,
@@ -190,7 +193,7 @@ function testAccountPmcPin() {
       metadata: {},
     });
     assert.deepStrictEqual(card.payment_method_types, ['card']);
-    assert.strictEqual(card.payment_method_configuration, ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE);
+    assert.ok(!card.payment_method_configuration, 'typed card checkout must not send PMC');
 
     const cash = buildCashAppIntentParams({
       amountCents: 123510,
@@ -199,7 +202,7 @@ function testAccountPmcPin() {
       metadata: {},
     });
     assert.deepStrictEqual(cash.payment_method_types, ['cashapp']);
-    assert.strictEqual(cash.payment_method_configuration, ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE);
+    assert.ok(!cash.payment_method_configuration, 'typed Cash App checkout must not send PMC');
 
     process.env.STRIPE_CHECKOUT_PAYMENT_METHOD_CONFIGURATION = PLAID_MANAGED_CONNECT_PMC;
     assert.strictEqual(

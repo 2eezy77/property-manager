@@ -121,9 +121,9 @@ async function testSignalGuard() {
     }, {
       evaluateAchRisk: async () => ({ rulesetResult: 'REROUTE', customerReturnRiskScore: null }),
     });
-    assert.strictEqual(rerouteStillOpen.ok, true, 'Signal REROUTE never hard-blocks rent ACH');
+    assert.strictEqual(rerouteStillOpen.ok, true, 'Signal REROUTE + null score never hard-blocks rent ACH');
 
-    const blocked = await assertAchDebitAllowed({
+    const reviewStillOpen = await assertAchDebitAllowed({
       accessToken: 'access-sandbox-test',
       accountId: LILY_PLAID_ACCOUNT_ID,
       amountCents: 90000,
@@ -133,7 +133,19 @@ async function testSignalGuard() {
     }, {
       evaluateAchRisk: async () => ({ rulesetResult: 'REVIEW' }),
     });
-    assert.strictEqual(blocked.ok, false, 'Signal REVIEW still blocks when hard-block is opted in');
+    assert.strictEqual(reviewStillOpen.ok, true, 'Signal REVIEW fail-opens even when hard-block is opted in');
+
+    const blocked = await assertAchDebitAllowed({
+      accessToken: 'access-sandbox-test',
+      accountId: LILY_PLAID_ACCOUNT_ID,
+      amountCents: 90000,
+      userId: 'ed270b84-ae0f-428f-8403-3ef878531cef',
+      clientTransactionId: LILY_PAYMENT_ID,
+      context: 'rent',
+    }, {
+      evaluateAchRisk: async () => ({ rulesetResult: 'DENY', customerReturnRiskScore: 90 }),
+    });
+    assert.strictEqual(blocked.ok, false, 'explicit Signal DENY can still hard-block when opted in');
     assert.strictEqual(blocked.status, 402);
     assert.strictEqual(blocked.body.error, 'ACH_RISK_BLOCKED');
     delete process.env.PLAID_SIGNAL_HARD_BLOCK;
