@@ -84,6 +84,7 @@
     "test:ach-charge-path": "node scripts/test-ach-charge-path.js",
     "test:payment-intent-types": "node scripts/test-payment-intent-types.js",
     "test:duplicate-rent-charge": "node scripts/test-duplicate-rent-charge.js",
+    "test:lily-ach-retry": "node scripts/test-lily-ach-retry-scenario.js",
     "test:balance-paid": "node scripts/test-balance-paid-month.js",
     "test:stripe-refund": "node scripts/test-stripe-refund-webhook.js",
     "test:rent-collection-stats": "TZ=America/New_York node scripts/test-rent-collection-stats.js",
