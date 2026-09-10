@@ -13,6 +13,9 @@ const {
   assertRentPeriodAvailable,
   lockRentChargePeriod,
   stripeIdempotencyKey,
+  classifyOpenRentCharge,
+  isUnusedOpenCheckoutIntent,
+  ACH_IDEMPOTENCY_KEY_VERSION,
   IN_FLIGHT_CONFIRM_STATUSES,
 } = require('../src/services/rent-charge-guard');
 const {
@@ -21,6 +24,8 @@ const {
   createCardPaymentIntent,
   createCashAppPaymentIntent,
   createBankPaymentIntent,
+  isStripeIdempotencyError,
+  nextStripeIdempotencyKey,
 } = require('../src/services/stripe.service');
 
 const root = path.resolve(__dirname, '..');
@@ -87,15 +92,90 @@ assert.ok(IN_FLIGHT_CONFIRM_STATUSES.has('succeeded'));
 assert.ok(!IN_FLIGHT_CONFIRM_STATUSES.has('requires_payment_method'));
 
 const paymentId = '11111111-2222-3333-4444-555555555555';
+const LILY_PAYMENT_ID = 'f4aaca28-cff8-491f-ba11-d6521aaee4fe';
+assert.strictEqual(ACH_IDEMPOTENCY_KEY_VERSION, 2);
 assert.strictEqual(
   stripeIdempotencyKey({ method: 'card', paymentId, attempt: 1 }),
   `rent-card-${paymentId}-a1`
 );
 assert.strictEqual(
+  stripeIdempotencyKey({ method: 'ach', paymentId, attempt: 1 }),
+  `rent-ach-${paymentId}-a2`,
+  'ACH charge must not reuse the PMC-poisoned -a1 key'
+);
+assert.strictEqual(
   stripeIdempotencyKey({ method: 'ach', paymentId, attempt: 2 }),
   `rent-ach-${paymentId}-a2`
 );
+assert.strictEqual(
+  stripeIdempotencyKey({ method: 'ach', paymentId, attempt: 3 }),
+  `rent-ach-${paymentId}-a3`
+);
+assert.strictEqual(
+  stripeIdempotencyKey({ method: 'ach-to', paymentId: LILY_PAYMENT_ID, attempt: 1 }),
+  `rent-ach-to-${LILY_PAYMENT_ID}-a2`,
+  'bank create-intent must rotate off ach-to-…-a1 after the unused checkout PI'
+);
+assert.notStrictEqual(
+  stripeIdempotencyKey({ method: 'ach', paymentId: LILY_PAYMENT_ID, attempt: 1 }),
+  `rent-ach-${LILY_PAYMENT_ID}-a1`
+);
 assert.ok(stripeIdempotencyKey({ method: 'cashapp', paymentId }).length <= 255);
+
+assert.strictEqual(
+  nextStripeIdempotencyKey(`rent-ach-${LILY_PAYMENT_ID}-a2`),
+  `rent-ach-${LILY_PAYMENT_ID}-a3`
+);
+assert.strictEqual(
+  nextStripeIdempotencyKey(`rent-ach-${paymentId}-a2:types-only`),
+  `rent-ach-${paymentId}-a3:types-only`
+);
+const lilyIdempotencyErr = new Error(
+  'Keys for idempotent requests can only be used with the same parameters they were first used with.'
+);
+lilyIdempotencyErr.name = 'StripeIdempotencyError';
+lilyIdempotencyErr.type = 'idempotency_error';
+assert.ok(isStripeIdempotencyError(lilyIdempotencyErr));
+
+assert.ok(isUnusedOpenCheckoutIntent({
+  status: 'requires_payment_method',
+  latest_charge: null,
+  amount_received: 0,
+}));
+assert.strictEqual(
+  classifyOpenRentCharge(
+    { status: 'pending', stripe_payment_intent_id: 'pi_3UDwrTBaVh1caty80cbtTUKI' },
+    { status: 'requires_payment_method', latest_charge: null, amount_received: 0 }
+  ),
+  'released',
+  'unused bank checkout with no charge must not lock the rent period'
+);
+assert.strictEqual(
+  classifyOpenRentCharge(
+    { status: 'pending', stripe_payment_intent_id: 'pi_card' },
+    { status: 'requires_payment_method', latest_charge: 'ch_123' }
+  ),
+  'in_flight'
+);
+assert.strictEqual(
+  classifyOpenRentCharge(
+    { status: 'processing', stripe_payment_intent_id: 'pi_ach' },
+    { status: 'processing', latest_charge: 'ch_1' }
+  ),
+  'in_flight'
+);
+assert.doesNotThrow(() => {
+  const kind = classifyOpenRentCharge(
+    { status: 'pending', stripe_payment_intent_id: 'pi_unused' },
+    { status: 'requires_payment_method', latest_charge: null }
+  );
+  assert.strictEqual(kind, 'released');
+  assertRentPeriodAvailable({
+    processingCount: 0,
+    pendingOpenCount: kind === 'in_flight' ? 1 : 0,
+    remainingDue: 900,
+  });
+});
 assert.deepStrictEqual(stripeIdempotencyOptions('rent-card-x-a1'), {
   idempotencyKey: 'rent-card-x-a1',
 });
@@ -253,6 +333,102 @@ async function testAchDoesNotDouble() {
   assert.strictEqual(creates, 0, 'ACH in-flight must not start a second debit');
 }
 
+async function testChargeAchRetriesPoisonedIdempotencyKey() {
+  const calls = [];
+  const stripeClient = {
+    paymentIntents: {
+      create: async (params, options) => {
+        calls.push({ params, options });
+        if (options.idempotencyKey === `rent-ach-${LILY_PAYMENT_ID}-a2`) {
+          const err = new Error(
+            'Keys for idempotent requests can only be used with the same parameters they were first used with.'
+          );
+          err.name = 'StripeIdempotencyError';
+          err.type = 'idempotency_error';
+          throw err;
+        }
+        return {
+          id: 'pi_retry',
+          status: 'processing',
+          payment_method_types: params.payment_method_types,
+          latest_charge: 'ch_retry',
+        };
+      },
+    },
+  };
+
+  const pi = await chargeACH({
+    amountCents: 90000,
+    customerId: 'cus_test',
+    paymentMethodId: 'ba_1U7M1HBaVh1caty8IeYgkgCI',
+    description: 'Rent',
+    metadata: { payment_id: LILY_PAYMENT_ID },
+    ipAddress: '1.2.3.4',
+    userAgent: 'test',
+    idempotencyKey: stripeIdempotencyKey({ method: 'ach', paymentId: LILY_PAYMENT_ID, attempt: 1 }),
+    stripeClient,
+  });
+  assert.strictEqual(calls.length, 2, 'poisoned ACH key must retry once with a bumped key');
+  assert.strictEqual(calls[0].options.idempotencyKey, `rent-ach-${LILY_PAYMENT_ID}-a2`);
+  assert.strictEqual(calls[1].options.idempotencyKey, `rent-ach-${LILY_PAYMENT_ID}-a3`);
+  assert.notStrictEqual(calls[0].options.idempotencyKey, `rent-ach-${LILY_PAYMENT_ID}-a1`);
+  assert.strictEqual(pi.id, 'pi_retry');
+  assert.strictEqual(pi.status, 'processing');
+  assert.deepStrictEqual(calls[1].params.payment_method_types, ['us_bank_account']);
+  assert.strictEqual(calls[1].params.payment_method, 'ba_1U7M1HBaVh1caty8IeYgkgCI');
+  assert.strictEqual(calls[1].params.confirm, true);
+}
+
+async function testBankCreateIntentRetriesPoisonedIdempotencyKey() {
+  const calls = [];
+  const stripeClient = {
+    paymentIntents: {
+      create: async (params, options) => {
+        calls.push({ params, options });
+        if ((options.idempotencyKey || '').endsWith('-a2:types-only')) {
+          const err = new Error(
+            'Keys for idempotent requests can only be used with the same parameters they were first used with.'
+          );
+          err.name = 'StripeIdempotencyError';
+          err.type = 'idempotency_error';
+          throw err;
+        }
+        return {
+          id: 'pi_bank_retry',
+          status: 'requires_payment_method',
+          payment_method_types: params.payment_method_types,
+          latest_charge: null,
+        };
+      },
+    },
+  };
+
+  const pi = await createBankPaymentIntent({
+    amountCents: 90000,
+    customerId: 'cus_test',
+    description: 'Rent',
+    metadata: { payment_id: LILY_PAYMENT_ID },
+    idempotencyKey: stripeIdempotencyKey({
+      method: 'ach-to',
+      paymentId: LILY_PAYMENT_ID,
+      attempt: 1,
+    }),
+    stripeClient,
+  });
+  assert.strictEqual(calls.length, 2);
+  assert.strictEqual(
+    calls[0].options.idempotencyKey,
+    `rent-ach-to-${LILY_PAYMENT_ID}-a2:types-only`
+  );
+  assert.strictEqual(
+    calls[1].options.idempotencyKey,
+    `rent-ach-to-${LILY_PAYMENT_ID}-a3:types-only`
+  );
+  assert.strictEqual(pi.id, 'pi_bank_retry');
+  assert.deepStrictEqual(calls[1].params.payment_method_types, ['us_bank_account']);
+  assert.ok(!calls[1].params.confirm);
+}
+
 async function testStripeCreatePassesIdempotencyKey() {
   const calls = [];
   const stripeClient = {
@@ -298,7 +474,7 @@ async function testStripeCreatePassesIdempotencyKey() {
     idempotencyKey: stripeIdempotencyKey({ method: 'ach', paymentId, attempt: 1 }),
     stripeClient,
   });
-  assert.strictEqual(calls[0].options.idempotencyKey, `rent-ach-${paymentId}-a1`);
+  assert.strictEqual(calls[0].options.idempotencyKey, `rent-ach-${paymentId}-a2`);
 
   calls.length = 0;
   await createBankPaymentIntent({
@@ -311,7 +487,7 @@ async function testStripeCreatePassesIdempotencyKey() {
   });
   assert.strictEqual(
     calls[0].options.idempotencyKey,
-    `rent-ach-${paymentId}-a1:types-only`,
+    `rent-ach-${paymentId}-a2:types-only`,
     'bank checkout must not reuse the sticky PMC-failure key'
   );
   assert.ok(!calls[0].params.payment_method_configuration);
@@ -324,6 +500,11 @@ function testProductionWiring() {
   assert.match(charge, /assertRentPeriodAvailable/, 'prepareTenantCharge rejects a covered or in-flight period');
   assert.match(charge, /pendingOpenCount/, 'pending card intents count as in-flight, not only processing');
   assert.match(charge, /rejectInFlightConfirm/, 'rent does not cancel a PI that is already confirming');
+  assert.match(charge, /kind === 'released'/, 'unused checkout PIs are canceled, not locked');
+
+  const guard = read('src/services/rent-charge-guard.js');
+  assert.match(guard, /ACH_IDEMPOTENCY_KEY_VERSION/, 'ACH keys have a version floor after the PMC poison');
+  assert.match(guard, /isUnusedOpenCheckoutIntent/, 'unused requires_payment_method + no charge is replaceable');
 
   const routes = read('src/routes/payments.routes.js');
   assert.match(routes, /idempotencyKey/, 'tenant charge routes send Stripe idempotency keys');
@@ -359,6 +540,8 @@ async function main() {
   await testRetryAfterSuccess();
   await testAchDoesNotDouble();
   await testStripeCreatePassesIdempotencyKey();
+  await testChargeAchRetriesPoisonedIdempotencyKey();
+  await testBankCreateIntentRetriesPoisonedIdempotencyKey();
   testProductionWiring();
   console.log('test-duplicate-rent-charge OK');
 }
