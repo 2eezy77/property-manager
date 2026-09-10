@@ -23,6 +23,10 @@ const {
 const {
   buildAchIntentParams,
 } = require('../src/services/stripe.service');
+const {
+  stripeIdempotencyKey,
+  classifyOpenRentCharge,
+} = require('../src/services/rent-charge-guard');
 
 const root = path.resolve(__dirname, '..');
 
@@ -228,6 +232,20 @@ assert.deepStrictEqual(savedIntent.payment_method_types, ['us_bank_account']);
 assert.ok(!savedIntent.payment_method_data, 'saved PM must not send raw routing/account');
 assert.ok(savedIntent.mandate_data, 'tenant-present ACH includes mandate_data');
 assert.strictEqual(savedIntent.confirm, true);
+
+assert.strictEqual(
+  stripeIdempotencyKey({ method: 'ach', paymentId: LILY_PAYMENT_ID, attempt: 1 }),
+  `rent-ach-${LILY_PAYMENT_ID}-a2`,
+  'saved-ba_ /charge must not reuse the poisoned rent-ach-…-a1 key'
+);
+assert.strictEqual(
+  classifyOpenRentCharge(
+    { status: 'pending', stripe_payment_intent_id: 'pi_3UDwrTBaVh1caty80cbtTUKI' },
+    { status: 'requires_payment_method', latest_charge: null, amount_received: 0 }
+  ),
+  'released',
+  'Lily unused bank checkout PI must not 409 the next /charge'
+);
 
 const rawIntent = buildAchIntentParams({
   amountCents: 90000,

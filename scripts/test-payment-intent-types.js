@@ -29,6 +29,7 @@ const {
   PLAID_MANAGED_CONNECT_PMC,
   ACCOUNT_DEFAULT_CHECKOUT_PMC_LIVE,
 } = require('../src/services/stripe.service');
+const { stripeIdempotencyKey } = require('../src/services/rent-charge-guard');
 
 delete process.env.STRIPE_CHECKOUT_PAYMENT_METHOD_CONFIGURATION;
 
@@ -370,6 +371,11 @@ function testWiring() {
   assert.match(bankHandler, /source:\s*'stripe_ach'/);
   assert.match(bankHandler, /stripeIdempotencyKey/, 'keep #97 idempotency on bank create-intent');
   assert.match(bankHandler, /method:\s*'ach-to'/, 'bank checkout uses a new key so PMC 500s are not replayed');
+  assert.strictEqual(
+    stripeIdempotencyKey({ method: 'ach-to', paymentId: 'pay_bank', attempt: 1 }),
+    'rent-ach-to-pay_bank-a2',
+    'bank create-intent version floor avoids replaying a canceled unused PI'
+  );
 
   const cardHandler = routes.slice(
     routes.indexOf("router.post('/card/create-intent'"),

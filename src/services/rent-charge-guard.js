@@ -13,9 +13,34 @@ const IN_FLIGHT_CONFIRM_STATUSES = new Set([
 ]);
 
 /**
- * pending + PI that is still usable (including unused requires_payment_method)
- * is in-flight. Billing invoices with no PI are not. Canceled / declined PIs
- * can be replaced.
+ * Floor for ACH / bank-checkout keys after PR 105. Live key
+ * `rent-ach-<lily-payment>-a1` was first used with PMC+types params; Stripe
+ * then rejected the types-only / saved-ba_ create with StripeIdempotencyError.
+ * Bank create-intent `ach-to` is versioned the same way so a canceled unused
+ * checkout PI is not replayed from the prior successful idempotency cache.
+ */
+const ACH_IDEMPOTENCY_KEY_VERSION = 2;
+
+function paymentIntentHasCharge(pi) {
+  if (!pi) return false;
+  if (pi.latest_charge) return true;
+  if (Number(pi.amount_received || 0) > 0) return true;
+  return false;
+}
+
+function isUnusedOpenCheckoutIntent(pi) {
+  return Boolean(
+    pi
+    && pi.status === 'requires_payment_method'
+    && !paymentIntentHasCharge(pi)
+  );
+}
+
+/**
+ * pending + PI that is confirming or already charged is in-flight.
+ * Unused requires_payment_method with no charge is replaceable (Lily unused
+ * bank checkout). Billing invoices with no PI are not in-flight. Canceled /
+ * declined PIs can be replaced.
  */
 function classifyOpenRentCharge(row = {}, pi = null) {
   if (row.status === 'processing') return 'in_flight';
@@ -24,6 +49,7 @@ function classifyOpenRentCharge(row = {}, pi = null) {
   if (!pi) return 'in_flight';
   if (pi.status === 'succeeded') return 'paid';
   if (pi.status === 'canceled') return 'released';
+  if (isUnusedOpenCheckoutIntent(pi)) return 'released';
   if (pi.status === 'requires_payment_method' && pi.last_payment_error) return 'released';
   return 'in_flight';
 }
@@ -57,12 +83,18 @@ async function lockRentChargePeriod(client, leaseId, periodStart) {
 }
 
 function stripeIdempotencyKey({ method, paymentId, attempt = 1 }) {
-  const key = `rent-${method}-${paymentId}-a${attempt}`;
+  const n = Number(attempt) || 1;
+  const isAch = method === 'ach' || method === 'ach-to';
+  const floored = isAch ? Math.max(n, ACH_IDEMPOTENCY_KEY_VERSION) : n;
+  const key = `rent-${method}-${paymentId}-a${floored}`;
   return key.length <= 255 ? key : key.slice(0, 255);
 }
 
 module.exports = {
   IN_FLIGHT_CONFIRM_STATUSES,
+  ACH_IDEMPOTENCY_KEY_VERSION,
+  paymentIntentHasCharge,
+  isUnusedOpenCheckoutIntent,
   classifyOpenRentCharge,
   assertRentPeriodAvailable,
   lockRentChargePeriod,

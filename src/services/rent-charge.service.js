@@ -362,6 +362,18 @@ async function prepareTenantCharge(client, {
       } else if (kind === 'in_flight') {
         if (row.status === 'processing') processingCount += 1;
         else pendingOpenCount += 1;
+      } else if (kind === 'released' && row.stripe_payment_intent_id) {
+        const canceled = await cancelReplacedDepositPaymentIntent(row.stripe_payment_intent_id, {
+          rejectInFlightConfirm: true,
+        });
+        if (canceled.action === 'succeeded') {
+          await syncLocalPaymentIfStripeSucceeded(client, row, canceled.pi);
+          await settleRentPaymentSuccess(client, {
+            paymentId: row.id,
+            leaseId,
+            amount: parseMoney(row.amount),
+          });
+        }
       }
     }
 
