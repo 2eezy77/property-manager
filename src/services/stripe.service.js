@@ -82,33 +82,44 @@ function isStripeIdempotencyError(err) {
     || msg.includes('keys for idempotent requests can only be used with the same parameters');
 }
 
-/** Bump `…-aN` (keeps `:types-only` / other suffixes) after a param-mismatch. */
-function nextStripeIdempotencyKey(key) {
-  if (key == null || key === '') return undefined;
-  const raw = String(key);
-  const match = raw.match(/^(.*?)-a(\d+)(.*)$/);
-  if (!match) return raw.endsWith(':retry') ? `${raw}-2` : `${raw}:retry`;
-  return `${match[1]}-a${Number(match[2]) + 1}${match[3]}`;
+/**
+ * Stripe v1 caches the first response for an Idempotency-Key (24h) and errors
+ * if params change — that is to prevent accidental misuse, not a signal to
+ * create again with a new key. Confirmed ACH (`confirm: true`) must never bump
+ * the key: a timeout after Stripe accepted the debit plus a new key is a
+ * second live charge.
+ * https://docs.stripe.com/api/idempotent_requests
+ * https://docs.stripe.com/error-low-level#idempotency
+ */
+const REUSABLE_ACH_INTENT_STATUSES = new Set([
+  'requires_confirmation',
+  'requires_action',
+  'processing',
+  'succeeded',
+]);
+
+async function findReusableRentPaymentIntent(client, {
+  customerId,
+  paymentId,
+  amountCents,
+} = {}) {
+  if (!customerId || !paymentId || !client.paymentIntents?.list) return null;
+  const listed = await client.paymentIntents.list({
+    customer: customerId,
+    limit: 20,
+  });
+  return (listed.data || []).find((pi) => {
+    if (String(pi.metadata?.payment_id || '') !== String(paymentId)) return false;
+    if (amountCents != null && Number(pi.amount) !== Number(amountCents)) return false;
+    return REUSABLE_ACH_INTENT_STATUSES.has(pi.status);
+  }) || null;
 }
 
-async function createPaymentIntentIdempotent(client, params, idempotencyKey) {
-  try {
-    return await client.paymentIntents.create(
-      params,
-      stripeIdempotencyOptions(idempotencyKey)
-    );
-  } catch (err) {
-    if (!isStripeIdempotencyError(err) || !idempotencyKey) throw err;
-    const retryKey = nextStripeIdempotencyKey(idempotencyKey);
-    console.warn('[stripe] Idempotency params mismatch; retrying with bumped key', {
-      from: String(idempotencyKey).slice(0, 80),
-      to: String(retryKey || '').slice(0, 80),
-    });
-    return client.paymentIntents.create(
-      params,
-      stripeIdempotencyOptions(retryKey)
-    );
-  }
+async function createPaymentIntentOnce(client, params, idempotencyKey) {
+  return client.paymentIntents.create(
+    params,
+    stripeIdempotencyOptions(idempotencyKey)
+  );
 }
 
 function stripeClientOf(override) {
@@ -531,11 +542,25 @@ async function chargeACH({
   });
 
   const client = stripeClientOf(stripeClient);
-  let paymentIntent = await createPaymentIntentIdempotent(
-    client,
-    intentParams,
-    idempotencyKey
-  );
+  let paymentIntent;
+  try {
+    paymentIntent = await createPaymentIntentOnce(client, intentParams, idempotencyKey);
+  } catch (err) {
+    if (!isStripeIdempotencyError(err)) throw err;
+    const existing = await findReusableRentPaymentIntent(client, {
+      customerId,
+      paymentId: metadata?.payment_id,
+      amountCents,
+    });
+    if (existing) {
+      console.warn('[stripe] Idempotency conflict; reusing existing ACH PaymentIntent', {
+        id: existing.id,
+        status: existing.status,
+      });
+      return existing;
+    }
+    throw err;
+  }
 
   // Sandbox: inline us_bank_account PMs often land in requires_action (microdeposits).
   // Stripe test mode accepts descriptor code SM11AA — auto-verify so webhooks can fire.
@@ -694,7 +719,7 @@ async function createLockedCheckoutPaymentIntent({
 
   let created;
   try {
-    created = await createPaymentIntentIdempotent(
+    created = await createPaymentIntentOnce(
       client,
       hasPmc ? params : typesOnlyParams,
       hasPmc ? idempotencyKey : typesOnlyKey
@@ -705,7 +730,7 @@ async function createLockedCheckoutPaymentIntent({
         message: err.message,
         param: err.param,
       });
-      return createPaymentIntentIdempotent(client, typesOnlyParams, typesOnlyKey);
+      return createPaymentIntentOnce(client, typesOnlyParams, typesOnlyKey);
     }
     throw err;
   }
@@ -723,7 +748,7 @@ async function createLockedCheckoutPaymentIntent({
     await client.paymentIntents.cancel(created.id).catch(() => {});
   }
 
-  return createPaymentIntentIdempotent(client, typesOnlyParams, typesOnlyKey);
+  return createPaymentIntentOnce(client, typesOnlyParams, typesOnlyKey);
 }
 
 function isCashAppPayConfigured() {
@@ -1087,7 +1112,7 @@ module.exports = {
   toStripeMetadata,
   stripeIdempotencyOptions,
   isStripeIdempotencyError,
-  nextStripeIdempotencyKey,
-  createPaymentIntentIdempotent,
+  findReusableRentPaymentIntent,
+  createPaymentIntentOnce,
   syncCustomerProfile,
 };
