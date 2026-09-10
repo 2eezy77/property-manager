@@ -25,7 +25,7 @@ const {
   createCashAppPaymentIntent,
   createBankPaymentIntent,
   isStripeIdempotencyError,
-  nextStripeIdempotencyKey,
+  findReusableRentPaymentIntent,
 } = require('../src/services/stripe.service');
 
 const root = path.resolve(__dirname, '..');
@@ -122,14 +122,6 @@ assert.notStrictEqual(
 );
 assert.ok(stripeIdempotencyKey({ method: 'cashapp', paymentId }).length <= 255);
 
-assert.strictEqual(
-  nextStripeIdempotencyKey(`rent-ach-${LILY_PAYMENT_ID}-a2`),
-  `rent-ach-${LILY_PAYMENT_ID}-a3`
-);
-assert.strictEqual(
-  nextStripeIdempotencyKey(`rent-ach-${paymentId}-a2:types-only`),
-  `rent-ach-${paymentId}-a3:types-only`
-);
 const lilyIdempotencyErr = new Error(
   'Keys for idempotent requests can only be used with the same parameters they were first used with.'
 );
@@ -333,27 +325,31 @@ async function testAchDoesNotDouble() {
   assert.strictEqual(creates, 0, 'ACH in-flight must not start a second debit');
 }
 
-async function testChargeAchRetriesPoisonedIdempotencyKey() {
-  const calls = [];
+function lilyIdempotencyConflict() {
+  const err = new Error(
+    'Keys for idempotent requests can only be used with the same parameters they were first used with.'
+  );
+  err.name = 'StripeIdempotencyError';
+  err.type = 'idempotency_error';
+  return err;
+}
+
+async function testChargeAchReusesExistingIntentOnIdempotencyConflict() {
+  const creates = [];
+  const existing = {
+    id: 'pi_already_processing',
+    status: 'processing',
+    amount: 90000,
+    metadata: { payment_id: LILY_PAYMENT_ID },
+    latest_charge: 'ch_existing',
+  };
   const stripeClient = {
     paymentIntents: {
       create: async (params, options) => {
-        calls.push({ params, options });
-        if (options.idempotencyKey === `rent-ach-${LILY_PAYMENT_ID}-a2`) {
-          const err = new Error(
-            'Keys for idempotent requests can only be used with the same parameters they were first used with.'
-          );
-          err.name = 'StripeIdempotencyError';
-          err.type = 'idempotency_error';
-          throw err;
-        }
-        return {
-          id: 'pi_retry',
-          status: 'processing',
-          payment_method_types: params.payment_method_types,
-          latest_charge: 'ch_retry',
-        };
+        creates.push({ params, options });
+        throw lilyIdempotencyConflict();
       },
+      list: async () => ({ data: [existing] }),
     },
   };
 
@@ -368,65 +364,98 @@ async function testChargeAchRetriesPoisonedIdempotencyKey() {
     idempotencyKey: stripeIdempotencyKey({ method: 'ach', paymentId: LILY_PAYMENT_ID, attempt: 1 }),
     stripeClient,
   });
-  assert.strictEqual(calls.length, 2, 'poisoned ACH key must retry once with a bumped key');
-  assert.strictEqual(calls[0].options.idempotencyKey, `rent-ach-${LILY_PAYMENT_ID}-a2`);
-  assert.strictEqual(calls[1].options.idempotencyKey, `rent-ach-${LILY_PAYMENT_ID}-a3`);
-  assert.notStrictEqual(calls[0].options.idempotencyKey, `rent-ach-${LILY_PAYMENT_ID}-a1`);
-  assert.strictEqual(pi.id, 'pi_retry');
+  assert.strictEqual(creates.length, 1, 'confirmed ACH must not create a second debit');
+  assert.strictEqual(creates[0].options.idempotencyKey, `rent-ach-${LILY_PAYMENT_ID}-a2`);
+  assert.notStrictEqual(creates[0].options.idempotencyKey, `rent-ach-${LILY_PAYMENT_ID}-a1`);
+  assert.strictEqual(pi.id, 'pi_already_processing');
   assert.strictEqual(pi.status, 'processing');
-  assert.deepStrictEqual(calls[1].params.payment_method_types, ['us_bank_account']);
-  assert.strictEqual(calls[1].params.payment_method, 'ba_1U7M1HBaVh1caty8IeYgkgCI');
-  assert.strictEqual(calls[1].params.confirm, true);
 }
 
-async function testBankCreateIntentRetriesPoisonedIdempotencyKey() {
+async function testChargeAchDoesNotBumpKeyWhenNoExistingIntent() {
+  const creates = [];
+  const stripeClient = {
+    paymentIntents: {
+      create: async (params, options) => {
+        creates.push({ params, options });
+        throw lilyIdempotencyConflict();
+      },
+      list: async () => ({ data: [] }),
+    },
+  };
+
+  await assert.rejects(
+    () => chargeACH({
+      amountCents: 90000,
+      customerId: 'cus_test',
+      paymentMethodId: 'ba_1U7M1HBaVh1caty8IeYgkgCI',
+      description: 'Rent',
+      metadata: { payment_id: LILY_PAYMENT_ID },
+      ipAddress: '1.2.3.4',
+      userAgent: 'test',
+      idempotencyKey: stripeIdempotencyKey({ method: 'ach', paymentId: LILY_PAYMENT_ID, attempt: 1 }),
+      stripeClient,
+    }),
+    (err) => err.type === 'idempotency_error'
+  );
+  assert.strictEqual(creates.length, 1, 'must not open a second confirmed ACH with a bumped key');
+}
+
+async function testFindReusableRentPaymentIntent() {
+  const listed = await findReusableRentPaymentIntent({
+    paymentIntents: {
+      list: async () => ({
+        data: [{
+          id: 'pi_other',
+          status: 'processing',
+          amount: 90000,
+          metadata: { payment_id: 'other' },
+        }, {
+          id: 'pi_match',
+          status: 'processing',
+          amount: 90000,
+          metadata: { payment_id: LILY_PAYMENT_ID },
+        }],
+      }),
+    },
+  }, {
+    customerId: 'cus_test',
+    paymentId: LILY_PAYMENT_ID,
+    amountCents: 90000,
+  });
+  assert.strictEqual(listed.id, 'pi_match');
+}
+
+async function testBankCreateIntentDoesNotBumpKeyOnIdempotencyConflict() {
   const calls = [];
   const stripeClient = {
     paymentIntents: {
       create: async (params, options) => {
         calls.push({ params, options });
-        if ((options.idempotencyKey || '').endsWith('-a2:types-only')) {
-          const err = new Error(
-            'Keys for idempotent requests can only be used with the same parameters they were first used with.'
-          );
-          err.name = 'StripeIdempotencyError';
-          err.type = 'idempotency_error';
-          throw err;
-        }
-        return {
-          id: 'pi_bank_retry',
-          status: 'requires_payment_method',
-          payment_method_types: params.payment_method_types,
-          latest_charge: null,
-        };
+        throw lilyIdempotencyConflict();
       },
     },
   };
 
-  const pi = await createBankPaymentIntent({
-    amountCents: 90000,
-    customerId: 'cus_test',
-    description: 'Rent',
-    metadata: { payment_id: LILY_PAYMENT_ID },
-    idempotencyKey: stripeIdempotencyKey({
-      method: 'ach-to',
-      paymentId: LILY_PAYMENT_ID,
-      attempt: 1,
+  await assert.rejects(
+    () => createBankPaymentIntent({
+      amountCents: 90000,
+      customerId: 'cus_test',
+      description: 'Rent',
+      metadata: { payment_id: LILY_PAYMENT_ID },
+      idempotencyKey: stripeIdempotencyKey({
+        method: 'ach-to',
+        paymentId: LILY_PAYMENT_ID,
+        attempt: 1,
+      }),
+      stripeClient,
     }),
-    stripeClient,
-  });
-  assert.strictEqual(calls.length, 2);
+    (err) => err.type === 'idempotency_error'
+  );
+  assert.strictEqual(calls.length, 1);
   assert.strictEqual(
     calls[0].options.idempotencyKey,
     `rent-ach-to-${LILY_PAYMENT_ID}-a2:types-only`
   );
-  assert.strictEqual(
-    calls[1].options.idempotencyKey,
-    `rent-ach-to-${LILY_PAYMENT_ID}-a3:types-only`
-  );
-  assert.strictEqual(pi.id, 'pi_bank_retry');
-  assert.deepStrictEqual(calls[1].params.payment_method_types, ['us_bank_account']);
-  assert.ok(!calls[1].params.confirm);
 }
 
 async function testStripeCreatePassesIdempotencyKey() {
@@ -512,6 +541,12 @@ function testProductionWiring() {
 
   const stripeSrc = read('src/services/stripe.service.js');
   assert.match(stripeSrc, /stripeIdempotencyOptions/, 'Stripe helpers pass Idempotency-Key request options');
+  assert.match(stripeSrc, /findReusableRentPaymentIntent/, 'confirmed ACH reuses an existing PI instead of bumping the key');
+  assert.doesNotMatch(
+    stripeSrc,
+    /retrying with bumped key/,
+    'Stripe docs: do not open a second confirmed debit with a new idempotency key'
+  );
   assert.match(
     stripeSrc,
     /paymentIntents\.create\([\s\S]*stripeIdempotencyOptions/,
@@ -540,8 +575,10 @@ async function main() {
   await testRetryAfterSuccess();
   await testAchDoesNotDouble();
   await testStripeCreatePassesIdempotencyKey();
-  await testChargeAchRetriesPoisonedIdempotencyKey();
-  await testBankCreateIntentRetriesPoisonedIdempotencyKey();
+  await testChargeAchReusesExistingIntentOnIdempotencyConflict();
+  await testChargeAchDoesNotBumpKeyWhenNoExistingIntent();
+  await testFindReusableRentPaymentIntent();
+  await testBankCreateIntentDoesNotBumpKeyOnIdempotencyConflict();
   testProductionWiring();
   console.log('test-duplicate-rent-charge OK');
 }
