@@ -13,13 +13,17 @@ const IN_FLIGHT_CONFIRM_STATUSES = new Set([
 ]);
 
 /**
- * Floor for ACH / bank-checkout keys after PR 105. Live key
- * `rent-ach-<lily-payment>-a1` was first used with PMC+types params; Stripe
- * then rejected the types-only / saved-ba_ create with StripeIdempotencyError.
- * Bank create-intent `ach-to` is versioned the same way so a canceled unused
- * checkout PI is not replayed from the prior successful idempotency cache.
+ * Shared floor for every tenant portal method (ACH charge, bank checkout,
+ * Cash App, card). `-a1` keys were consumed in production with create params
+ * that no longer match (PMC+types, then types-only) or with PaymentIntents
+ * that later canceled/expired. Reusing `-a1` returns the dead PI or
+ * StripeIdempotencyError. Bump this integer — not a per-tenant special case —
+ * if a future param change poisons `-a2`.
  */
-const ACH_IDEMPOTENCY_KEY_VERSION = 2;
+const RENT_IDEMPOTENCY_KEY_VERSION = 2;
+const ACH_IDEMPOTENCY_KEY_VERSION = RENT_IDEMPOTENCY_KEY_VERSION;
+const CASHAPP_IDEMPOTENCY_KEY_VERSION = RENT_IDEMPOTENCY_KEY_VERSION;
+const CARD_IDEMPOTENCY_KEY_VERSION = RENT_IDEMPOTENCY_KEY_VERSION;
 
 function paymentIntentHasCharge(pi) {
   if (!pi) return false;
@@ -82,21 +86,78 @@ async function lockRentChargePeriod(client, leaseId, periodStart) {
   );
 }
 
+function methodKeyVersionFloor(method) {
+  if (method === 'ach' || method === 'ach-to') return ACH_IDEMPOTENCY_KEY_VERSION;
+  if (method === 'cashapp') return CASHAPP_IDEMPOTENCY_KEY_VERSION;
+  if (method === 'card') return CARD_IDEMPOTENCY_KEY_VERSION;
+  return RENT_IDEMPOTENCY_KEY_VERSION;
+}
+
+/** Highest key suffix any portal method will actually send. */
+function rentIdempotencyKeyFloor() {
+  return RENT_IDEMPOTENCY_KEY_VERSION;
+}
+
+/**
+ * Stripe key suffix already consumed for this obligation. A stored attempt
+ * of 1 still used `-a2` once the portal floor applied, so treat that as 2.
+ */
+function maxConsumedIntentAttempt(rows = []) {
+  let maxStored = 0;
+  for (const row of rows) {
+    const n = Number((row.metadata || {}).stripe_intent_attempt);
+    if (Number.isFinite(n) && n > maxStored) maxStored = n;
+  }
+  if (maxStored <= 0) return 0;
+  return Math.max(maxStored, rentIdempotencyKeyFloor());
+}
+
+/**
+ * Next stripe_intent_attempt for a rent or deposit obligation. Reads every
+ * row (parent + failed partials) so a canceled/expired checkout advances
+ * the counter for the next tenant instead of restarting at 1.
+ * Persist this value (not raw 1) so a full-remaining retry cannot reuse
+ * the floored `-a2` key with different PaymentIntent metadata.
+ */
+function nextRentIntentAttempt(rows = []) {
+  const consumed = maxConsumedIntentAttempt(rows);
+  if (consumed <= 0) return rentIdempotencyKeyFloor();
+  return consumed + 1;
+}
+
+/**
+ * Value to persist after Stripe finishes a PaymentIntent (failed / canceled).
+ * Empty metadata still consumed the floored key on create.
+ */
+function recordConsumedIntentAttempt(metadata = {}) {
+  const consumed = maxConsumedIntentAttempt([{ metadata }]);
+  return {
+    stripe_intent_attempt: consumed > 0 ? consumed : rentIdempotencyKeyFloor(),
+  };
+}
+
 function stripeIdempotencyKey({ method, paymentId, attempt = 1 }) {
   const n = Number(attempt) || 1;
-  const isAch = method === 'ach' || method === 'ach-to';
-  const floored = isAch ? Math.max(n, ACH_IDEMPOTENCY_KEY_VERSION) : n;
+  const floored = Math.max(n, methodKeyVersionFloor(method));
   const key = `rent-${method}-${paymentId}-a${floored}`;
   return key.length <= 255 ? key : key.slice(0, 255);
 }
 
 module.exports = {
   IN_FLIGHT_CONFIRM_STATUSES,
+  RENT_IDEMPOTENCY_KEY_VERSION,
   ACH_IDEMPOTENCY_KEY_VERSION,
+  CASHAPP_IDEMPOTENCY_KEY_VERSION,
+  CARD_IDEMPOTENCY_KEY_VERSION,
   paymentIntentHasCharge,
   isUnusedOpenCheckoutIntent,
   classifyOpenRentCharge,
   assertRentPeriodAvailable,
   lockRentChargePeriod,
+  methodKeyVersionFloor,
+  rentIdempotencyKeyFloor,
+  maxConsumedIntentAttempt,
+  nextRentIntentAttempt,
+  recordConsumedIntentAttempt,
   stripeIdempotencyKey,
 };

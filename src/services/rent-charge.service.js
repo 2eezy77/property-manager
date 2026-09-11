@@ -14,6 +14,7 @@ const {
   assertRentPeriodAvailable,
   classifyOpenRentCharge,
   lockRentChargePeriod,
+  nextRentIntentAttempt,
 } = require('./rent-charge-guard');
 const { settleRentPaymentSuccess } = require('../utils/payment-settlement');
 
@@ -259,13 +260,28 @@ async function prepareTenantCharge(client, {
     description = isPartial
       ? `Security deposit payment ($${amountDollars.toFixed(2)} of $${remaining.toFixed(2)} remaining)`
       : 'Security deposit';
+    const { rows: depositAttemptRows } = await client.query(
+      `SELECT metadata
+         FROM payments
+        WHERE lease_id = $1 AND payment_type = 'security_deposit'`,
+      [leaseId]
+    );
+    const nextAttempt = nextRentIntentAttempt(depositAttemptRows);
     chargeMeta = {
       ...chargeMeta,
       payment_kind: 'security_deposit',
+      stripe_intent_attempt: nextAttempt,
       deposit_remaining_before: remaining.toFixed(2),
       deposit_original_amount: depositOriginal.toFixed(2),
       deposit_paid_total: depositPaidTotal.toFixed(2),
     };
+    await client.query(
+      `UPDATE payments
+          SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [parent.id, JSON.stringify({ stripe_intent_attempt: nextAttempt })]
+    );
 
     if (isPartial) {
       chargeMeta.partial_installment = true;
@@ -520,11 +536,24 @@ async function prepareTenantCharge(client, {
       );
     }
 
-    const priorAttempt = Number((parent.metadata || {}).stripe_intent_attempt || 0);
+    const { rows: attemptRows } = await client.query(
+      `SELECT metadata
+         FROM payments
+        WHERE lease_id = $1 AND payment_type = 'rent' AND period_start = $2`,
+      [leaseId, monthStart]
+    );
+    const nextAttempt = nextRentIntentAttempt(attemptRows);
+    await client.query(
+      `UPDATE payments
+          SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [parent.id, JSON.stringify({ stripe_intent_attempt: nextAttempt })]
+    );
     chargeMeta = {
       ...chargeMeta,
       payment_kind: 'rent',
-      stripe_intent_attempt: priorAttempt + 1,
+      stripe_intent_attempt: nextAttempt,
       rent_amount: rentAmount.toFixed(2),
       late_fee_amount: lateFeeAmount.toFixed(2),
       rent_remaining_before: rentRemaining.toFixed(2),

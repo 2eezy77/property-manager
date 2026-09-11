@@ -53,9 +53,21 @@ const {
   applyChargeRefunded,
   applyRefundObject,
 } = require('../services/payment-refund.service');
+const { recordConsumedIntentAttempt } = require('../services/rent-charge-guard');
 
 const router = express.Router();
 const pool = require('../db/client');
+
+async function persistConsumedIntentAttempt(paymentId, metadata) {
+  if (!paymentId) return;
+  await pool.query(
+    `UPDATE payments
+        SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+            updated_at = NOW()
+      WHERE id = $1`,
+    [paymentId, JSON.stringify(recordConsumedIntentAttempt(metadata))]
+  );
+}
 
 function isIdentityEvent(type) {
   return type?.startsWith('identity.verification_session.');
@@ -747,9 +759,13 @@ async function onCanceled(pi, eventId) {
             updated_at = NOW()
       WHERE stripe_payment_intent_id = $2
         AND status IN ('pending', 'processing')
-     RETURNING id, payment_type`,
+     RETURNING id, payment_type, metadata`,
     [eventId, pi.id]
   );
+
+  if (rows[0]) {
+    await persistConsumedIntentAttempt(rows[0].id, rows[0].metadata);
+  }
 
   if (rows[0]?.payment_type === 'utility') {
     await releaseUtilitySplitsForFailedPayment(pool, rows[0].id);
@@ -992,11 +1008,13 @@ async function onFailed(pi, eventId) {
             updated_at              = NOW()
       WHERE stripe_payment_intent_id = $3
         AND status <> 'succeeded'
-     RETURNING id, tenant_id, lease_id, amount, payment_type`,
+     RETURNING id, tenant_id, lease_id, amount, payment_type, metadata`,
     [failureReason, eventId, pi.id]
   );
 
   if (!rows[0]) return;
+
+  await persistConsumedIntentAttempt(rows[0].id, rows[0].metadata);
 
   // Flip any utility split that was charging → failed (tenant can retry in portal)
   if (rows[0].payment_type === 'utility') {

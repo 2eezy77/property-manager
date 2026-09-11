@@ -16,6 +16,11 @@ const {
   classifyOpenRentCharge,
   isUnusedOpenCheckoutIntent,
   ACH_IDEMPOTENCY_KEY_VERSION,
+  CASHAPP_IDEMPOTENCY_KEY_VERSION,
+  CARD_IDEMPOTENCY_KEY_VERSION,
+  RENT_IDEMPOTENCY_KEY_VERSION,
+  nextRentIntentAttempt,
+  recordConsumedIntentAttempt,
   IN_FLIGHT_CONFIRM_STATUSES,
 } = require('../src/services/rent-charge-guard');
 const {
@@ -93,15 +98,122 @@ assert.ok(!IN_FLIGHT_CONFIRM_STATUSES.has('requires_payment_method'));
 
 const paymentId = '11111111-2222-3333-4444-555555555555';
 const LILY_PAYMENT_ID = 'f4aaca28-cff8-491f-ba11-d6521aaee4fe';
+const STONE_PARENT_ID = '736a6912-4792-4206-8db0-daeaa7c4c4bb';
+const STONE_ACH_PAYMENT_ID = 'c5efd11b-fc73-475a-8acf-be4a4bd51b0b';
+const STONE_CASHAPP_PAYMENT_ID = 'b2d9357b-061c-4e27-812e-5e311937a382';
+assert.strictEqual(RENT_IDEMPOTENCY_KEY_VERSION, 2);
 assert.strictEqual(ACH_IDEMPOTENCY_KEY_VERSION, 2);
+assert.strictEqual(CASHAPP_IDEMPOTENCY_KEY_VERSION, 2);
+assert.strictEqual(CARD_IDEMPOTENCY_KEY_VERSION, 2);
 assert.strictEqual(
   stripeIdempotencyKey({ method: 'card', paymentId, attempt: 1 }),
-  `rent-card-${paymentId}-a1`
+  `rent-card-${paymentId}-a2`,
+  'card checkout must not reuse a poisoned or expired -a1 key'
 );
+for (const method of ['ach', 'ach-to', 'cashapp', 'card']) {
+  const key = stripeIdempotencyKey({ method, paymentId: 'any-tenant-pay', attempt: 1 });
+  assert.ok(key.endsWith('-a2'), `${method} attempt 1 must floor to -a2 for every tenant`);
+}
 assert.strictEqual(
   stripeIdempotencyKey({ method: 'ach', paymentId, attempt: 1 }),
   `rent-ach-${paymentId}-a2`,
   'ACH charge must not reuse the PMC-poisoned -a1 key'
+);
+assert.strictEqual(
+  stripeIdempotencyKey({ method: 'cashapp', paymentId, attempt: 1 }),
+  `rent-cashapp-${paymentId}-a2`,
+  'Cash App must not reuse expired -a1 checkout keys'
+);
+assert.notStrictEqual(
+  stripeIdempotencyKey({ method: 'cashapp', paymentId: STONE_CASHAPP_PAYMENT_ID, attempt: 1 }),
+  `rent-cashapp-${STONE_CASHAPP_PAYMENT_ID}-a1`,
+  'Stone expired Cash App PI must not be replayed from -a1'
+);
+assert.notStrictEqual(
+  stripeIdempotencyKey({ method: 'ach', paymentId: STONE_ACH_PAYMENT_ID, attempt: 1 }),
+  `rent-ach-${STONE_ACH_PAYMENT_ID}-a1`,
+  'Stone ACH checkout must stay on the post-Lily key floor'
+);
+assert.strictEqual(
+  nextRentIntentAttempt([{ metadata: {} }]),
+  2,
+  'first rent intent persists the floored key suffix, not raw attempt 1'
+);
+assert.strictEqual(
+  nextRentIntentAttempt([
+    { metadata: { rent_original_amount: 900 } },
+    { metadata: { stripe_intent_attempt: 1, payment_method: 'ach' } },
+    { metadata: { stripe_intent_attempt: 1, payment_method: 'cash_app' } },
+  ]),
+  3,
+  'stored attempt 1 already consumed Cash App/ACH -a2; next pay must use -a3'
+);
+assert.strictEqual(
+  nextRentIntentAttempt([{ metadata: { stripe_intent_attempt: 2 } }]),
+  3,
+  'full-remaining retry after a floored -a2 create must not reuse -a2'
+);
+assert.notStrictEqual(
+  stripeIdempotencyKey({
+    method: 'cashapp',
+    paymentId: STONE_PARENT_ID,
+    attempt: nextRentIntentAttempt([{ metadata: { stripe_intent_attempt: 2 } }]),
+  }),
+  `rent-cashapp-${STONE_PARENT_ID}-a2`,
+  'retry metadata differs; a reused -a2 key would StripeIdempotencyError'
+);
+assert.strictEqual(
+  stripeIdempotencyKey({
+    method: 'cashapp',
+    paymentId: STONE_PARENT_ID,
+    attempt: nextRentIntentAttempt([
+      { metadata: { stripe_intent_attempt: 1 } },
+      { metadata: { stripe_intent_attempt: 1 } },
+    ]),
+  }),
+  `rent-cashapp-${STONE_PARENT_ID}-a3`
+);
+assert.strictEqual(
+  stripeIdempotencyKey({
+    method: 'ach',
+    paymentId: STONE_PARENT_ID,
+    attempt: nextRentIntentAttempt([
+      { metadata: { stripe_intent_attempt: 1 } },
+      { metadata: { stripe_intent_attempt: 1 } },
+    ]),
+  }),
+  `rent-ach-${STONE_PARENT_ID}-a3`
+);
+assert.deepStrictEqual(
+  recordConsumedIntentAttempt({}),
+  { stripe_intent_attempt: 2 },
+  'failed/canceled webhook must record the floored key even when metadata was empty'
+);
+assert.deepStrictEqual(
+  recordConsumedIntentAttempt({ stripe_intent_attempt: 1 }),
+  { stripe_intent_attempt: 2 }
+);
+assert.deepStrictEqual(
+  recordConsumedIntentAttempt({ stripe_intent_attempt: 4 }),
+  { stripe_intent_attempt: 4 },
+  'do not rewind a higher attempt already stored on the row'
+);
+assert.strictEqual(
+  nextRentIntentAttempt([
+    { metadata: recordConsumedIntentAttempt({ stripe_intent_attempt: 1 }) },
+  ]),
+  3,
+  'any tenant: after a failed checkout the next create uses a new key'
+);
+assert.strictEqual(
+  stripeIdempotencyKey({
+    method: 'card',
+    paymentId,
+    attempt: nextRentIntentAttempt([
+      { metadata: recordConsumedIntentAttempt({}) },
+    ]),
+  }),
+  `rent-card-${paymentId}-a3`
 );
 assert.strictEqual(
   stripeIdempotencyKey({ method: 'ach', paymentId, attempt: 2 }),
@@ -477,7 +589,7 @@ async function testStripeCreatePassesIdempotencyKey() {
     idempotencyKey: stripeIdempotencyKey({ method: 'card', paymentId, attempt: 1 }),
     stripeClient,
   });
-  assert.strictEqual(calls[0].options.idempotencyKey, `rent-card-${paymentId}-a1:types-only`);
+  assert.strictEqual(calls[0].options.idempotencyKey, `rent-card-${paymentId}-a2:types-only`);
   assert.ok(!calls[0].params.idempotencyKey, 'idempotency key is a request option, not a PI field');
 
   calls.length = 0;
@@ -489,7 +601,7 @@ async function testStripeCreatePassesIdempotencyKey() {
     idempotencyKey: stripeIdempotencyKey({ method: 'cashapp', paymentId, attempt: 1 }),
     stripeClient,
   });
-  assert.strictEqual(calls[0].options.idempotencyKey, `rent-cashapp-${paymentId}-a1:types-only`);
+  assert.strictEqual(calls[0].options.idempotencyKey, `rent-cashapp-${paymentId}-a2:types-only`);
 
   calls.length = 0;
   await chargeACH({
@@ -530,14 +642,31 @@ function testProductionWiring() {
   assert.match(charge, /pendingOpenCount/, 'pending card intents count as in-flight, not only processing');
   assert.match(charge, /rejectInFlightConfirm/, 'rent does not cancel a PI that is already confirming');
   assert.match(charge, /kind === 'released'/, 'unused checkout PIs are canceled, not locked');
+  assert.match(charge, /nextRentIntentAttempt/, 'rent charges advance attempt from all period rows');
+  assert.match(
+    charge,
+    /payment_type = 'security_deposit'[\s\S]*nextRentIntentAttempt/,
+    'deposit retries advance the same attempt counter'
+  );
 
   const guard = read('src/services/rent-charge-guard.js');
-  assert.match(guard, /ACH_IDEMPOTENCY_KEY_VERSION/, 'ACH keys have a version floor after the PMC poison');
+  assert.match(guard, /RENT_IDEMPOTENCY_KEY_VERSION/, 'all portal methods share one key floor');
+  assert.match(guard, /CARD_IDEMPOTENCY_KEY_VERSION/, 'card keys share the same floor as ACH and Cash App');
+  assert.match(guard, /recordConsumedIntentAttempt/, 'failed intents persist the consumed suffix');
+  assert.match(guard, /nextRentIntentAttempt/, 'period attempt counter reads failed partials');
+  assert.match(guard, /maxConsumedIntentAttempt/, 'stored attempt 1 counts as consumed -a2 after floors');
   assert.match(guard, /isUnusedOpenCheckoutIntent/, 'unused requires_payment_method + no charge is replaceable');
 
   const routes = read('src/routes/payments.routes.js');
   assert.match(routes, /idempotencyKey/, 'tenant charge routes send Stripe idempotency keys');
   assert.match(routes, /stripeIdempotencyKey/, 'routes use the shared rent idempotency helper');
+
+  const webhook = read('src/webhooks/stripe.webhook.js');
+  assert.match(webhook, /persistConsumedIntentAttempt/, 'failed and canceled PIs record the consumed key');
+  assert.match(webhook, /recordConsumedIntentAttempt/, 'webhook uses the shared consumed-attempt helper');
+
+  const utility = read('src/services/utility-portal-charge.service.js');
+  assert.match(utility, /stripe_intent_attempt/, 'utility portal pays start on the shared key floor');
 
   const stripeSrc = read('src/services/stripe.service.js');
   assert.match(stripeSrc, /stripeIdempotencyOptions/, 'Stripe helpers pass Idempotency-Key request options');
