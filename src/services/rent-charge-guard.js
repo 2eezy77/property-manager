@@ -96,18 +96,36 @@ function methodKeyVersionFloor(method) {
   return 1;
 }
 
+/** Highest key suffix ACH / Cash App will actually send (both floor to 2). */
+function rentIdempotencyKeyFloor() {
+  return Math.max(ACH_IDEMPOTENCY_KEY_VERSION, CASHAPP_IDEMPOTENCY_KEY_VERSION);
+}
+
+/**
+ * Stripe key suffix already consumed for this period. A stored attempt of 1
+ * still used `-a2` once ACH/Cash App floors applied, so treat that as 2.
+ */
+function maxConsumedIntentAttempt(rows = []) {
+  let maxStored = 0;
+  for (const row of rows) {
+    const n = Number((row.metadata || {}).stripe_intent_attempt);
+    if (Number.isFinite(n) && n > maxStored) maxStored = n;
+  }
+  if (maxStored <= 0) return 0;
+  return Math.max(maxStored, rentIdempotencyKeyFloor());
+}
+
 /**
  * Next stripe_intent_attempt for a rent period. Reads every row (parent +
  * failed partials) so Stone's expired Cash App / superseded ACH attempts
  * advance the counter instead of restarting at 1 on the parent invoice.
+ * Persist this value (not raw 1) so a full-remaining retry cannot reuse
+ * the floored `-a2` key with different PaymentIntent metadata.
  */
 function nextRentIntentAttempt(rows = []) {
-  let maxAttempt = 0;
-  for (const row of rows) {
-    const n = Number((row.metadata || {}).stripe_intent_attempt);
-    if (Number.isFinite(n) && n > maxAttempt) maxAttempt = n;
-  }
-  return maxAttempt + 1;
+  const consumed = maxConsumedIntentAttempt(rows);
+  if (consumed <= 0) return rentIdempotencyKeyFloor();
+  return consumed + 1;
 }
 
 function stripeIdempotencyKey({ method, paymentId, attempt = 1 }) {
@@ -127,6 +145,8 @@ module.exports = {
   assertRentPeriodAvailable,
   lockRentChargePeriod,
   methodKeyVersionFloor,
+  rentIdempotencyKeyFloor,
+  maxConsumedIntentAttempt,
   nextRentIntentAttempt,
   stripeIdempotencyKey,
 };

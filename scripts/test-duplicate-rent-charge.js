@@ -125,15 +125,33 @@ assert.notStrictEqual(
   'Stone ACH checkout must stay on the post-Lily key floor'
 );
 assert.strictEqual(
+  nextRentIntentAttempt([{ metadata: {} }]),
+  2,
+  'first rent intent persists the floored key suffix, not raw attempt 1'
+);
+assert.strictEqual(
   nextRentIntentAttempt([
     { metadata: { rent_original_amount: 900 } },
     { metadata: { stripe_intent_attempt: 1, payment_method: 'ach' } },
     { metadata: { stripe_intent_attempt: 1, payment_method: 'cash_app' } },
   ]),
-  2,
-  'Stone Sep period with two failed attempt-1 rows advances to attempt 2'
+  3,
+  'stored attempt 1 already consumed Cash App/ACH -a2; next pay must use -a3'
 );
-assert.strictEqual(nextRentIntentAttempt([{ metadata: {} }]), 1);
+assert.strictEqual(
+  nextRentIntentAttempt([{ metadata: { stripe_intent_attempt: 2 } }]),
+  3,
+  'full-remaining retry after a floored -a2 create must not reuse -a2'
+);
+assert.notStrictEqual(
+  stripeIdempotencyKey({
+    method: 'cashapp',
+    paymentId: STONE_PARENT_ID,
+    attempt: nextRentIntentAttempt([{ metadata: { stripe_intent_attempt: 2 } }]),
+  }),
+  `rent-cashapp-${STONE_PARENT_ID}-a2`,
+  'retry metadata differs; a reused -a2 key would StripeIdempotencyError'
+);
 assert.strictEqual(
   stripeIdempotencyKey({
     method: 'cashapp',
@@ -143,15 +161,18 @@ assert.strictEqual(
       { metadata: { stripe_intent_attempt: 1 } },
     ]),
   }),
-  `rent-cashapp-${STONE_PARENT_ID}-a2`
+  `rent-cashapp-${STONE_PARENT_ID}-a3`
 );
 assert.strictEqual(
   stripeIdempotencyKey({
     method: 'ach',
     paymentId: STONE_PARENT_ID,
-    attempt: 2,
+    attempt: nextRentIntentAttempt([
+      { metadata: { stripe_intent_attempt: 1 } },
+      { metadata: { stripe_intent_attempt: 1 } },
+    ]),
   }),
-  `rent-ach-${STONE_PARENT_ID}-a2`
+  `rent-ach-${STONE_PARENT_ID}-a3`
 );
 assert.strictEqual(
   stripeIdempotencyKey({ method: 'ach', paymentId, attempt: 2 }),
@@ -586,6 +607,7 @@ function testProductionWiring() {
   assert.match(guard, /ACH_IDEMPOTENCY_KEY_VERSION/, 'ACH keys have a version floor after the PMC poison');
   assert.match(guard, /CASHAPP_IDEMPOTENCY_KEY_VERSION/, 'Cash App keys have a version floor after Stone expiry');
   assert.match(guard, /nextRentIntentAttempt/, 'period attempt counter reads failed partials');
+  assert.match(guard, /maxConsumedIntentAttempt/, 'stored attempt 1 counts as consumed -a2 after floors');
   assert.match(guard, /isUnusedOpenCheckoutIntent/, 'unused requires_payment_method + no charge is replaceable');
 
   const routes = read('src/routes/payments.routes.js');
