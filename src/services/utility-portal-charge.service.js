@@ -8,6 +8,8 @@
  * rows are never selected.
  */
 
+const { rentIdempotencyKeyFloor } = require('./rent-charge-guard');
+
 const PAYABLE_SPLIT_STATUSES = ['pending', 'notified', 'disputed', 'failed'];
 
 async function listOpenUtilitySplits(client, tenantId, { leaseId = null, splitId = null, forUpdate = false } = {}) {
@@ -149,6 +151,7 @@ async function prepareUtilityPortalCharge(client, {
     utility_split_ids: splitIds,
     utility_bill_ids: billIds,
     portal_utility: true,
+    stripe_intent_attempt: rentIdempotencyKeyFloor(),
   };
 
   const { rows: [payment] } = await client.query(
