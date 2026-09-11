@@ -21,6 +21,14 @@ const IN_FLIGHT_CONFIRM_STATUSES = new Set([
  */
 const ACH_IDEMPOTENCY_KEY_VERSION = 2;
 
+/**
+ * Floor for Cash App Pay keys after Stone 2026-09-11. Live key
+ * `rent-cashapp-<stone-420>-a1` created pi_3UEVPx… which expired without
+ * approval. Reusing -a1 returns that dead PI (or StripeIdempotencyError if
+ * create params changed). Version with ACH so a retry cannot replay -a1.
+ */
+const CASHAPP_IDEMPOTENCY_KEY_VERSION = 2;
+
 function paymentIntentHasCharge(pi) {
   if (!pi) return false;
   if (pi.latest_charge) return true;
@@ -82,10 +90,29 @@ async function lockRentChargePeriod(client, leaseId, periodStart) {
   );
 }
 
+function methodKeyVersionFloor(method) {
+  if (method === 'ach' || method === 'ach-to') return ACH_IDEMPOTENCY_KEY_VERSION;
+  if (method === 'cashapp') return CASHAPP_IDEMPOTENCY_KEY_VERSION;
+  return 1;
+}
+
+/**
+ * Next stripe_intent_attempt for a rent period. Reads every row (parent +
+ * failed partials) so Stone's expired Cash App / superseded ACH attempts
+ * advance the counter instead of restarting at 1 on the parent invoice.
+ */
+function nextRentIntentAttempt(rows = []) {
+  let maxAttempt = 0;
+  for (const row of rows) {
+    const n = Number((row.metadata || {}).stripe_intent_attempt);
+    if (Number.isFinite(n) && n > maxAttempt) maxAttempt = n;
+  }
+  return maxAttempt + 1;
+}
+
 function stripeIdempotencyKey({ method, paymentId, attempt = 1 }) {
   const n = Number(attempt) || 1;
-  const isAch = method === 'ach' || method === 'ach-to';
-  const floored = isAch ? Math.max(n, ACH_IDEMPOTENCY_KEY_VERSION) : n;
+  const floored = Math.max(n, methodKeyVersionFloor(method));
   const key = `rent-${method}-${paymentId}-a${floored}`;
   return key.length <= 255 ? key : key.slice(0, 255);
 }
@@ -93,10 +120,13 @@ function stripeIdempotencyKey({ method, paymentId, attempt = 1 }) {
 module.exports = {
   IN_FLIGHT_CONFIRM_STATUSES,
   ACH_IDEMPOTENCY_KEY_VERSION,
+  CASHAPP_IDEMPOTENCY_KEY_VERSION,
   paymentIntentHasCharge,
   isUnusedOpenCheckoutIntent,
   classifyOpenRentCharge,
   assertRentPeriodAvailable,
   lockRentChargePeriod,
+  methodKeyVersionFloor,
+  nextRentIntentAttempt,
   stripeIdempotencyKey,
 };
